@@ -1,0 +1,23 @@
+{
+  "name": "farmdb-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline-first farm livestock, production, medical, and financial management suite",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:desktop": "npm --workspace=@farmdb/desktop run dev",
+    "dev:tauri": "npm --workspace=@farmdb/desktop run tauri:dev",
+    "dev:mobile": "npm --workspace=@farmdb/mobile run start",
+    "build:desktop": "npm --workspace=@farmdb/desktop run build",
+    "build:tauri": "npm --workspace=@farmdb/desktop run tauri:build",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "vitest": "^5.1.0"
+  }
+}
