@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Camera, Pencil, Trash2, X } from 'lucide-react';
+import { Maximize2 } from 'lucide-react';
 import {
+  buildAnimalPedigree,
+  DEFAULT_FARM_SETTINGS,
   formatAnimalAge,
-  formatIsoDate,
+  formatDisplayDate,
   formatSpeciesLabel,
   formatStatusLabel,
+  formatVolume,
   LIVESTOCK_STATUSES,
   roundAmount,
   type Livestock,
@@ -13,28 +16,41 @@ import {
 import {
   useAlertList,
   useDeleteLivestock,
+  useFarmSettings,
   useLivestockDetail,
+  useLivestockList,
   useMedicalRecordList,
   useProductRecordList,
   useUpdateLivestock,
 } from '@farmdb/db';
 import {
+  APP_ICONS,
+  getSpeciesPngIcon,
+  getStatusPngIcon,
+} from '../assets/icons';
+import {
   deleteManagedDesktopImage,
   resolveDesktopImageSrc,
 } from '../services/imageStorage';
+import { ImageLightboxModal } from './ImageLightboxModal';
 
 interface LivestockDetailModalProps {
   livestockId: string | null;
   onClose: () => void;
   onEdit: (animal: Livestock) => void;
+  onSelectAnimal?: (id: string) => void;
+  onOpenFamilyTree?: (id: string) => void;
 }
 
 export function LivestockDetailModal({
   livestockId,
   onClose,
   onEdit,
+  onSelectAnimal,
+  onOpenFamilyTree,
 }: LivestockDetailModalProps) {
   const detailQuery = useLivestockDetail(livestockId);
+  const allLivestockQuery = useLivestockList({});
   const productionQuery = useProductRecordList(
     livestockId ? { livestockId } : undefined
   );
@@ -46,15 +62,26 @@ export function LivestockDetailModal({
   );
   const updateMutation = useUpdateLivestock();
   const deleteMutation = useDeleteLivestock();
+  const settingsQuery = useFarmSettings();
+  const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
 
   useEffect(() => {
     setConfirmDelete(false);
+    setImageViewerOpen(false);
   }, [livestockId]);
 
   const records = livestockId ? (productionQuery.data ?? []) : [];
   const medicalRecords = livestockId ? (medicalQuery.data ?? []) : [];
   const openAlerts = livestockId ? (alertsQuery.data ?? []) : [];
+  const allLivestock = allLivestockQuery.data ?? [];
+
+  const pedigree = useMemo(
+    () =>
+      livestockId ? buildAnimalPedigree(livestockId, allLivestock, records) : null,
+    [livestockId, allLivestock, records]
+  );
 
   const totalLiters = useMemo(
     () => roundAmount(records.reduce((sum, r) => sum + r.yieldAmount, 0)),
@@ -87,8 +114,9 @@ export function LivestockDetailModal({
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="modal-card detail-modal">
+    <>
+      <div className="modal-backdrop" role="dialog" aria-modal="true">
+        <div className="modal-card detail-modal">
         <div className="modal-header">
           <h2 className="modal-title">
             {animal ? `${animal.name || animal.tagNumber} Profile` : 'Animal Profile'}
@@ -99,7 +127,7 @@ export function LivestockDetailModal({
             onClick={onClose}
             aria-label="Close profile"
           >
-            <X size={16} />
+            <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
           </button>
         </div>
 
@@ -113,28 +141,68 @@ export function LivestockDetailModal({
           <>
             <div className="detail-hero">
               {imageSrc ? (
-                <img
-                  src={imageSrc}
-                  alt={animal.name ?? animal.tagNumber}
-                  className="detail-photo"
-                />
+                <button
+                  type="button"
+                  className="detail-photo-btn"
+                  onClick={() => setImageViewerOpen(true)}
+                  title="View full image"
+                >
+                  <img
+                    src={imageSrc}
+                    alt={animal.name ?? animal.tagNumber}
+                    className="detail-photo"
+                  />
+                  <span className="detail-photo-zoom-badge" aria-hidden="true">
+                    <Maximize2 size={13} />
+                  </span>
+                </button>
               ) : (
                 <div className="detail-photo-empty">
-                  <Camera size={28} />
+                  <img
+                    src={getSpeciesPngIcon(animal.species)}
+                    alt={animal.species}
+                    style={{ width: 56, height: 56, objectFit: 'contain' }}
+                  />
                 </div>
               )}
 
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <span className="tag-chip">{animal.tagNumber}</span>
-                  <span className={`status-pill status-${animal.status}`}>
+                  <span className={`status-pill status-${animal.status}`} style={{ gap: 5 }}>
+                    <img
+                      src={getStatusPngIcon(animal.status)}
+                      alt=""
+                      style={{ width: 13, height: 13, objectFit: 'contain' }}
+                    />
                     {formatStatusLabel(animal.status)}
                   </span>
                 </div>
 
-                <h3 style={{ margin: '10px 0 4px', fontSize: '1.35rem' }}>
-                  {animal.name ?? 'Unnamed Animal'}
-                </h3>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 10,
+                    flexWrap: 'wrap',
+                    margin: '10px 0 4px',
+                  }}
+                >
+                  <h3 style={{ margin: 0, fontSize: '1.35rem' }}>
+                    {animal.name ?? 'Unnamed Animal'}
+                  </h3>
+                  {imageSrc && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setImageViewerOpen(true)}
+                    >
+                      <img src={APP_ICONS.image} alt="" className="app-icon-sm" />
+                      View Image
+                    </button>
+                  )}
+                </div>
                 <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                   {formatSpeciesLabel(animal.species)}
                   {animal.breed ? ` · ${animal.breed}` : ''}
@@ -158,7 +226,9 @@ export function LivestockDetailModal({
             <div className="detail-facts">
               <div className="detail-fact">
                 <p className="detail-fact-label">Date of Birth</p>
-                <p className="detail-fact-value">{formatIsoDate(animal.dob)}</p>
+                <p className="detail-fact-value">
+                  {formatDisplayDate(animal.dob, settings.dateFormat)}
+                </p>
               </div>
               <div className="detail-fact">
                 <p className="detail-fact-label">Age</p>
@@ -167,7 +237,7 @@ export function LivestockDetailModal({
               <div className="detail-fact">
                 <p className="detail-fact-label">Recorded Milk Yield</p>
                 <p className="detail-fact-value">
-                  {totalLiters.toFixed(1)} L ({records.length} logs)
+                  {formatVolume(totalLiters, settings.volumeUnit)} ({records.length} logs)
                 </p>
               </div>
               <div className="detail-fact">
@@ -196,6 +266,73 @@ export function LivestockDetailModal({
                 </button>
               ))}
             </div>
+
+            {pedigree && (
+              <div className="detail-lineage-box">
+                <div className="detail-lineage-head">
+                  <span className="form-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <img src={APP_ICONS.tree} alt="" className="app-icon-sm" />
+                    Family &amp; Lineage
+                  </span>
+                  {onOpenFamilyTree && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => {
+                        onOpenFamilyTree(animal.id);
+                        onClose();
+                      }}
+                    >
+                      <img src={APP_ICONS.tree} alt="" className="app-icon-sm" />
+                      Open Family Tree
+                    </button>
+                  )}
+                </div>
+
+                <div className="lineage-pill-row">
+                  {pedigree.sire ? (
+                    <button
+                      type="button"
+                      className="lineage-rel-pill"
+                      onClick={() => onSelectAnimal?.(pedigree.sire!.animal.id)}
+                    >
+                      <span className="lineage-rel-role">Sire</span>
+                      <strong>{pedigree.sire.animal.name ?? pedigree.sire.animal.tagNumber}</strong>
+                      <span className="tag-chip">{pedigree.sire.animal.tagNumber}</span>
+                    </button>
+                  ) : (
+                    <span className="lineage-rel-empty">Sire: Founder / Unassigned</span>
+                  )}
+
+                  {pedigree.dam ? (
+                    <button
+                      type="button"
+                      className="lineage-rel-pill"
+                      onClick={() => onSelectAnimal?.(pedigree.dam!.animal.id)}
+                    >
+                      <span className="lineage-rel-role">Dam</span>
+                      <strong>{pedigree.dam.animal.name ?? pedigree.dam.animal.tagNumber}</strong>
+                      <span className="tag-chip">{pedigree.dam.animal.tagNumber}</span>
+                    </button>
+                  ) : (
+                    <span className="lineage-rel-empty">Dam: Founder / Unassigned</span>
+                  )}
+
+                  {pedigree.directOffspring.map((child) => (
+                    <button
+                      key={child.animal.id}
+                      type="button"
+                      className="lineage-rel-pill is-offspring"
+                      onClick={() => onSelectAnimal?.(child.animal.id)}
+                    >
+                      <span className="lineage-rel-role">Offspring</span>
+                      <strong>{child.animal.name ?? child.animal.tagNumber}</strong>
+                      <span className="tag-chip">{child.animal.tagNumber}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {medicalRecords.length > 0 && (
               <div style={{ marginBottom: 14 }}>
@@ -235,6 +372,7 @@ export function LivestockDetailModal({
                     disabled={deleteMutation.isPending}
                     onClick={() => void handleDeleteConfirmed()}
                   >
+                    <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
                     {deleteMutation.isPending ? 'Deleting...' : 'Confirm Delete'}
                   </button>
                   <button
@@ -242,6 +380,7 @@ export function LivestockDetailModal({
                     className="btn btn-secondary btn-sm"
                     onClick={() => setConfirmDelete(false)}
                   >
+                    <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
                     Keep
                   </button>
                 </div>
@@ -249,9 +388,16 @@ export function LivestockDetailModal({
                 <button
                   type="button"
                   className="btn btn-danger btn-sm"
-                  onClick={() => setConfirmDelete(true)}
+                  disabled={deleteMutation.isPending}
+                  onClick={() => {
+                    if (settings.confirmBeforeDelete) {
+                      setConfirmDelete(true);
+                    } else {
+                      void handleDeleteConfirmed();
+                    }
+                  }}
                 >
-                  <Trash2 size={14} />
+                  <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
                   Delete Animal
                 </button>
               )}
@@ -261,13 +407,29 @@ export function LivestockDetailModal({
                 className="btn btn-primary btn-sm"
                 onClick={() => onEdit(animal)}
               >
-                <Pencil size={14} />
+                <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
                 Edit Details / Photo
               </button>
             </div>
           </>
         )}
+        </div>
       </div>
-    </div>
+
+      {animal && (
+        <ImageLightboxModal
+          open={imageViewerOpen && Boolean(imageSrc)}
+          src={imageSrc}
+          title={animal.name ?? animal.tagNumber}
+          subtitle={`${animal.tagNumber} · ${formatSpeciesLabel(animal.species)}`}
+          caption={
+            animal.imageUri && !animal.imageUri.startsWith('data:')
+              ? animal.imageUri
+              : undefined
+          }
+          onClose={() => setImageViewerOpen(false)}
+        />
+      )}
+    </>
   );
 }

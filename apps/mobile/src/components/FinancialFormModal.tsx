@@ -1,13 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   EXPENSE_CATEGORIES,
   formatCategoryLabel,
@@ -28,6 +30,21 @@ import {
   useCreateFinancialLog,
   useUpdateFinancialLog,
 } from '@farmdb/db';
+import { MOBILE_APP_ICONS } from '../assets/icons';
+import {
+  FARMDB_COLORS,
+  FARMDB_FONTS,
+  useUiScale,
+} from '../theme/uiScale';
+import { buildAnimalDropdownOption } from '../utils/animalOptions';
+import { AppIcon } from './FarmIcons';
+import { FarmScrollView } from './FarmScrollView';
+import { MobileNumberStepper } from './MobileNumberStepper';
+import { ModernDatePicker } from './ModernDatePicker';
+import {
+  ModernDropdown,
+  type ModernDropdownOption,
+} from './ModernDropdown';
 
 interface FinancialFormModalProps {
   visible: boolean;
@@ -44,6 +61,7 @@ export function FinancialFormModal({
   currencySymbol,
   onClose,
 }: FinancialFormModalProps) {
+  const ui = useUiScale();
   const createMutation = useCreateFinancialLog();
   const updateMutation = useUpdateFinancialLog();
 
@@ -83,6 +101,32 @@ export function FinancialFormModal({
   const availableCategories =
     transactionType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
+
+  const categoryOptions = useMemo<ModernDropdownOption<FinancialCategory>[]>(
+    () =>
+      availableCategories.map((cat) => ({
+        value: cat,
+        label: formatCategoryLabel(cat),
+        iconSource:
+          transactionType === 'income'
+            ? MOBILE_APP_ICONS.money
+            : MOBILE_APP_ICONS.budget,
+      })),
+    [availableCategories, transactionType]
+  );
+
+  const animalOptions = useMemo<ModernDropdownOption<string>[]>(
+    () => [
+      {
+        value: '',
+        label: 'General Farm',
+        iconSource: MOBILE_APP_ICONS.barnAlt,
+        hint: 'Not linked to one animal',
+      },
+      ...animals.map((a) => buildAnimalDropdownOption(a)),
+    ],
+    [animals]
+  );
 
   function handleTypeSelect(nextType: TransactionType) {
     setTransactionType(nextType);
@@ -160,146 +204,162 @@ export function FinancialFormModal({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>
-            {editing ? 'Edit Transaction' : 'Add Transaction'}
-          </Text>
-          <Pressable onPress={onClose} hitSlop={10}>
-            <Text style={styles.closeText}>Close</Text>
-          </Pressable>
-        </View>
-
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
+      <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <Text style={styles.label}>Type</Text>
-          <View style={styles.chipRow}>
-            {TRANSACTION_TYPES.map((t) => (
-              <Pressable
-                key={t}
-                style={[styles.chip, transactionType === t && styles.chipActive]}
-                onPress={() => handleTypeSelect(t)}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    transactionType === t && styles.chipTextActive,
-                  ]}
-                >
-                  {t === 'income' ? 'Income' : 'Expense'}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <Text style={styles.label}>Category</Text>
-          <View style={styles.chipRow}>
-            {availableCategories.map((cat) => (
-              <Pressable
-                key={cat}
-                style={[styles.chip, category === cat && styles.chipActive]}
-                onPress={() => setCategory(cat)}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    category === cat && styles.chipTextActive,
-                  ]}
-                >
-                  {formatCategoryLabel(cat)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <Text style={styles.label}>Amount ({currencySymbol}) *</Text>
-          <TextInput
-            style={styles.input}
-            value={amountText}
-            onChangeText={setAmountText}
-            placeholder="0.00"
-            keyboardType="decimal-pad"
-          />
-          {errors.amount ? (
-            <Text style={styles.errorText}>{errors.amount}</Text>
-          ) : null}
-
-          <Text style={styles.label}>Date (YYYY-MM-DD) *</Text>
-          <TextInput
-            style={styles.input}
-            value={date}
-            onChangeText={setDate}
-            placeholder="YYYY-MM-DD"
-            autoCapitalize="none"
-          />
-          {errors.date ? (
-            <Text style={styles.errorText}>{errors.date}</Text>
-          ) : null}
-
-          <Text style={styles.label}>Linked Animal (Optional)</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipRow}
+          <View
+            style={[
+              styles.header,
+              { paddingHorizontal: ui.contentPadding, paddingVertical: ui.space(13), gap: 10 },
+            ]}
           >
+            <Text style={[styles.title, { fontSize: ui.font(18), flex: 1, minWidth: 0 }]} numberOfLines={2}>
+              {editing ? 'Edit Transaction' : 'Add Transaction'}
+            </Text>
             <Pressable
-              style={[styles.chip, livestockId === '' && styles.chipActive]}
-              onPress={() => setLivestockId('')}
+              onPress={onClose}
+              hitSlop={12}
+              accessibilityLabel="Close transaction form"
             >
-              <Text
-                style={[
-                  styles.chipText,
-                  livestockId === '' && styles.chipTextActive,
-                ]}
-              >
-                General Farm
+              <AppIcon name="close" size={ui.font(22)} color={FARMDB_COLORS.text} />
+            </Pressable>
+          </View>
+
+          <FarmScrollView
+            contentContainerStyle={[
+              styles.content,
+              { padding: ui.contentPadding, paddingBottom: ui.space(40) },
+            ]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>Type</Text>
+            <View style={styles.chipRow}>
+              {TRANSACTION_TYPES.map((t) => {
+                const active = transactionType === t;
+                return (
+                  <Pressable
+                    key={t}
+                    style={[
+                      styles.chip,
+                      active && styles.chipActive,
+                      {
+                        minHeight: ui.chipHeight,
+                        minWidth: 112,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      },
+                    ]}
+                    onPress={() => handleTypeSelect(t)}
+                  >
+                    <AppIcon
+                      name={t === 'income' ? 'income' : 'expense'}
+                      size={ui.font(15)}
+                      color={active ? FARMDB_COLORS.accentHover : FARMDB_COLORS.textMuted}
+                    />
+                    <Text
+                      style={[
+                        styles.chipText,
+                        active && styles.chipTextActive,
+                        { fontSize: ui.font(13) },
+                      ]}
+                    >
+                      {t === 'income' ? 'Income' : 'Expense'}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+              Category
+            </Text>
+            <ModernDropdown
+              value={category}
+              options={categoryOptions}
+              title="Select Category"
+              accessibilityLabel="Category"
+              onChange={setCategory}
+            />
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+              Amount ({currencySymbol}) *
+            </Text>
+            <MobileNumberStepper
+              accessibilityLabel="Transaction Amount"
+              min={0.01}
+              step={currencySymbol === 'UGX' ? 500 : 1}
+              decimals={currencySymbol === 'UGX' ? 0 : 2}
+              value={amountText}
+              onChangeText={setAmountText}
+              placeholder="0.00"
+            />
+            {errors.amount ? (
+              <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
+                {errors.amount}
+              </Text>
+            ) : null}
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+              Date *
+            </Text>
+            <ModernDatePicker
+              title="Transaction Date"
+              accessibilityLabel="Transaction Date"
+              value={date}
+              onChange={setDate}
+            />
+            {errors.date ? (
+              <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
+                {errors.date}
+              </Text>
+            ) : null}
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+              Linked Animal (Optional)
+            </Text>
+            <ModernDropdown
+              value={livestockId}
+              options={animalOptions}
+              title="Linked Animal"
+              searchable={animals.length > 5}
+              accessibilityLabel="Linked Animal"
+              onChange={setLivestockId}
+            />
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>Notes</Text>
+            <TextInput
+              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(15) }]}
+              value={notes}
+              onChangeText={setNotes}
+              placeholder="Feed, vet visit, milk sale..."
+            />
+
+            {submitError ? (
+              <Text style={[styles.errorText, { marginTop: 10, fontSize: ui.font(12) }]}>
+                {submitError}
+              </Text>
+            ) : null}
+
+            <Pressable
+              style={[
+                styles.saveBtn,
+                isSubmitting && styles.disabledBtn,
+                { minHeight: ui.controlHeight + 4, justifyContent: 'center' },
+              ]}
+              onPress={() => void handleSubmit()}
+              disabled={isSubmitting}
+            >
+              <Text style={[styles.saveBtnText, { fontSize: ui.font(15) }]}>
+                {isSubmitting ? 'Saving...' : 'Save Transaction'}
               </Text>
             </Pressable>
-            {animals.map((a) => (
-              <Pressable
-                key={a.id}
-                style={[styles.chip, livestockId === a.id && styles.chipActive]}
-                onPress={() => setLivestockId(a.id)}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    livestockId === a.id && styles.chipTextActive,
-                  ]}
-                >
-                  {a.tagNumber}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-
-          <Text style={styles.label}>Notes</Text>
-          <TextInput
-            style={styles.input}
-            value={notes}
-            onChangeText={setNotes}
-            placeholder="Feed, vet visit, milk sale..."
-          />
-
-          {submitError ? (
-            <Text style={[styles.errorText, { marginTop: 10 }]}>
-              {submitError}
-            </Text>
-          ) : null}
-
-          <Pressable
-            style={[styles.saveBtn, isSubmitting && styles.disabledBtn]}
-            onPress={() => void handleSubmit()}
-            disabled={isSubmitting}
-          >
-            <Text style={styles.saveBtnText}>
-              {isSubmitting ? 'Saving...' : 'Save Transaction'}
-            </Text>
-          </Pressable>
-        </ScrollView>
-      </View>
+          </FarmScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -321,12 +381,12 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 18,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     color: '#1c241e',
   },
   closeText: {
     fontSize: 15,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#2d6a4f',
   },
   content: {
@@ -335,7 +395,7 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#1c241e',
     marginTop: 12,
     marginBottom: 6,
@@ -348,6 +408,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
+    fontFamily: FARMDB_FONTS.regular,
     color: '#1c241e',
   },
   chipRow: {
@@ -356,6 +417,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   chip: {
+    flex: 1,
     paddingHorizontal: 11,
     paddingVertical: 7,
     borderRadius: 999,
@@ -364,20 +426,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   chipActive: {
-    backgroundColor: '#2d6a4f',
-    borderColor: '#2d6a4f',
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    borderWidth: 1.5,
+    borderColor: FARMDB_COLORS.accent,
   },
   chipText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#1c241e',
   },
   chipTextActive: {
-    color: '#ffffff',
+    color: FARMDB_COLORS.accentHover,
+    fontFamily: FARMDB_FONTS.bold,
   },
   errorText: {
     color: '#b42318',
     fontSize: 12,
+    fontFamily: FARMDB_FONTS.medium,
     marginTop: 4,
   },
   saveBtn: {
@@ -392,7 +457,7 @@ const styles = StyleSheet.create({
   },
   saveBtnText: {
     color: '#ffffff',
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     fontSize: 15,
   },
 });

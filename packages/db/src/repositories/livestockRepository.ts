@@ -65,6 +65,8 @@ function mapRowToDomain(row: LivestockRow): Livestock {
     breed: row.breed,
     dob: row.dob,
     imageUri: row.imageUri,
+    sireId: row.sireId ?? null,
+    damId: row.damId ?? null,
     status: row.status as LivestockStatus,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -172,6 +174,8 @@ export function createLivestockRepository(
         breed: validation.data.breed,
         dob: validation.data.dob,
         imageUri: validation.data.imageUri,
+        sireId: validation.data.sireId,
+        damId: validation.data.damId,
         status: validation.data.status,
         createdAt: now,
         updatedAt: now,
@@ -206,6 +210,7 @@ export function createLivestockRepository(
       const validation = validateUpdateLivestock(input, {
         existingTags,
         currentTag: existing.tagNumber,
+        currentId: id,
       });
 
       if (!validation.ok || !validation.data) {
@@ -213,6 +218,19 @@ export function createLivestockRepository(
           Object.values(validation.errors).find(Boolean) ??
           'Invalid livestock update.';
         throw new LivestockValidationError(validation.errors, firstError);
+      }
+
+      const nextSireId =
+        validation.data.sireId !== undefined
+          ? validation.data.sireId
+          : existing.sireId;
+      const nextDamId =
+        validation.data.damId !== undefined
+          ? validation.data.damId
+          : existing.damId;
+      if (nextSireId && nextDamId && nextSireId === nextDamId) {
+        const msg = 'Sire and Dam must be two different animals.';
+        throw new LivestockValidationError({ damId: msg }, msg);
       }
 
       const now = Date.now();
@@ -242,6 +260,17 @@ export function createLivestockRepository(
         return false;
       }
 
+      // Clear lineage pointers explicitly so descendants unlink cleanly even if FK pragmas vary
+      await db
+        .update(livestock)
+        .set({ sireId: null })
+        .where(eq(livestock.sireId, id))
+        .run();
+      await db
+        .update(livestock)
+        .set({ damId: null })
+        .where(eq(livestock.damId, id))
+        .run();
       await db.delete(livestock).where(eq(livestock.id, id)).run();
       events.emit(['livestock', 'production', 'medical', 'financial', 'alerts'], id);
       return true;

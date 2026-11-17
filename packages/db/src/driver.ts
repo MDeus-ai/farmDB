@@ -1,4 +1,5 @@
 import { drizzle, type SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy';
+import { ensureSchemaReady } from './migrate';
 import { schema, type FarmDbSchema } from './schema';
 import { extractProjectedColumns, mapRowObjectToValues } from './sqlHelpers';
 
@@ -23,15 +24,39 @@ export interface SqlDriver {
 
 export type FarmDrizzleDb = SqliteRemoteDatabase<FarmDbSchema>;
 
+function isMissingSchemaError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /no such (?:table|column)/i.test(msg);
+}
+
 export function createDrizzleClient(driver: SqlDriver): FarmDrizzleDb {
   return drizzle(
     async (sql, params, method) => {
       if (method === 'run') {
-        await driver.execute(sql, params);
+        try {
+          await driver.execute(sql, params);
+        } catch (err) {
+          if (isMissingSchemaError(err)) {
+            await ensureSchemaReady(driver);
+            await driver.execute(sql, params);
+          } else {
+            throw err;
+          }
+        }
         return { rows: [] };
       }
 
-      const rows = await driver.select<Record<string, unknown>>(sql, params);
+      let rows: Record<string, unknown>[];
+      try {
+        rows = await driver.select<Record<string, unknown>>(sql, params);
+      } catch (err) {
+        if (isMissingSchemaError(err)) {
+          await ensureSchemaReady(driver);
+          rows = await driver.select<Record<string, unknown>>(sql, params);
+        } else {
+          throw err;
+        }
+      }
       const projectedColumns = extractProjectedColumns(sql);
 
       if (method === 'get') {

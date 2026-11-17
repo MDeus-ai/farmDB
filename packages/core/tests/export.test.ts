@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildAllCsvExports,
+  DEFAULT_FARM_SETTINGS,
   escapeCsvCell,
   parseFarmSnapshotJson,
   serializeFarmSnapshotJson,
@@ -19,7 +20,11 @@ describe('@farmdb/core phase 5 export & snapshot', () => {
       version: 1,
       app: 'farmDB',
       exportedAt: '2026-11-17T12:00:00.000Z',
-      settings: { defaultMilkRatePerLiter: 0.75, currencySymbol: '$' },
+      settings: {
+        ...DEFAULT_FARM_SETTINGS,
+        defaultMilkRatePerLiter: 0.75,
+        currencySymbol: '$',
+      },
       livestock: [
         {
           id: 'c1',
@@ -29,6 +34,8 @@ describe('@farmdb/core phase 5 export & snapshot', () => {
           breed: 'Holstein',
           dob: '2022-04-01',
           imageUri: null,
+          sireId: null,
+          damId: null,
           status: 'active',
           createdAt: 1,
           updatedAt: 1,
@@ -76,5 +83,38 @@ describe('@farmdb/core phase 5 export & snapshot', () => {
     expect(() => parseFarmSnapshotJson('{"app":"other"}')).toThrow(
       'Unsupported'
     );
+
+    const legacyJson = JSON.stringify({
+      version: 1,
+      app: 'farmDB',
+      exportedAt: '2026-11-17T12:00:00.000Z',
+      settings: { defaultMilkRatePerLiter: 0.85, currencySymbol: '€' },
+      livestock: [
+        {
+          id: 'legacy-1',
+          species: 'cow',
+          tagNumber: 'COW-001',
+          name: 'Legacy Cow',
+          breed: 'Jersey',
+          dob: '2021-01-01',
+          imageUri: null,
+          status: 'active',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      productRecords: [],
+      medicalRecords: [],
+      financialLogs: [],
+      alerts: [],
+    });
+    const migrated = parseFarmSnapshotJson(legacyJson);
+    expect(migrated.livestock[0]?.sireId).toBeNull();
+    expect(migrated.livestock[0]?.damId).toBeNull();
+    expect(migrated.settings).toEqual({
+      ...DEFAULT_FARM_SETTINGS,
+      defaultMilkRatePerLiter: 0.85,
+      currencySymbol: '€',
+    });
   });
 });

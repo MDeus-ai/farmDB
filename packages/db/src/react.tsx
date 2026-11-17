@@ -7,27 +7,51 @@ import {
 } from '@tanstack/react-query';
 import {
   formatAlertNotificationContent,
+  formatPaymentAlertNotification,
   type AlertFilter,
   type AlertItem,
+  type AnimalOwnership,
+  type AnimalOwnershipFilter,
+  type CloudSyncDirection,
+  type CloudSyncLog,
+  type FarmAccount,
+  type FarmAccountFilter,
   type FarmSettings,
+  type FarmWorker,
+  type FarmWorkerFilter,
   type FinancialLog,
   type FinancialLogFilter,
+  type HrDuePaymentAlertItem,
   type Livestock,
   type LivestockFilter,
   type MedicalRecord,
   type MedicalRecordFilter,
   type NewAlertInput,
+  type NewAnimalOwnershipInput,
+  type NewFarmAccountInput,
+  type NewFarmWorkerInput,
   type NewFinancialLogInput,
   type NewLivestockInput,
   type NewMedicalRecordInput,
   type NewProductRecordInput,
+  type NewWorkerPaymentInput,
+  type NewWorkerTaskInput,
   type ProductRecord,
   type ProductRecordFilter,
   type UpdateAlertInput,
+  type UpdateAnimalOwnershipInput,
+  type UpdateFarmAccountInput,
+  type UpdateFarmWorkerInput,
   type UpdateFinancialLogInput,
   type UpdateLivestockInput,
   type UpdateMedicalRecordInput,
   type UpdateProductRecordInput,
+  type UpdateWorkerPaymentInput,
+  type UpdateWorkerTaskInput,
+  type WorkerPayment,
+  type WorkerPaymentFilter,
+  type WorkerTask,
+  type WorkerTaskFilter,
 } from '@farmdb/core';
 import {
   createDrizzleClient,
@@ -53,6 +77,13 @@ import {
   type FinancialRepository,
 } from './repositories/financialRepository';
 import {
+  createHrRepository,
+  type CreateWorkerPaymentOptions,
+  type CreateWorkerPaymentResult,
+  type HrRepository,
+  type MarkWorkerPaymentPaidOptions,
+} from './repositories/hrRepository';
+import {
   createLivestockRepository,
   type FarmSummary,
   type LivestockRepository,
@@ -63,6 +94,18 @@ import {
   type CreateMedicalRecordResult,
   type MedicalRepository,
 } from './repositories/medicalRepository';
+import {
+  createNetworkRepository,
+  type AcceptPendingAccountOptions,
+  type CloudSyncResult,
+  type JoinFarmNetworkInput,
+  type JoinFarmNetworkResult,
+  type NetworkRepository,
+} from './repositories/networkRepository';
+import {
+  createOwnershipRepository,
+  type OwnershipRepository,
+} from './repositories/ownershipRepository';
 import {
   createProductionRepository,
   type CreateProductRecordResult,
@@ -80,10 +123,13 @@ export interface FarmDbContextValue {
   driver?: SqlDriver;
   events: DatabaseEventBus;
   livestock: LivestockRepository;
+  ownerships: OwnershipRepository;
   production: ProductionRepository;
   medical: MedicalRepository;
   financial: FinancialRepository;
   alerts: AlertsRepository;
+  hr: HrRepository;
+  network: NetworkRepository;
   settings: SettingsRepository;
   backup: BackupRepository;
 }
@@ -111,6 +157,7 @@ export function createFarmDbSession(driver: SqlDriver): FarmDbContextValue {
   const db = createDrizzleClient(driver);
   const events = new DatabaseEventBus();
   const livestock = createLivestockRepository(db, events);
+  const ownerships = createOwnershipRepository(db, events);
   const settings = createSettingsRepository(db, events);
   const financial = createFinancialRepository(db, events);
   const production = createProductionRepository(
@@ -121,12 +168,18 @@ export function createFarmDbSession(driver: SqlDriver): FarmDbContextValue {
   );
   const medical = createMedicalRepository(db, events, financial);
   const alerts = createAlertsRepository(db, events);
-  const backup = createBackupRepository(db, events, {
+  const hr = createHrRepository(db, events, financial);
+  let backup!: BackupRepository;
+  const network = createNetworkRepository(db, events, settings, () => backup);
+  backup = createBackupRepository(db, events, {
     livestock,
     production,
     medical,
     financial,
     alerts,
+    hr,
+    ownerships,
+    network,
     settings,
   });
 
@@ -136,10 +189,13 @@ export function createFarmDbSession(driver: SqlDriver): FarmDbContextValue {
     driver,
     events,
     livestock,
+    ownerships,
     production,
     medical,
     financial,
     alerts,
+    hr,
+    network,
     settings,
     backup,
   };
@@ -253,6 +309,13 @@ export function useUpdateFarmSettings() {
   const { settings } = useFarmDb();
   return useMutation<FarmSettings, Error, Partial<FarmSettings>>({
     mutationFn: (input) => settings.update(input),
+  });
+}
+
+export function useResetFarmSettings() {
+  const { settings } = useFarmDb();
+  return useMutation<FarmSettings, Error, void>({
+    mutationFn: () => settings.reset(),
   });
 }
 
@@ -399,8 +462,116 @@ export function useDeleteAlert() {
   });
 }
 
+export function useWorkerList(filter?: FarmWorkerFilter) {
+  const { hr } = useFarmDb();
+  return useQuery<FarmWorker[]>({
+    queryKey: FARMDB_QUERY_KEYS.workersList(filter),
+    queryFn: () => hr.listWorkers(filter),
+  });
+}
+
+export function useCreateWorker() {
+  const { hr } = useFarmDb();
+  return useMutation<FarmWorker, Error, NewFarmWorkerInput>({
+    mutationFn: (input) => hr.createWorker(input),
+  });
+}
+
+export function useUpdateWorker() {
+  const { hr } = useFarmDb();
+  return useMutation<FarmWorker, Error, { id: string; input: UpdateFarmWorkerInput }>({
+    mutationFn: ({ id, input }) => hr.updateWorker(id, input),
+  });
+}
+
+export function useDeleteWorker() {
+  const { hr } = useFarmDb();
+  return useMutation<boolean, Error, string>({
+    mutationFn: (id) => hr.removeWorker(id),
+  });
+}
+
+export function useWorkerPaymentList(filter?: WorkerPaymentFilter) {
+  const { hr } = useFarmDb();
+  return useQuery<WorkerPayment[]>({
+    queryKey: FARMDB_QUERY_KEYS.workerPaymentsList(filter),
+    queryFn: () => hr.listPayments(filter),
+  });
+}
+
+export function useCreateWorkerPayment() {
+  const { hr } = useFarmDb();
+  return useMutation<
+    CreateWorkerPaymentResult,
+    Error,
+    { input: NewWorkerPaymentInput; options?: CreateWorkerPaymentOptions }
+  >({
+    mutationFn: ({ input, options }) => hr.createPayment(input, options),
+  });
+}
+
+export function useUpdateWorkerPayment() {
+  const { hr } = useFarmDb();
+  return useMutation<
+    WorkerPayment,
+    Error,
+    { id: string; input: UpdateWorkerPaymentInput }
+  >({
+    mutationFn: ({ id, input }) => hr.updatePayment(id, input),
+  });
+}
+
+export function useMarkWorkerPaymentPaid() {
+  const { hr } = useFarmDb();
+  return useMutation<
+    CreateWorkerPaymentResult,
+    Error,
+    { id: string; options?: MarkWorkerPaymentPaidOptions }
+  >({
+    mutationFn: ({ id, options }) => hr.markPaymentPaid(id, options),
+  });
+}
+
+export function useDeleteWorkerPayment() {
+  const { hr } = useFarmDb();
+  return useMutation<boolean, Error, string>({
+    mutationFn: (id) => hr.removePayment(id),
+  });
+}
+
+export function useWorkerTaskList(filter?: WorkerTaskFilter) {
+  const { hr } = useFarmDb();
+  return useQuery<WorkerTask[]>({
+    queryKey: FARMDB_QUERY_KEYS.workerTasksList(filter),
+    queryFn: () => hr.listTasks(filter),
+  });
+}
+
+export function useCreateWorkerTask() {
+  const { hr } = useFarmDb();
+  return useMutation<WorkerTask, Error, NewWorkerTaskInput>({
+    mutationFn: (input) => hr.createTask(input),
+  });
+}
+
+export function useUpdateWorkerTask() {
+  const { hr } = useFarmDb();
+  return useMutation<WorkerTask, Error, { id: string; input: UpdateWorkerTaskInput }>({
+    mutationFn: ({ id, input }) => hr.updateTask(id, input),
+  });
+}
+
+export function useDeleteWorkerTask() {
+  const { hr } = useFarmDb();
+  return useMutation<boolean, Error, string>({
+    mutationFn: (id) => hr.removeTask(id),
+  });
+}
+
 export interface AlertNotificationPayload {
-  alert: AlertItem;
+  kind?: 'alert' | 'hr_payment';
+  alert?: AlertItem;
+  paymentAlert?: HrDuePaymentAlertItem;
   title: string;
   body: string;
 }
@@ -410,40 +581,76 @@ export interface AlertNotificationDispatcher {
 }
 
 /**
- * Checks SQLite for due, unresolved, unnotified alerts, dispatches local
- * notifications through the platform adapter, and marks delivered rows.
+ * Checks SQLite for due livestock alerts AND due/almost-due worker salary
+ * payments, dispatches local notifications, and marks delivered rows.
  */
 export async function runDueAlertCheck(
   session: FarmDbContextValue,
   dispatcher: AlertNotificationDispatcher,
   todayIso?: string
 ): Promise<AlertNotificationPayload[]> {
-  const dueAlerts = await session.alerts.listDueForNotification(todayIso);
-  if (dueAlerts.length === 0) {
+  const currentSettings = await session.settings.get();
+  const [dueAlerts, duePayments] = await Promise.all([
+    session.alerts.listDueForNotification(todayIso),
+    session.hr.listDuePaymentNotifications(
+      todayIso,
+      currentSettings.paymentAlertLeadDays
+    ),
+  ]);
+
+  if (dueAlerts.length === 0 && duePayments.length === 0) {
     return [];
   }
 
-  const animals = await session.livestock.list({});
+  const animals = dueAlerts.length > 0 ? await session.livestock.list({}) : [];
   const animalsById = new Map(animals.map((a) => [a.id, a]));
   const delivered: AlertNotificationPayload[] = [];
-  const deliveredIds: string[] = [];
+  const deliveredAlertIds: string[] = [];
+  const deliveredPayments: HrDuePaymentAlertItem[] = [];
 
   for (const alert of dueAlerts) {
     const animal = alert.livestockId
       ? animalsById.get(alert.livestockId) ?? null
       : null;
     const { title, body } = formatAlertNotificationContent(alert, animal);
-    const payload: AlertNotificationPayload = { alert, title, body };
+    const payload: AlertNotificationPayload = {
+      kind: 'alert',
+      alert,
+      title,
+      body,
+    };
 
     const ok = await dispatcher.deliver(payload);
     if (ok) {
       delivered.push(payload);
-      deliveredIds.push(alert.id);
+      deliveredAlertIds.push(alert.id);
     }
   }
 
-  if (deliveredIds.length > 0) {
-    await session.alerts.markNotified(deliveredIds);
+  if (deliveredAlertIds.length > 0) {
+    await session.alerts.markNotified(deliveredAlertIds);
+  }
+
+  for (const item of duePayments) {
+    const { title, body } = formatPaymentAlertNotification(
+      item,
+      currentSettings.currencySymbol
+    );
+    const payload: AlertNotificationPayload = {
+      kind: 'hr_payment',
+      paymentAlert: item,
+      title,
+      body,
+    };
+    const ok = await dispatcher.deliver(payload);
+    if (ok) {
+      delivered.push(payload);
+      deliveredPayments.push(item);
+    }
+  }
+
+  if (deliveredPayments.length > 0) {
+    await session.hr.markPaymentNotificationsDelivered(deliveredPayments);
   }
 
   return delivered;
@@ -451,7 +658,11 @@ export async function runDueAlertCheck(
 
 export function useAlertBackgroundWorker(
   dispatcher: AlertNotificationDispatcher,
-  options?: { intervalMs?: number; onDelivered?: (items: AlertNotificationPayload[]) => void }
+  options?: {
+    enabled?: boolean;
+    intervalMs?: number;
+    onDelivered?: (items: AlertNotificationPayload[]) => void;
+  }
 ) {
   const session = useFarmDb();
   const dispatcherRef = useRef(dispatcher);
@@ -476,9 +687,14 @@ export function useAlertBackgroundWorker(
     }
   }, [session]);
 
-  const intervalMs = options?.intervalMs ?? 60_000;
+  const enabled = options?.enabled ?? true;
+  const intervalMs = Math.max(15_000, options?.intervalMs ?? 60_000);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     void checkNow();
     const timer = setInterval(() => {
       void checkNow();
@@ -487,7 +703,219 @@ export function useAlertBackgroundWorker(
     return () => {
       clearInterval(timer);
     };
-  }, [checkNow, intervalMs]);
+  }, [checkNow, enabled, intervalMs]);
 
   return { checkNow };
 }
+
+export function useOwnershipList(filter?: AnimalOwnershipFilter) {
+  const { ownerships } = useFarmDb();
+  return useQuery<AnimalOwnership[]>({
+    queryKey: FARMDB_QUERY_KEYS.ownershipsList(filter),
+    queryFn: () => ownerships.list(filter),
+  });
+}
+
+export function useCreateOwnership() {
+  const { ownerships } = useFarmDb();
+  return useMutation<AnimalOwnership, Error, NewAnimalOwnershipInput>({
+    mutationFn: (input) => ownerships.create(input),
+  });
+}
+
+export function useUpdateOwnership() {
+  const { ownerships } = useFarmDb();
+  return useMutation<
+    AnimalOwnership,
+    Error,
+    { id: string; input: UpdateAnimalOwnershipInput }
+  >({
+    mutationFn: ({ id, input }) => ownerships.update(id, input),
+  });
+}
+
+export function useDeleteOwnership() {
+  const { ownerships } = useFarmDb();
+  return useMutation<boolean, Error, string>({
+    mutationFn: (id) => ownerships.remove(id),
+  });
+}
+
+export function useFarmAccountList(filter?: FarmAccountFilter) {
+  const { network } = useFarmDb();
+  return useQuery<FarmAccount[]>({
+    queryKey: FARMDB_QUERY_KEYS.accountsList(filter),
+    queryFn: () => network.listAccounts(filter),
+  });
+}
+
+export function useActiveFarmAccount() {
+  const { network } = useFarmDb();
+  return useQuery<FarmAccount>({
+    queryKey: FARMDB_QUERY_KEYS.activeAccount(),
+    queryFn: () => network.getActiveAccount(),
+  });
+}
+
+export function useSwitchFarmAccount() {
+  const { network } = useFarmDb();
+  return useMutation<
+    FarmAccount,
+    Error,
+    { accountId: string; accessCode?: string }
+  >({
+    mutationFn: ({ accountId, accessCode }) =>
+      network.switchActiveAccount(accountId, accessCode),
+  });
+}
+
+export function useCreateFarmAccount() {
+  const { network } = useFarmDb();
+  return useMutation<FarmAccount, Error, NewFarmAccountInput>({
+    mutationFn: (input) => network.createAccount(input),
+  });
+}
+
+export function useUpdateFarmAccount() {
+  const { network } = useFarmDb();
+  return useMutation<
+    FarmAccount,
+    Error,
+    { id: string; input: UpdateFarmAccountInput }
+  >({
+    mutationFn: ({ id, input }) => network.updateAccount(id, input),
+  });
+}
+
+export function useDeleteFarmAccount() {
+  const { network } = useFarmDb();
+  return useMutation<boolean, Error, string>({
+    mutationFn: (id) => network.removeAccount(id),
+  });
+}
+
+export function useRotateNetworkJoinKey() {
+  const { network } = useFarmDb();
+  return useMutation<string, Error, void>({
+    mutationFn: () => network.rotateNetworkJoinKey(),
+  });
+}
+
+export function useJoinFarmNetwork() {
+  const { network } = useFarmDb();
+  return useMutation<JoinFarmNetworkResult, Error, JoinFarmNetworkInput>({
+    mutationFn: (input) => network.joinNetworkWithKey(input),
+  });
+}
+
+export function useAcceptPendingAccount() {
+  const { network } = useFarmDb();
+  return useMutation<
+    FarmAccount,
+    Error,
+    { accountId: string; options?: AcceptPendingAccountOptions }
+  >({
+    mutationFn: ({ accountId, options }) =>
+      network.acceptPendingAccount(accountId, options),
+  });
+}
+
+export function useCloudSyncLogs(limit = 25) {
+  const { network } = useFarmDb();
+  return useQuery<CloudSyncLog[]>({
+    queryKey: FARMDB_QUERY_KEYS.cloudSyncLogs(limit),
+    queryFn: () => network.listSyncLogs(limit),
+  });
+}
+
+export function useClearCloudSyncLogs() {
+  const { network } = useFarmDb();
+  return useMutation<void, Error, void>({
+    mutationFn: () => network.clearSyncLogs(),
+  });
+}
+
+export function useTriggerCloudSync() {
+  const { network } = useFarmDb();
+  return useMutation<CloudSyncResult, Error, CloudSyncDirection>({
+    mutationFn: (direction) => network.syncWithSupabase(direction),
+  });
+}
+
+/**
+ * Automatically syncs local SQLite with Supabase when cloud sync + auto-sync
+ * are enabled and the device connects to the internet.
+ */
+export function useCloudAutoSyncWorker(
+  settings: FarmSettings,
+  options?: {
+    canSyncAccount?: boolean;
+    onSynced?: (result: CloudSyncResult) => void;
+  }
+) {
+  const { network } = useFarmDb();
+  const inFlightRef = useRef(false);
+  const onSyncedRef = useRef(options?.onSynced);
+  onSyncedRef.current = options?.onSynced;
+
+  const canAutoSync = Boolean(
+    options?.canSyncAccount !== false &&
+      settings.cloudSyncEnabled &&
+      settings.autoSyncOnInternet &&
+      settings.supabaseUrl.trim().length > 0 &&
+      settings.supabaseAnonKey.trim().length > 0
+  );
+
+  const syncNow = useCallback(async (): Promise<CloudSyncResult | null> => {
+    if (!canAutoSync || inFlightRef.current) {
+      return null;
+    }
+    if (
+      typeof navigator !== 'undefined' &&
+      (navigator as unknown as { onLine?: boolean }).onLine === false
+    ) {
+      return null;
+    }
+    inFlightRef.current = true;
+    try {
+      const result = await network.syncWithSupabase('bidirectional');
+      onSyncedRef.current?.(result);
+      return result;
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, [canAutoSync, network]);
+
+  useEffect(() => {
+    if (!canAutoSync) {
+      return;
+    }
+
+    const intervalMs = Math.max(
+      30_000,
+      (settings.cloudSyncIntervalSeconds || 120) * 1000
+    );
+
+    const handleOnline = () => {
+      void syncNow();
+    };
+
+    const g = globalThis as unknown as {
+      addEventListener?: (t: string, l: () => void) => void;
+      removeEventListener?: (t: string, l: () => void) => void;
+    };
+    g.addEventListener?.('online', handleOnline);
+
+    const timer = setInterval(() => {
+      void syncNow();
+    }, intervalMs);
+
+    return () => {
+      clearInterval(timer);
+      g.removeEventListener?.('online', handleOnline);
+    };
+  }, [canAutoSync, settings.cloudSyncIntervalSeconds, syncNow]);
+
+  return { syncNow };
+}
+

@@ -1,0 +1,1024 @@
+import { useMemo, useState } from 'react';
+import {
+  buildAllModulePermissions,
+  DEFAULT_FARM_SETTINGS,
+  encodeFarmNetworkJoinKey,
+  FARM_ACCOUNT_AVATARS,
+  FARM_ACCOUNT_ROLES,
+  FARM_ACCOUNT_STATUSES,
+  FARM_MODULE_ACCESS_LEVELS,
+  FARM_PERMISSION_MODULES,
+  formatAccessLevelLabel,
+  formatAccountRoleLabel,
+  formatAccountStatusLabel,
+  formatPermissionModuleLabel,
+  getDefaultPermissionsForRole,
+  type FarmAccount,
+  type FarmAccountAvatar,
+  type FarmAccountPermissions,
+  type FarmAccountRole,
+  type FarmAccountStatus,
+  type FarmModuleAccessLevel,
+  type FarmPermissionModule,
+} from '@farmdb/core';
+import {
+  useAcceptPendingAccount,
+  useActiveFarmAccount,
+  useCreateFarmAccount,
+  useDeleteFarmAccount,
+  useFarmAccountList,
+  useFarmSettings,
+  useRotateNetworkJoinKey,
+  useSwitchFarmAccount,
+  useUpdateFarmAccount,
+} from '@farmdb/db';
+import { APP_ICONS } from '../assets/icons';
+import { ModernSelect } from './ModernSelect';
+
+interface FarmNetworkViewProps {
+  onOpenAuthPortal?: () => void;
+}
+
+function getAvatarIconSrc(avatar: FarmAccountAvatar): string {
+  switch (avatar) {
+    case 'farmerFemale':
+      return APP_ICONS.farmerFemale;
+    case 'peasant':
+      return APP_ICONS.peasant;
+    case 'staff':
+      return APP_ICONS.staff;
+    case 'farmer':
+    default:
+      return APP_ICONS.farmer;
+  }
+}
+
+export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
+  const settingsQuery = useFarmSettings();
+  const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+
+  const accountsQuery = useFarmAccountList({});
+  const activeAccountQuery = useActiveFarmAccount();
+
+  const switchAccountMut = useSwitchFarmAccount();
+  const createAccountMut = useCreateFarmAccount();
+  const updateAccountMut = useUpdateFarmAccount();
+  const deleteAccountMut = useDeleteFarmAccount();
+  const rotateKeyMut = useRotateNetworkJoinKey();
+  const acceptPendingMut = useAcceptPendingAccount();
+
+  const accounts = accountsQuery.data ?? [];
+  const activeAccount = activeAccountQuery.data;
+  const isAdminOrManager = Boolean(
+    activeAccount?.isPrimaryAdmin || activeAccount?.role === 'admin'
+  );
+
+  const pendingAccounts = useMemo(
+    () => accounts.filter((a) => a.status === 'pending'),
+    [accounts]
+  );
+
+  const fullJoinKey = useMemo(
+    () =>
+      encodeFarmNetworkJoinKey({
+        joinCode: settings.networkJoinKey,
+        workspaceId: settings.cloudWorkspaceId,
+        farmName: settings.farmName,
+        supabaseUrl: settings.supabaseUrl,
+        supabaseAnonKey: settings.supabaseAnonKey,
+      }),
+    [
+      settings.networkJoinKey,
+      settings.cloudWorkspaceId,
+      settings.farmName,
+      settings.supabaseUrl,
+      settings.supabaseAnonKey,
+    ]
+  );
+
+  const hasCloudKey =
+    settings.supabaseUrl.trim().length > 0 &&
+    settings.supabaseAnonKey.trim().length > 0;
+
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [errorNotice, setErrorNotice] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isSeeding, setIsSeeding] = useState(false);
+
+  // Switch PIN Prompt Modal
+  const [pinPromptAccount, setPinPromptAccount] = useState<FarmAccount | null>(null);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  // Add/Edit/Approve Account Modal
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<FarmAccount | null>(null);
+  const [approvingMode, setApprovingMode] = useState(false);
+  const [aName, setAName] = useState('');
+  const [aRole, setARole] = useState<FarmAccountRole>('family_member');
+  const [aRelationship, setARelationship] = useState('');
+  const [aEmail, setAEmail] = useState('');
+  const [aPhone, setAPhone] = useState('');
+  const [aAvatar, setAAvatar] = useState<FarmAccountAvatar>('farmer');
+  const [aAccessCode, setAAccessCode] = useState('');
+  const [aStatus, setAStatus] = useState<FarmAccountStatus>('active');
+  const [aCanSyncCloud, setACanSyncCloud] = useState(true);
+  const [aPermissions, setAPermissions] = useState<FarmAccountPermissions>(
+    () => getDefaultPermissionsForRole('family_member')
+  );
+  const [aError, setAError] = useState<string | null>(null);
+
+  function openAddAccountModal() {
+    setEditingAccount(null);
+    setApprovingMode(false);
+    setAName('');
+    setARole('family_member');
+    setARelationship('');
+    setAEmail('');
+    setAPhone('');
+    setAAvatar('farmerFemale');
+    setAAccessCode('');
+    setAStatus('active');
+    setACanSyncCloud(true);
+    setAPermissions(getDefaultPermissionsForRole('family_member'));
+    setAError(null);
+    setAccountModalOpen(true);
+  }
+
+  function openEditAccountModal(acc: FarmAccount, approvePending = false) {
+    setEditingAccount(acc);
+    setApprovingMode(approvePending);
+    setAName(acc.displayName);
+    setARole(acc.role);
+    setARelationship(acc.relationship ?? '');
+    setAEmail(acc.email ?? '');
+    setAPhone(acc.phone ?? '');
+    setAAvatar(acc.avatarKey);
+    setAAccessCode(acc.accessCode ?? '');
+    setAStatus(approvePending ? 'active' : acc.status);
+    setACanSyncCloud(acc.canSyncCloud);
+    setAPermissions({ ...acc.permissions });
+    setAError(null);
+    setAccountModalOpen(true);
+  }
+
+  async function handleSaveAccount(e: React.FormEvent) {
+    e.preventDefault();
+    setAError(null);
+    const enforcedPermissions: FarmAccountPermissions = aPermissions;
+    try {
+      if (editingAccount && approvingMode) {
+        await acceptPendingMut.mutateAsync({
+          accountId: editingAccount.id,
+          options: {
+            role: aRole,
+            permissions: enforcedPermissions,
+            canManageNetwork: false,
+            canSyncCloud: aCanSyncCloud,
+          },
+        });
+        setStatusNotice(
+          `Assigned privileges and accepted ${editingAccount.displayName} into ${settings.farmName}.`
+        );
+      } else if (editingAccount) {
+        await updateAccountMut.mutateAsync({
+          id: editingAccount.id,
+          input: {
+            displayName: aName,
+            role: aRole,
+            relationship: aRelationship || null,
+            email: aEmail || null,
+            phone: aPhone || null,
+            avatarKey: aAvatar,
+            accessCode: aAccessCode || null,
+            status: aStatus,
+            canManageNetwork: Boolean(editingAccount.isPrimaryAdmin),
+            canSyncCloud: aCanSyncCloud,
+            permissions: enforcedPermissions,
+          },
+        });
+        setStatusNotice(`Updated privileges and profile for ${aName}.`);
+      } else {
+        await createAccountMut.mutateAsync({
+          displayName: aName,
+          role: aRole,
+          relationship: aRelationship || null,
+          email: aEmail || null,
+          phone: aPhone || null,
+          avatarKey: aAvatar,
+          accessCode: aAccessCode || null,
+          status: aStatus,
+          canManageNetwork: false,
+          canSyncCloud: aCanSyncCloud,
+          permissions: enforcedPermissions,
+        });
+        setStatusNotice(`Added ${aName} to Farm Network.`);
+      }
+      setAccountModalOpen(false);
+    } catch (err) {
+      setAError(
+        err instanceof Error ? err.message : 'Unable to save farm network account.'
+      );
+    }
+  }
+
+  async function handleQuickAcceptPending(acc: FarmAccount) {
+    setErrorNotice(null);
+    try {
+      await acceptPendingMut.mutateAsync({
+        accountId: acc.id,
+        options: {
+          role: acc.role,
+          permissions: acc.permissions,
+        },
+      });
+      setStatusNotice(
+        `Accepted ${acc.displayName} into the Farm Network with ${formatAccountRoleLabel(acc.role)} privileges.`
+      );
+    } catch (err) {
+      setErrorNotice(
+        err instanceof Error ? err.message : 'Unable to accept account.'
+      );
+    }
+  }
+
+  async function handleTrySwitchAccount(acc: FarmAccount) {
+    setErrorNotice(null);
+    if (acc.accessCode && acc.accessCode.trim().length > 0) {
+      setPinPromptAccount(acc);
+      setPinInput('');
+      setPinError(null);
+      return;
+    }
+    try {
+      await switchAccountMut.mutateAsync({ accountId: acc.id });
+      setStatusNotice(
+        `Switched active session to ${acc.displayName} (${formatAccountRoleLabel(acc.role)}).`
+      );
+    } catch (err) {
+      setErrorNotice(
+        err instanceof Error ? err.message : 'Unable to switch account.'
+      );
+    }
+  }
+
+  async function handleSubmitPinSwitch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pinPromptAccount) return;
+    setPinError(null);
+    try {
+      await switchAccountMut.mutateAsync({
+        accountId: pinPromptAccount.id,
+        accessCode: pinInput,
+      });
+      setStatusNotice(`Signed in as ${pinPromptAccount.displayName}.`);
+      setPinPromptAccount(null);
+    } catch (err) {
+      setPinError(err instanceof Error ? err.message : 'Invalid PIN code.');
+    }
+  }
+
+  async function handleDeleteAccount(acc: FarmAccount) {
+    if (settings.confirmBeforeDelete && confirmDeleteId !== acc.id) {
+      setConfirmDeleteId(acc.id);
+      return;
+    }
+    setConfirmDeleteId(null);
+    try {
+      await deleteAccountMut.mutateAsync(acc.id);
+      setStatusNotice(`Removed ${acc.displayName} from Farm Network.`);
+    } catch (err) {
+      setErrorNotice(
+        err instanceof Error ? err.message : 'Cannot remove account.'
+      );
+    }
+  }
+
+  async function handleRotateKey() {
+    setErrorNotice(null);
+    try {
+      const next = await rotateKeyMut.mutateAsync();
+      setStatusNotice(
+        `Generated new Farm Network Join Key (${next}). Previous keys are now revoked.`
+      );
+    } catch (err) {
+      setErrorNotice(
+        err instanceof Error ? err.message : 'Unable to generate join key.'
+      );
+    }
+  }
+
+  async function handleSeedSampleNetwork() {
+    if (isSeeding) return;
+    setIsSeeding(true);
+    setErrorNotice(null);
+    setStatusNotice(null);
+    try {
+      const existingNames = new Set(
+        accounts.map((a) => a.displayName.trim().toLowerCase())
+      );
+
+      if (!existingNames.has('martha mukasa (family)')) {
+        await createAccountMut.mutateAsync({
+          displayName: 'Martha Mukasa (Family)',
+          role: 'family_member',
+          relationship: 'Spouse / Co-Manager',
+          email: 'martha@homestead.farm',
+          phone: '+256 772 880112',
+          avatarKey: 'farmerFemale',
+          canManageNetwork: false,
+          canSyncCloud: true,
+          status: 'active',
+        });
+      }
+
+      if (!existingNames.has('mr. kato (greenvalley partner)')) {
+        await createAccountMut.mutateAsync({
+          displayName: 'Mr. Kato (GreenValley Partner)',
+          role: 'external_owner',
+          relationship: 'External Bull & Cow Owner',
+          phone: '+256 772 310440',
+          avatarKey: 'peasant',
+          accessCode: '1234',
+          canManageNetwork: false,
+          canSyncCloud: true,
+          status: 'active',
+        });
+      }
+
+      if (!existingNames.has('david okello (pending join)')) {
+        await createAccountMut.mutateAsync({
+          displayName: 'David Okello (Pending Join)',
+          role: 'family_member',
+          relationship: 'Joined via Farm Join Key',
+          email: 'david.okello@homestead.farm',
+          phone: '+256 782 550911',
+          avatarKey: 'farmer',
+          canManageNetwork: false,
+          canSyncCloud: true,
+          status: 'pending',
+        });
+      }
+
+      setStatusNotice(
+        'Loaded sample Farm Network accounts including a pending join request for approval.'
+      );
+    } catch (err) {
+      setErrorNotice(
+        err instanceof Error ? err.message : 'Unable to seed Farm Network accounts.'
+      );
+    } finally {
+      setIsSeeding(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="page-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="family-hero-icon">
+            <img src={APP_ICONS.networking} alt="" className="app-icon-lg" />
+          </div>
+          <div>
+            <h1 className="page-title">Farm Network &amp; Access Control</h1>
+          </div>
+        </div>
+
+        <div className="row-actions">
+          {isAdminOrManager && accounts.length < 4 && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={isSeeding}
+              onClick={() => void handleSeedSampleNetwork()}
+            >
+              <img src={APP_ICONS.staff} alt="" className="app-icon-sm" />
+              {isSeeding ? 'Loading Sample...' : 'Load Sample Network'}
+            </button>
+          )}
+          {onOpenAuthPortal && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={onOpenAuthPortal}
+            >
+              <img src={APP_ICONS.farmer} alt="" className="app-icon-sm" />
+              Login / Sign Up
+            </button>
+          )}
+          {isAdminOrManager && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={openAddAccountModal}
+            >
+              <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
+              Add Connected Account
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Active Session Banner */}
+      <div className="network-active-strip">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <img
+            src={
+              activeAccount
+                ? getAvatarIconSrc(activeAccount.avatarKey)
+                : APP_ICONS.farmer
+            }
+            alt=""
+            style={{ width: 40, height: 40, objectFit: 'contain' }}
+          />
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <strong>
+                Signed in as {activeAccount?.displayName ?? 'Farm Owner (Administrator)'}
+              </strong>
+              <span className="status-pill status-active">
+                {activeAccount
+                  ? formatAccountRoleLabel(activeAccount.role)
+                  : 'Farm Owner (Admin)'}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              {isAdminOrManager
+                ? 'Administrator privileges active — generate Join Keys, assign permissions, and approve new users.'
+                : 'Connected member session — access reflects the privileges granted by your Farm Administrator.'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {errorNotice && (
+        <div className="notice-banner" role="alert">
+          <span>{errorNotice}</span>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setErrorNotice(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {statusNotice && (
+        <div className="alert-toast-banner" role="status">
+          <span>{statusNotice}</span>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setStatusNotice(null)}
+          >
+            <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Admin Join Key Card */}
+      {isAdminOrManager && (
+        <div className="card network-join-key-card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <h2 className="card-section-title" style={{ marginBottom: 0 }}>
+                Admin Network Join Key &amp; Invitations
+              </h2>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={rotateKeyMut.isPending}
+              onClick={() => void handleRotateKey()}
+            >
+              <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
+              {rotateKeyMut.isPending ? 'Generating...' : 'Generate New Key'}
+            </button>
+          </div>
+
+          <div className="join-key-boxes">
+            <div className="join-key-box">
+              <span className="hr-sub-label">Same-Device / Short Code</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                <code className="join-code-display">{settings.networkJoinKey}</code>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(settings.networkJoinKey);
+                    setStatusNotice('Copied short Farm Join Code to clipboard.');
+                  }}
+                >
+                  Copy Code
+                </button>
+              </div>
+            </div>
+
+            <div className="join-key-box" style={{ flex: 2 }}>
+              <span className="hr-sub-label">
+                Full Cloud Invitation Key (Cross-Device Supabase Share)
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                <input
+                  readOnly
+                  className="input"
+                  value={hasCloudKey ? fullJoinKey : 'Cloud sync not configured'}
+                  style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.78rem' }}
+                />
+                {hasCloudKey && (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(fullJoinKey);
+                      setStatusNotice(
+                        'Copied Full Cloud Join Key! Any new or existing user can enter it on the Sign Up / Connect page.'
+                      );
+                    }}
+                  >
+                    Copy Cloud Key
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pending Join Requests awaiting Admin privileges & acceptance */}
+      {isAdminOrManager && pendingAccounts.length > 0 && (
+        <div className="card pending-requests-card" role="region" aria-label="Pending join requests">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10 }}>
+            <img src={APP_ICONS.hourglass} alt="" className="app-icon-md" />
+            <div>
+              <h2 className="card-section-title" style={{ margin: 0 }}>
+                Pending Network Requests ({pendingAccounts.length})
+              </h2>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {pendingAccounts.map((acc) => (
+              <div key={acc.id} className="pending-request-row">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                  <img
+                    src={getAvatarIconSrc(acc.avatarKey)}
+                    alt=""
+                    className="app-icon-md"
+                  />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <strong>{acc.displayName}</strong>
+                      <span className="status-pill status-sold">
+                        Pending Approval
+                      </span>
+                      <span className="tag-chip">
+                        Requested: {formatAccountRoleLabel(acc.role)}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                      {acc.email ?? 'No email'} · {acc.phone ?? 'No phone'}
+                      {acc.relationship ? ` · ${acc.relationship}` : ''}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => openEditAccountModal(acc, true)}
+                  >
+                    Assign Privileges &amp; Accept
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    disabled={acceptPendingMut.isPending}
+                    onClick={() => void handleQuickAcceptPending(acc)}
+                  >
+                    Quick Accept
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={() => void deleteAccountMut.mutateAsync(acc.id)}
+                  >
+                    Decline
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Connected Accounts Directory */}
+      <div className="card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+          <h2 className="card-section-title" style={{ margin: 0 }}>
+            Connected Accounts &amp; Privileges ({accounts.length})
+          </h2>
+        </div>
+
+        <div className="hr-worker-grid">
+          {accounts.map((acc) => {
+            const isCurrent = activeAccount?.id === acc.id;
+            return (
+              <div
+                key={acc.id}
+                className={`hr-worker-card ${isCurrent ? 'is-active-account' : ''}`}
+              >
+                <div className="hr-worker-head">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div className="hr-avatar">
+                      <img
+                        src={getAvatarIconSrc(acc.avatarKey)}
+                        alt=""
+                        className="app-icon-md"
+                      />
+                    </div>
+                    <div>
+                      <strong style={{ display: 'block', fontSize: '1rem' }}>
+                        {acc.displayName}
+                      </strong>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        {formatAccountRoleLabel(acc.role)}
+                        {acc.relationship ? ` · ${acc.relationship}` : ''}
+                      </span>
+                    </div>
+                  </div>
+
+                  <span
+                    className={`status-pill ${
+                      acc.status === 'active'
+                        ? 'status-active'
+                        : acc.status === 'pending' || acc.status === 'invited'
+                          ? 'status-sold'
+                          : 'status-deceased'
+                    }`}
+                  >
+                    {isCurrent && acc.status === 'active'
+                      ? 'Signed In'
+                      : formatAccountStatusLabel(acc.status)}
+                  </span>
+                </div>
+
+                <div style={{ fontSize: '0.79rem', color: 'var(--text-muted)' }}>
+                  {acc.email ?? 'No email'} · {acc.phone ?? 'No phone'}
+                  {acc.accessCode ? ' · PIN protected' : ''}
+                </div>
+
+                <div className="perm-pills-wrap">
+                  {FARM_PERMISSION_MODULES.map((mod) => {
+                    const level = acc.isPrimaryAdmin
+                      ? 'full'
+                      : acc.permissions[mod];
+                    return (
+                      <span
+                        key={mod}
+                        className={`perm-chip perm-${level}`}
+                        title={`${formatPermissionModuleLabel(mod)}: ${formatAccessLevelLabel(level)}`}
+                      >
+                        {mod.replace('_', ' ')}: {level}
+                      </span>
+                    );
+                  })}
+                </div>
+
+                <div className="hr-worker-actions">
+                  {!isCurrent && (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={acc.status === 'suspended'}
+                      onClick={() => void handleTrySwitchAccount(acc)}
+                    >
+                      Switch Account
+                    </button>
+                  )}
+                  {isAdminOrManager && acc.status === 'pending' && (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => openEditAccountModal(acc, true)}
+                    >
+                      Approve &amp; Accept
+                    </button>
+                  )}
+                  {isAdminOrManager && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => openEditAccountModal(acc, false)}
+                    >
+                      <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
+                      {acc.isPrimaryAdmin ? 'Edit Profile' : 'Edit Privileges'}
+                    </button>
+                  )}
+                  {isAdminOrManager &&
+                    !acc.isPrimaryAdmin &&
+                    (confirmDeleteId === acc.id ? (
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        onClick={() => void handleDeleteAccount(acc)}
+                      >
+                        Confirm
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        onClick={() => void handleDeleteAccount(acc)}
+                      >
+                        <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                      </button>
+                    ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Add / Edit / Approve Farm Network Account Modal */}
+      {accountModalOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-card modal-card-wide">
+            <div className="modal-header">
+              <h2 className="modal-title">
+                {approvingMode && editingAccount
+                  ? `Assign Privileges & Accept: ${editingAccount.displayName}`
+                  : editingAccount
+                    ? `Manage Account: ${editingAccount.displayName}`
+                    : 'Add Connected Farm Network Account'}
+              </h2>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setAccountModalOpen(false)}
+              >
+                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAccount}>
+              <div className="form-grid">
+                <div className="form-field">
+                  <label className="form-label">Display Name *</label>
+                  <input
+                    className="input"
+                    value={aName}
+                    onChange={(e) => setAName(e.target.value)}
+                    placeholder="e.g. Martha Mukasa"
+                    autoFocus
+                  />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Relationship / Note</label>
+                  <input
+                    className="input"
+                    value={aRelationship}
+                    onChange={(e) => setARelationship(e.target.value)}
+                    placeholder="e.g. Sister / Neighbor Bull Owner"
+                  />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Role</label>
+                  <ModernSelect
+                    fullWidth
+                    disabled={Boolean(editingAccount?.isPrimaryAdmin)}
+                    value={aRole}
+                    options={FARM_ACCOUNT_ROLES.map((r) => ({
+                      value: r,
+                      label: formatAccountRoleLabel(r),
+                      iconSrc: APP_ICONS.networking,
+                    }))}
+                    onChange={(nextRole) => {
+                      setARole(nextRole);
+                      if (!editingAccount || approvingMode) {
+                        setAPermissions(getDefaultPermissionsForRole(nextRole));
+                      }
+                    }}
+                  />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Avatar Icon</label>
+                  <ModernSelect
+                    fullWidth
+                    value={aAvatar}
+                    options={FARM_ACCOUNT_AVATARS.map((av) => ({
+                      value: av,
+                      label:
+                        av === 'farmerFemale'
+                          ? 'Farmer Female'
+                          : av === 'peasant'
+                            ? 'Partner / Owner'
+                            : av === 'staff'
+                              ? 'Team Icon'
+                              : 'Farmer Classic',
+                      iconSrc: getAvatarIconSrc(av),
+                    }))}
+                    onChange={setAAvatar}
+                  />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Email</label>
+                  <input
+                    className="input"
+                    value={aEmail}
+                    onChange={(e) => setAEmail(e.target.value)}
+                    placeholder="Optional email address"
+                  />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Phone</label>
+                  <input
+                    className="input"
+                    value={aPhone}
+                    onChange={(e) => setAPhone(e.target.value)}
+                    placeholder="Optional phone"
+                  />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Switch PIN / Passcode</label>
+                  <input
+                    className="input"
+                    value={aAccessCode}
+                    onChange={(e) => setAAccessCode(e.target.value)}
+                    placeholder="Optional PIN"
+                  />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Account Status</label>
+                  <ModernSelect
+                    fullWidth
+                    disabled={Boolean(editingAccount?.isPrimaryAdmin) || approvingMode}
+                    value={aStatus}
+                    options={FARM_ACCOUNT_STATUSES.map((st) => ({
+                      value: st,
+                      label: formatAccountStatusLabel(st),
+                      iconSrc: APP_ICONS.checkmark,
+                    }))}
+                    onChange={setAStatus}
+                  />
+                </div>
+              </div>
+
+              {!editingAccount?.isPrimaryAdmin && (
+                <>
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={aCanSyncCloud}
+                        onChange={(e) => setACanSyncCloud(e.target.checked)}
+                      />
+                      Allow syncing shared Admin cloud database (Network DB)
+                    </label>
+                  </div>
+
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <strong style={{ fontSize: '0.92rem' }}>
+                        Module Access &amp; Edit Privileges
+                      </strong>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() =>
+                            setAPermissions(getDefaultPermissionsForRole(aRole))
+                          }
+                        >
+                          Reset to Role Defaults
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() =>
+                            setAPermissions(buildAllModulePermissions('view'))
+                          }
+                        >
+                          All View-Only
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rbac-grid">
+                      {FARM_PERMISSION_MODULES.map((mod: FarmPermissionModule) => (
+                        <div key={mod} className="rbac-row">
+                          <span style={{ fontWeight: 600, fontSize: '0.84rem' }}>
+                            {formatPermissionModuleLabel(mod)}
+                          </span>
+                          <div className="segmented-group" role="group">
+                            {FARM_MODULE_ACCESS_LEVELS.map(
+                              (level: FarmModuleAccessLevel) => (
+                                <button
+                                  key={level}
+                                  type="button"
+                                  className={`segmented-btn ${
+                                    aPermissions[mod] === level ? 'active' : ''
+                                  }`}
+                                  style={{ padding: '4px 9px', fontSize: '0.76rem' }}
+                                  onClick={() =>
+                                    setAPermissions((prev) => ({
+                                      ...prev,
+                                      [mod]: level,
+                                    }))
+                                  }
+                                >
+                                  {level === 'none'
+                                    ? 'Hidden'
+                                    : level === 'view'
+                                      ? 'View'
+                                      : level === 'edit'
+                                        ? 'Edit'
+                                        : 'Full'}
+                                </button>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {aError && <p className="field-error" style={{ marginTop: 10 }}>{aError}</p>}
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setAccountModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={
+                    createAccountMut.isPending ||
+                    updateAccountMut.isPending ||
+                    acceptPendingMut.isPending
+                  }
+                >
+                  {approvingMode ? 'Accept & Grant Privileges' : 'Save Account'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* PIN Switch Modal */}
+      {pinPromptAccount && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-card" style={{ maxWidth: 380 }}>
+            <div className="modal-header">
+              <h2 className="modal-title">Enter Access PIN</h2>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setPinPromptAccount(null)}
+              >
+                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmitPinSwitch}>
+              <p style={{ margin: '0 0 10px', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+                Enter the passcode assigned to <strong>{pinPromptAccount.displayName}</strong>:
+              </p>
+              <input
+                className="input"
+                type="password"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="Enter PIN..."
+                autoFocus
+              />
+              {pinError && <p className="field-error" style={{ marginTop: 8 }}>{pinError}</p>}
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setPinPromptAccount(null)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary">
+                  Unlock &amp; Switch
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

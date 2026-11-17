@@ -2,10 +2,13 @@ import type { QueryClient } from '@tanstack/react-query';
 
 export type DbChangeScope =
   | 'livestock'
+  | 'ownerships'
   | 'production'
   | 'medical'
   | 'financial'
   | 'alerts'
+  | 'hr'
+  | 'network'
   | 'settings'
   | '*';
 
@@ -32,6 +35,21 @@ export const FARMDB_QUERY_KEYS = {
   alertsAll: () => ['farmdb', 'alerts'] as const,
   alertsList: (filter?: unknown) => ['farmdb', 'alerts', 'list', filter ?? {}] as const,
   alertsDue: () => ['farmdb', 'alerts', 'due'] as const,
+  hrAll: () => ['farmdb', 'hr'] as const,
+  workersList: (filter?: unknown) => ['farmdb', 'hr', 'workers', filter ?? {}] as const,
+  workerPaymentsList: (filter?: unknown) =>
+    ['farmdb', 'hr', 'payments', filter ?? {}] as const,
+  workerTasksList: (filter?: unknown) =>
+    ['farmdb', 'hr', 'tasks', filter ?? {}] as const,
+  ownershipsAll: () => ['farmdb', 'ownerships'] as const,
+  ownershipsList: (filter?: unknown) =>
+    ['farmdb', 'ownerships', 'list', filter ?? {}] as const,
+  networkAll: () => ['farmdb', 'network'] as const,
+  accountsList: (filter?: unknown) =>
+    ['farmdb', 'network', 'accounts', filter ?? {}] as const,
+  activeAccount: () => ['farmdb', 'network', 'active'] as const,
+  cloudSyncLogs: (limit?: number) =>
+    ['farmdb', 'network', 'logs', limit ?? 25] as const,
   settings: () => ['farmdb', 'settings'] as const,
 };
 
@@ -98,6 +116,21 @@ export function attachQueryInvalidation(
         case 'alerts':
           void queryClient.invalidateQueries({
             queryKey: FARMDB_QUERY_KEYS.alertsAll(),
+          });
+          break;
+        case 'hr':
+          void queryClient.invalidateQueries({
+            queryKey: FARMDB_QUERY_KEYS.hrAll(),
+          });
+          break;
+        case 'ownerships':
+          void queryClient.invalidateQueries({
+            queryKey: FARMDB_QUERY_KEYS.ownershipsAll(),
+          });
+          break;
+        case 'network':
+          void queryClient.invalidateQueries({
+            queryKey: FARMDB_QUERY_KEYS.networkAll(),
           });
           break;
         case 'settings':

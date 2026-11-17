@@ -1,6 +1,8 @@
 import type { SqlDriver } from './driver';
 import { FARMDB_MIGRATIONS } from './migrations';
 
+const inFlightSchemaChecks = new WeakMap<SqlDriver, Promise<void>>();
+
 export async function runMigrations(driver: SqlDriver): Promise<string[]> {
   await driver.execute('PRAGMA foreign_keys = ON;');
   await driver.execute(
@@ -41,4 +43,24 @@ export async function runMigrations(driver: SqlDriver): Promise<string[]> {
   }
 
   return newlyApplied;
+}
+
+/**
+ * Ensures any pending schema migrations are applied safely without overlapping
+ * concurrent runs on the same SqlDriver instance (e.g. during HMR reloads).
+ */
+export async function ensureSchemaReady(driver: SqlDriver): Promise<void> {
+  const existing = inFlightSchemaChecks.get(driver);
+  if (existing) {
+    return existing;
+  }
+
+  const run = runMigrations(driver)
+    .then(() => undefined)
+    .finally(() => {
+      inFlightSchemaChecks.delete(driver);
+    });
+
+  inFlightSchemaChecks.set(driver, run);
+  return run;
 }

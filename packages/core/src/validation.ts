@@ -1,25 +1,71 @@
+import { DEFAULT_FARM_SETTINGS } from './analytics';
+import {
+  normalizeAccountPermissions,
+  normalizeSupabaseBaseUrl,
+} from './network';
 import {
   ALERT_ENTRY_KINDS,
+  DATE_FORMATS,
+  FARM_ACCOUNT_AVATARS,
+  FARM_ACCOUNT_ROLES,
+  FARM_ACCOUNT_STATUSES,
   FINANCIAL_CATEGORIES,
+  FONT_SCALES,
   LIVESTOCK_STATUSES,
+  OWNERSHIP_CATEGORIES,
+  OWNERSHIP_STATUSES,
   SPECIES_LIST,
+  SYNC_CONFLICT_STRATEGIES,
   TRANSACTION_TYPES,
+  UI_DENSITIES,
+  VOLUME_UNITS,
+  WORKER_PAY_FREQUENCIES,
+  WORKER_PAYMENT_STATUSES,
+  WORKER_STATUSES,
+  WORKER_TASK_PRIORITIES,
+  WORKER_TASK_STATUSES,
   type AlertEntryKind,
+  type DateFormatPreference,
+  type FarmAccountAvatar,
+  type FarmAccountPermissions,
+  type FarmAccountRole,
+  type FarmAccountStatus,
   type FarmSettings,
   type FinancialCategory,
+  type FontScale,
   type LivestockStatus,
   type NewAlertInput,
+  type NewAnimalOwnershipInput,
+  type NewFarmAccountInput,
+  type NewFarmWorkerInput,
   type NewFinancialLogInput,
   type NewLivestockInput,
   type NewMedicalRecordInput,
   type NewProductRecordInput,
+  type NewWorkerPaymentInput,
+  type NewWorkerTaskInput,
+  type OwnershipCategory,
+  type OwnershipStatus,
   type Species,
+  type SyncConflictStrategy,
   type TransactionType,
+  type UiDensity,
   type UpdateAlertInput,
+  type UpdateAnimalOwnershipInput,
+  type UpdateFarmAccountInput,
+  type UpdateFarmWorkerInput,
   type UpdateFinancialLogInput,
   type UpdateLivestockInput,
   type UpdateMedicalRecordInput,
   type UpdateProductRecordInput,
+  type UpdateWorkerPaymentInput,
+  type UpdateWorkerTaskInput,
+  type VolumeUnit,
+  type WorkerPayFrequency,
+  type WorkerPaymentStatus,
+  type WorkerStatus,
+  type WorkerTaskPriority,
+  type WorkerTaskStatus,
 } from './types';
 
 export type ValidationErrors<T> = Partial<Record<keyof T, string>>;
@@ -110,6 +156,12 @@ export function validateNewLivestock(
     }
   }
 
+  const sireId = normalizeOptionalText(input.sireId);
+  const damId = normalizeOptionalText(input.damId);
+  if (sireId && damId && sireId === damId) {
+    errors.damId = 'Sire and Dam must be two different animals.';
+  }
+
   if (Object.keys(errors).length > 0) {
     return { ok: false, errors };
   }
@@ -124,6 +176,8 @@ export function validateNewLivestock(
       breed: normalizeOptionalText(input.breed),
       dob,
       imageUri: normalizeOptionalText(input.imageUri),
+      sireId,
+      damId,
       status,
     },
   };
@@ -131,7 +185,12 @@ export function validateNewLivestock(
 
 export function validateUpdateLivestock(
   input: UpdateLivestockInput,
-  options?: { existingTags?: Iterable<string>; currentTag?: string; todayIso?: string }
+  options?: {
+    existingTags?: Iterable<string>;
+    currentTag?: string;
+    currentId?: string;
+    todayIso?: string;
+  }
 ): ValidationResult<UpdateLivestockInput> {
   const errors: ValidationErrors<UpdateLivestockInput> = {};
   const sanitized: UpdateLivestockInput = {};
@@ -195,6 +254,32 @@ export function validateUpdateLivestock(
       }
     }
     sanitized.dob = dob;
+  }
+
+  if (input.sireId !== undefined) {
+    const sireId = normalizeOptionalText(input.sireId);
+    if (options?.currentId && sireId === options.currentId) {
+      errors.sireId = 'An animal cannot be its own sire.';
+    } else {
+      sanitized.sireId = sireId;
+    }
+  }
+
+  if (input.damId !== undefined) {
+    const damId = normalizeOptionalText(input.damId);
+    if (options?.currentId && damId === options.currentId) {
+      errors.damId = 'An animal cannot be its own dam.';
+    } else {
+      sanitized.damId = damId;
+    }
+  }
+
+  if (
+    sanitized.sireId &&
+    sanitized.damId &&
+    sanitized.sireId === sanitized.damId
+  ) {
+    errors.damId = 'Sire and Dam must be two different animals.';
   }
 
   if (Object.keys(errors).length > 0) {
@@ -395,18 +480,138 @@ export function validateUpdateFinancialLog(
 }
 
 export function validateFarmSettings(
-  input: FarmSettings
+  input: Partial<FarmSettings>
 ): ValidationResult<FarmSettings> {
   const errors: ValidationErrors<FarmSettings> = {};
 
-  const rate = Number(input.defaultMilkRatePerLiter);
+  const farmName = (input.farmName ?? DEFAULT_FARM_SETTINGS.farmName).trim();
+  if (!farmName || farmName.length > 60) {
+    errors.farmName = 'Farm name must be between 1 and 60 characters.';
+  }
+
+  const rate = Number(
+    input.defaultMilkRatePerLiter ?? DEFAULT_FARM_SETTINGS.defaultMilkRatePerLiter
+  );
   if (!Number.isFinite(rate) || rate < 0) {
     errors.defaultMilkRatePerLiter = 'Milk rate cannot be negative.';
   }
 
-  const currencySymbol = (input.currencySymbol ?? '').trim();
+  const currencySymbol = (
+    input.currencySymbol ?? DEFAULT_FARM_SETTINGS.currencySymbol
+  ).trim();
   if (!currencySymbol || currencySymbol.length > 6) {
     errors.currencySymbol = 'Currency symbol must be 1 to 6 characters.';
+  }
+
+  const fontScale = (input.fontScale ??
+    DEFAULT_FARM_SETTINGS.fontScale) as FontScale;
+  if (!FONT_SCALES.includes(fontScale)) {
+    errors.fontScale = 'Select a valid font size.';
+  }
+
+  const uiDensity = (input.uiDensity ??
+    DEFAULT_FARM_SETTINGS.uiDensity) as UiDensity;
+  if (!UI_DENSITIES.includes(uiDensity)) {
+    errors.uiDensity = 'Select a valid UI element density.';
+  }
+
+  const dateFormat = (input.dateFormat ??
+    DEFAULT_FARM_SETTINGS.dateFormat) as DateFormatPreference;
+  if (!DATE_FORMATS.includes(dateFormat)) {
+    errors.dateFormat = 'Select a valid date format.';
+  }
+
+  const volumeUnit = (input.volumeUnit ??
+    DEFAULT_FARM_SETTINGS.volumeUnit) as VolumeUnit;
+  if (!VOLUME_UNITS.includes(volumeUnit)) {
+    errors.volumeUnit = 'Select a valid volume unit.';
+  }
+
+  const defaultSpecies = (input.defaultSpecies ??
+    DEFAULT_FARM_SETTINGS.defaultSpecies) as Species;
+  if (!SPECIES_LIST.includes(defaultSpecies)) {
+    errors.defaultSpecies = 'Select a valid default livestock species.';
+  }
+
+  const alertCheckIntervalSeconds = Number(
+    input.alertCheckIntervalSeconds ??
+      DEFAULT_FARM_SETTINGS.alertCheckIntervalSeconds
+  );
+  if (
+    !Number.isInteger(alertCheckIntervalSeconds) ||
+    alertCheckIntervalSeconds < 15 ||
+    alertCheckIntervalSeconds > 3600
+  ) {
+    errors.alertCheckIntervalSeconds =
+      'Alert check interval must be a whole number between 15 and 3600 seconds.';
+  }
+
+  const paymentAlertLeadDays = Number(
+    input.paymentAlertLeadDays ?? DEFAULT_FARM_SETTINGS.paymentAlertLeadDays
+  );
+  if (
+    !Number.isInteger(paymentAlertLeadDays) ||
+    paymentAlertLeadDays < 0 ||
+    paymentAlertLeadDays > 30
+  ) {
+    errors.paymentAlertLeadDays =
+      'Payment due lead time must be a whole number between 0 and 30 days.';
+  }
+
+  const activeAccountId =
+    (input.activeAccountId ?? DEFAULT_FARM_SETTINGS.activeAccountId).trim() ||
+    DEFAULT_FARM_SETTINGS.activeAccountId;
+
+  const supabaseUrl = normalizeSupabaseBaseUrl(
+    input.supabaseUrl ?? DEFAULT_FARM_SETTINGS.supabaseUrl
+  );
+  if (
+    supabaseUrl.length > 0 &&
+    !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(supabaseUrl)
+  ) {
+    errors.supabaseUrl =
+      'Supabase Project URL must start with https:// or http:// (or leave blank).';
+  }
+
+  const supabaseAnonKey = (
+    input.supabaseAnonKey ?? DEFAULT_FARM_SETTINGS.supabaseAnonKey
+  ).trim();
+
+  const cloudWorkspaceId = (
+    input.cloudWorkspaceId ?? DEFAULT_FARM_SETTINGS.cloudWorkspaceId
+  ).trim();
+  if (!cloudWorkspaceId || cloudWorkspaceId.length > 80) {
+    errors.cloudWorkspaceId =
+      'Cloud workspace ID must be between 1 and 80 characters.';
+  }
+
+  const cloudSyncIntervalSeconds = Number(
+    input.cloudSyncIntervalSeconds ??
+      DEFAULT_FARM_SETTINGS.cloudSyncIntervalSeconds
+  );
+  if (
+    !Number.isInteger(cloudSyncIntervalSeconds) ||
+    cloudSyncIntervalSeconds < 30 ||
+    cloudSyncIntervalSeconds > 86400
+  ) {
+    errors.cloudSyncIntervalSeconds =
+      'Cloud sync interval must be between 30 and 86400 seconds.';
+  }
+
+  const syncConflictStrategy = (input.syncConflictStrategy ??
+    DEFAULT_FARM_SETTINGS.syncConflictStrategy) as SyncConflictStrategy;
+  if (!SYNC_CONFLICT_STRATEGIES.includes(syncConflictStrategy)) {
+    errors.syncConflictStrategy = 'Select a valid cloud conflict resolution mode.';
+  }
+
+  const networkJoinKey = (
+    input.networkJoinKey ?? DEFAULT_FARM_SETTINGS.networkJoinKey
+  )
+    .trim()
+    .toUpperCase();
+  if (!networkJoinKey || networkJoinKey.length > 40) {
+    errors.networkJoinKey =
+      'Network join key must be between 1 and 40 characters.';
   }
 
   if (Object.keys(errors).length > 0) {
@@ -417,8 +622,56 @@ export function validateFarmSettings(
     ok: true,
     errors: {},
     data: {
+      farmName,
       defaultMilkRatePerLiter: roundToTwo(rate),
       currencySymbol,
+      fontScale,
+      uiDensity,
+      dateFormat,
+      volumeUnit,
+      defaultSpecies,
+      autoRecordMilkSaleByDefault: Boolean(
+        input.autoRecordMilkSaleByDefault ??
+          DEFAULT_FARM_SETTINGS.autoRecordMilkSaleByDefault
+      ),
+      autoRecordMedicalExpenseByDefault: Boolean(
+        input.autoRecordMedicalExpenseByDefault ??
+          DEFAULT_FARM_SETTINGS.autoRecordMedicalExpenseByDefault
+      ),
+      autoRecordPayrollExpenseByDefault: Boolean(
+        input.autoRecordPayrollExpenseByDefault ??
+          DEFAULT_FARM_SETTINGS.autoRecordPayrollExpenseByDefault
+      ),
+      paymentAlertLeadDays,
+      alertCheckIntervalSeconds,
+      enableNotifications: Boolean(
+        input.enableNotifications ?? DEFAULT_FARM_SETTINGS.enableNotifications
+      ),
+      confirmBeforeDelete: Boolean(
+        input.confirmBeforeDelete ?? DEFAULT_FARM_SETTINGS.confirmBeforeDelete
+      ),
+      mobileIconMode: Boolean(
+        input.mobileIconMode ?? DEFAULT_FARM_SETTINGS.mobileIconMode
+      ),
+      activeAccountId,
+      cloudSyncEnabled: Boolean(
+        input.cloudSyncEnabled ?? DEFAULT_FARM_SETTINGS.cloudSyncEnabled
+      ),
+      supabaseUrl,
+      supabaseAnonKey,
+      cloudWorkspaceId,
+      autoSyncOnInternet: Boolean(
+        input.autoSyncOnInternet ?? DEFAULT_FARM_SETTINGS.autoSyncOnInternet
+      ),
+      cloudSyncIntervalSeconds,
+      syncConflictStrategy,
+      syncIncludeFinancials: Boolean(
+        input.syncIncludeFinancials ?? DEFAULT_FARM_SETTINGS.syncIncludeFinancials
+      ),
+      syncIncludeHr: Boolean(
+        input.syncIncludeHr ?? DEFAULT_FARM_SETTINGS.syncIncludeHr
+      ),
+      networkJoinKey,
     },
   };
 }
@@ -633,3 +886,731 @@ export function validateUpdateAlert(
 
   return { ok: true, errors: {}, data: sanitized };
 }
+
+export function validateNewFarmWorker(
+  input: NewFarmWorkerInput,
+  options?: { todayIso?: string }
+): ValidationResult<Required<NewFarmWorkerInput>> {
+  const errors: ValidationErrors<NewFarmWorkerInput> = {};
+
+  const name = (input.name ?? '').trim();
+  if (!name) {
+    errors.name = 'Worker name is required.';
+  } else if (name.length > 80) {
+    errors.name = 'Worker name must be 80 characters or fewer.';
+  }
+
+  const role = (input.role ?? '').trim();
+  if (!role) {
+    errors.role = 'Role / job title is required.';
+  } else if (role.length > 60) {
+    errors.role = 'Role must be 60 characters or fewer.';
+  }
+
+  const salaryAmount = Number(input.salaryAmount);
+  if (!Number.isFinite(salaryAmount) || salaryAmount < 0) {
+    errors.salaryAmount = 'Salary amount cannot be negative.';
+  }
+
+  const payFrequency = (input.payFrequency ?? 'monthly') as WorkerPayFrequency;
+  if (!WORKER_PAY_FREQUENCIES.includes(payFrequency)) {
+    errors.payFrequency = 'Select a valid pay frequency.';
+  }
+
+  const status = (input.status ?? 'active') as WorkerStatus;
+  if (!WORKER_STATUSES.includes(status)) {
+    errors.status = 'Select a valid worker status.';
+  }
+
+  const fallbackToday = options?.todayIso ?? new Date().toISOString().slice(0, 10);
+  const nextPaymentDueDate = (input.nextPaymentDueDate ?? fallbackToday).trim();
+  if (!isValidIsoDate(nextPaymentDueDate)) {
+    errors.nextPaymentDueDate = 'Next payment due date must use YYYY-MM-DD format.';
+  }
+
+  const hireDate = normalizeOptionalText(input.hireDate);
+  if (hireDate !== null && !isValidIsoDate(hireDate)) {
+    errors.hireDate = 'Hire date must use YYYY-MM-DD format.';
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    errors: {},
+    data: {
+      name,
+      role,
+      phone: normalizeOptionalText(input.phone),
+      responsibilities: normalizeOptionalText(input.responsibilities),
+      salaryAmount: roundToTwo(salaryAmount),
+      payFrequency,
+      nextPaymentDueDate,
+      status,
+      hireDate,
+    },
+  };
+}
+
+export function validateUpdateFarmWorker(
+  input: UpdateFarmWorkerInput
+): ValidationResult<UpdateFarmWorkerInput> {
+  const errors: ValidationErrors<UpdateFarmWorkerInput> = {};
+  const sanitized: UpdateFarmWorkerInput = {};
+
+  if (input.name !== undefined) {
+    const name = input.name.trim();
+    if (!name) {
+      errors.name = 'Worker name cannot be empty.';
+    } else if (name.length > 80) {
+      errors.name = 'Worker name must be 80 characters or fewer.';
+    } else {
+      sanitized.name = name;
+    }
+  }
+
+  if (input.role !== undefined) {
+    const role = input.role.trim();
+    if (!role) {
+      errors.role = 'Role cannot be empty.';
+    } else if (role.length > 60) {
+      errors.role = 'Role must be 60 characters or fewer.';
+    } else {
+      sanitized.role = role;
+    }
+  }
+
+  if (input.phone !== undefined) {
+    sanitized.phone = normalizeOptionalText(input.phone);
+  }
+  if (input.responsibilities !== undefined) {
+    sanitized.responsibilities = normalizeOptionalText(input.responsibilities);
+  }
+
+  if (input.salaryAmount !== undefined) {
+    const salaryAmount = Number(input.salaryAmount);
+    if (!Number.isFinite(salaryAmount) || salaryAmount < 0) {
+      errors.salaryAmount = 'Salary amount cannot be negative.';
+    } else {
+      sanitized.salaryAmount = roundToTwo(salaryAmount);
+    }
+  }
+
+  if (input.payFrequency !== undefined) {
+    if (!WORKER_PAY_FREQUENCIES.includes(input.payFrequency)) {
+      errors.payFrequency = 'Select a valid pay frequency.';
+    } else {
+      sanitized.payFrequency = input.payFrequency;
+    }
+  }
+
+  if (input.status !== undefined) {
+    if (!WORKER_STATUSES.includes(input.status)) {
+      errors.status = 'Select a valid worker status.';
+    } else {
+      sanitized.status = input.status;
+    }
+  }
+
+  if (input.nextPaymentDueDate !== undefined) {
+    const dueDate = input.nextPaymentDueDate.trim();
+    if (!isValidIsoDate(dueDate)) {
+      errors.nextPaymentDueDate = 'Next payment due date must use YYYY-MM-DD format.';
+    } else {
+      sanitized.nextPaymentDueDate = dueDate;
+    }
+  }
+
+  if (input.hireDate !== undefined) {
+    const hireDate = normalizeOptionalText(input.hireDate);
+    if (hireDate !== null && !isValidIsoDate(hireDate)) {
+      errors.hireDate = 'Hire date must use YYYY-MM-DD format.';
+    } else {
+      sanitized.hireDate = hireDate;
+    }
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return { ok: true, errors: {}, data: sanitized };
+}
+
+export function validateNewWorkerPayment(
+  input: NewWorkerPaymentInput,
+  options?: { todayIso?: string }
+): ValidationResult<Required<NewWorkerPaymentInput>> {
+  const errors: ValidationErrors<NewWorkerPaymentInput> = {};
+
+  const workerId = (input.workerId ?? '').trim();
+  if (!workerId) {
+    errors.workerId = 'Please select a worker.';
+  }
+
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    errors.amount = 'Payment amount must be greater than 0.';
+  }
+
+  const dueDate = (input.dueDate ?? '').trim();
+  if (!isValidIsoDate(dueDate)) {
+    errors.dueDate = 'Due date must use YYYY-MM-DD format.';
+  }
+
+  const status = (input.status ?? 'pending') as WorkerPaymentStatus;
+  if (!WORKER_PAYMENT_STATUSES.includes(status)) {
+    errors.status = 'Payment status must be pending or paid.';
+  }
+
+  const fallbackToday = options?.todayIso ?? new Date().toISOString().slice(0, 10);
+  let paidDate = normalizeOptionalText(input.paidDate);
+  if (status === 'paid' && paidDate === null) {
+    paidDate = fallbackToday;
+  }
+  if (paidDate !== null && !isValidIsoDate(paidDate)) {
+    errors.paidDate = 'Paid date must use YYYY-MM-DD format.';
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    errors: {},
+    data: {
+      workerId,
+      amount: roundToTwo(amount),
+      dueDate,
+      paidDate: status === 'paid' ? paidDate : null,
+      status,
+      periodLabel: normalizeOptionalText(input.periodLabel),
+      notes: normalizeOptionalText(input.notes),
+    },
+  };
+}
+
+export function validateUpdateWorkerPayment(
+  input: UpdateWorkerPaymentInput
+): ValidationResult<UpdateWorkerPaymentInput> {
+  const errors: ValidationErrors<UpdateWorkerPaymentInput> = {};
+  const sanitized: UpdateWorkerPaymentInput = {};
+
+  if (input.workerId !== undefined) {
+    const workerId = input.workerId.trim();
+    if (!workerId) {
+      errors.workerId = 'Worker selection is required.';
+    } else {
+      sanitized.workerId = workerId;
+    }
+  }
+
+  if (input.amount !== undefined) {
+    const amount = Number(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      errors.amount = 'Payment amount must be greater than 0.';
+    } else {
+      sanitized.amount = roundToTwo(amount);
+    }
+  }
+
+  if (input.dueDate !== undefined) {
+    const dueDate = input.dueDate.trim();
+    if (!isValidIsoDate(dueDate)) {
+      errors.dueDate = 'Due date must use YYYY-MM-DD format.';
+    } else {
+      sanitized.dueDate = dueDate;
+    }
+  }
+
+  if (input.status !== undefined) {
+    if (!WORKER_PAYMENT_STATUSES.includes(input.status)) {
+      errors.status = 'Payment status must be pending or paid.';
+    } else {
+      sanitized.status = input.status;
+    }
+  }
+
+  if (input.paidDate !== undefined) {
+    const paidDate = normalizeOptionalText(input.paidDate);
+    if (paidDate !== null && !isValidIsoDate(paidDate)) {
+      errors.paidDate = 'Paid date must use YYYY-MM-DD format.';
+    } else {
+      sanitized.paidDate = paidDate;
+    }
+  }
+
+  if (input.periodLabel !== undefined) {
+    sanitized.periodLabel = normalizeOptionalText(input.periodLabel);
+  }
+  if (input.notes !== undefined) {
+    sanitized.notes = normalizeOptionalText(input.notes);
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return { ok: true, errors: {}, data: sanitized };
+}
+
+export function validateNewWorkerTask(
+  input: NewWorkerTaskInput
+): ValidationResult<Required<NewWorkerTaskInput>> {
+  const errors: ValidationErrors<NewWorkerTaskInput> = {};
+
+  const workerId = (input.workerId ?? '').trim();
+  if (!workerId) {
+    errors.workerId = 'Please assign the task to a worker.';
+  }
+
+  const title = (input.title ?? '').trim();
+  if (!title) {
+    errors.title = 'Task title is required.';
+  }
+
+  const priority = (input.priority ?? 'medium') as WorkerTaskPriority;
+  if (!WORKER_TASK_PRIORITIES.includes(priority)) {
+    errors.priority = 'Select a valid priority level.';
+  }
+
+  const status = (input.status ?? 'pending') as WorkerTaskStatus;
+  if (!WORKER_TASK_STATUSES.includes(status)) {
+    errors.status = 'Select a valid task status.';
+  }
+
+  const dueDate = normalizeOptionalText(input.dueDate);
+  if (dueDate !== null && !isValidIsoDate(dueDate)) {
+    errors.dueDate = 'Due date must use YYYY-MM-DD format.';
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    errors: {},
+    data: {
+      workerId,
+      livestockId: normalizeOptionalText(input.livestockId),
+      title,
+      description: normalizeOptionalText(input.description),
+      priority,
+      status,
+      dueDate,
+    },
+  };
+}
+
+export function validateUpdateWorkerTask(
+  input: UpdateWorkerTaskInput
+): ValidationResult<UpdateWorkerTaskInput> {
+  const errors: ValidationErrors<UpdateWorkerTaskInput> = {};
+  const sanitized: UpdateWorkerTaskInput = {};
+
+  if (input.workerId !== undefined) {
+    const workerId = input.workerId.trim();
+    if (!workerId) {
+      errors.workerId = 'Worker selection is required.';
+    } else {
+      sanitized.workerId = workerId;
+    }
+  }
+
+  if (input.livestockId !== undefined) {
+    sanitized.livestockId = normalizeOptionalText(input.livestockId);
+  }
+
+  if (input.title !== undefined) {
+    const title = input.title.trim();
+    if (!title) {
+      errors.title = 'Task title cannot be empty.';
+    } else {
+      sanitized.title = title;
+    }
+  }
+
+  if (input.description !== undefined) {
+    sanitized.description = normalizeOptionalText(input.description);
+  }
+
+  if (input.priority !== undefined) {
+    if (!WORKER_TASK_PRIORITIES.includes(input.priority)) {
+      errors.priority = 'Select a valid priority level.';
+    } else {
+      sanitized.priority = input.priority;
+    }
+  }
+
+  if (input.status !== undefined) {
+    if (!WORKER_TASK_STATUSES.includes(input.status)) {
+      errors.status = 'Select a valid task status.';
+    } else {
+      sanitized.status = input.status;
+    }
+  }
+
+  if (input.dueDate !== undefined) {
+    const dueDate = normalizeOptionalText(input.dueDate);
+    if (dueDate !== null && !isValidIsoDate(dueDate)) {
+      errors.dueDate = 'Due date must use YYYY-MM-DD format.';
+    } else {
+      sanitized.dueDate = dueDate;
+    }
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return { ok: true, errors: {}, data: sanitized };
+}
+
+export function validateNewAnimalOwnership(
+  input: NewAnimalOwnershipInput,
+  options?: { todayIso?: string }
+): ValidationResult<Required<NewAnimalOwnershipInput>> {
+  const errors: ValidationErrors<NewAnimalOwnershipInput> = {};
+
+  const livestockId = (input.livestockId ?? '').trim();
+  if (!livestockId) {
+    errors.livestockId = 'Please select an animal.';
+  }
+
+  const ownerName = (input.ownerName ?? '').trim();
+  if (!ownerName) {
+    errors.ownerName = 'Owner / partner name is required.';
+  } else if (ownerName.length > 80) {
+    errors.ownerName = 'Owner name must be 80 characters or fewer.';
+  }
+
+  const ownershipCategory = (input.ownershipCategory ??
+    'external_boarded') as OwnershipCategory;
+  if (!OWNERSHIP_CATEGORIES.includes(ownershipCategory)) {
+    errors.ownershipCategory = 'Select a valid ownership category.';
+  }
+
+  const sharePercentage = Number(input.sharePercentage ?? 100);
+  if (
+    !Number.isFinite(sharePercentage) ||
+    sharePercentage <= 0 ||
+    sharePercentage > 100
+  ) {
+    errors.sharePercentage = 'Ownership share must be between 1% and 100%.';
+  }
+
+  const boardingFee = Number(input.boardingFee ?? 0);
+  if (!Number.isFinite(boardingFee) || boardingFee < 0) {
+    errors.boardingFee = 'Agreed boarding or care fee cannot be negative.';
+  }
+
+  const fallbackToday = options?.todayIso ?? new Date().toISOString().slice(0, 10);
+  const startDate = (input.startDate ?? fallbackToday).trim();
+  if (!isValidIsoDate(startDate)) {
+    errors.startDate = 'Start date must use YYYY-MM-DD format.';
+  }
+
+  const expectedEndDate = normalizeOptionalText(input.expectedEndDate);
+  if (expectedEndDate !== null && !isValidIsoDate(expectedEndDate)) {
+    errors.expectedEndDate = 'Expected return / pickup date must use YYYY-MM-DD format.';
+  }
+
+  const status = (input.status ?? 'active') as OwnershipStatus;
+  if (!OWNERSHIP_STATUSES.includes(status)) {
+    errors.status = 'Select a valid custody status.';
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    errors: {},
+    data: {
+      livestockId,
+      ownerName,
+      ownerContact: normalizeOptionalText(input.ownerContact),
+      accountId: normalizeOptionalText(input.accountId),
+      ownershipCategory,
+      sharePercentage: roundToTwo(sharePercentage),
+      purpose: normalizeOptionalText(input.purpose),
+      startDate,
+      expectedEndDate,
+      boardingFee: roundToTwo(boardingFee),
+      status,
+      notes: normalizeOptionalText(input.notes),
+    },
+  };
+}
+
+export function validateUpdateAnimalOwnership(
+  input: UpdateAnimalOwnershipInput
+): ValidationResult<UpdateAnimalOwnershipInput> {
+  const errors: ValidationErrors<UpdateAnimalOwnershipInput> = {};
+  const sanitized: UpdateAnimalOwnershipInput = {};
+
+  if (input.livestockId !== undefined) {
+    const livestockId = input.livestockId.trim();
+    if (!livestockId) {
+      errors.livestockId = 'Animal selection is required.';
+    } else {
+      sanitized.livestockId = livestockId;
+    }
+  }
+
+  if (input.ownerName !== undefined) {
+    const ownerName = input.ownerName.trim();
+    if (!ownerName) {
+      errors.ownerName = 'Owner name cannot be empty.';
+    } else if (ownerName.length > 80) {
+      errors.ownerName = 'Owner name must be 80 characters or fewer.';
+    } else {
+      sanitized.ownerName = ownerName;
+    }
+  }
+
+  if (input.ownerContact !== undefined) {
+    sanitized.ownerContact = normalizeOptionalText(input.ownerContact);
+  }
+  if (input.accountId !== undefined) {
+    sanitized.accountId = normalizeOptionalText(input.accountId);
+  }
+
+  if (input.ownershipCategory !== undefined) {
+    if (!OWNERSHIP_CATEGORIES.includes(input.ownershipCategory)) {
+      errors.ownershipCategory = 'Select a valid ownership category.';
+    } else {
+      sanitized.ownershipCategory = input.ownershipCategory;
+    }
+  }
+
+  if (input.sharePercentage !== undefined) {
+    const sharePercentage = Number(input.sharePercentage);
+    if (
+      !Number.isFinite(sharePercentage) ||
+      sharePercentage <= 0 ||
+      sharePercentage > 100
+    ) {
+      errors.sharePercentage = 'Ownership share must be between 1% and 100%.';
+    } else {
+      sanitized.sharePercentage = roundToTwo(sharePercentage);
+    }
+  }
+
+  if (input.purpose !== undefined) {
+    sanitized.purpose = normalizeOptionalText(input.purpose);
+  }
+
+  if (input.startDate !== undefined) {
+    const startDate = input.startDate.trim();
+    if (!isValidIsoDate(startDate)) {
+      errors.startDate = 'Start date must use YYYY-MM-DD format.';
+    } else {
+      sanitized.startDate = startDate;
+    }
+  }
+
+  if (input.expectedEndDate !== undefined) {
+    const expectedEndDate = normalizeOptionalText(input.expectedEndDate);
+    if (expectedEndDate !== null && !isValidIsoDate(expectedEndDate)) {
+      errors.expectedEndDate = 'Expected date must use YYYY-MM-DD format.';
+    } else {
+      sanitized.expectedEndDate = expectedEndDate;
+    }
+  }
+
+  if (input.boardingFee !== undefined) {
+    const fee = Number(input.boardingFee);
+    if (!Number.isFinite(fee) || fee < 0) {
+      errors.boardingFee = 'Boarding or care fee cannot be negative.';
+    } else {
+      sanitized.boardingFee = roundToTwo(fee);
+    }
+  }
+
+  if (input.status !== undefined) {
+    if (!OWNERSHIP_STATUSES.includes(input.status)) {
+      errors.status = 'Select a valid custody status.';
+    } else {
+      sanitized.status = input.status;
+    }
+  }
+
+  if (input.notes !== undefined) {
+    sanitized.notes = normalizeOptionalText(input.notes);
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return { ok: true, errors: {}, data: sanitized };
+}
+
+export function validateNewFarmAccount(
+  input: NewFarmAccountInput
+): ValidationResult<
+  Required<Omit<NewFarmAccountInput, 'id' | 'permissions'>> & {
+    id?: string;
+    permissions: FarmAccountPermissions;
+  }
+> {
+  const errors: ValidationErrors<NewFarmAccountInput> = {};
+
+  const displayName = (input.displayName ?? '').trim();
+  if (!displayName) {
+    errors.displayName = 'Account display name is required.';
+  } else if (displayName.length > 70) {
+    errors.displayName = 'Display name must be 70 characters or fewer.';
+  }
+
+  const email = normalizeOptionalText(input.email);
+  if (email !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errors.email = 'Enter a valid email address or leave blank.';
+  }
+
+  const role = (input.role ?? 'family_member') as FarmAccountRole;
+  if (!FARM_ACCOUNT_ROLES.includes(role)) {
+    errors.role = 'Select a valid farm network role.';
+  }
+
+  const avatarKey = (input.avatarKey ??
+    (role === 'external_owner' ? 'peasant' : 'farmer')) as FarmAccountAvatar;
+  if (!FARM_ACCOUNT_AVATARS.includes(avatarKey)) {
+    errors.avatarKey = 'Select a valid account avatar.';
+  }
+
+  const status = (input.status ?? 'active') as FarmAccountStatus;
+  if (!FARM_ACCOUNT_STATUSES.includes(status)) {
+    errors.status = 'Select a valid account status.';
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  const isPrimaryAdmin = Boolean(input.isPrimaryAdmin ?? false);
+  const effectiveRole: FarmAccountRole = isPrimaryAdmin ? 'admin' : role;
+
+  return {
+    ok: true,
+    errors: {},
+    data: {
+      ...(input.id ? { id: input.id.trim() } : {}),
+      displayName,
+      email,
+      phone: normalizeOptionalText(input.phone),
+      role: effectiveRole,
+      relationship: normalizeOptionalText(input.relationship),
+      avatarKey,
+      accessCode: normalizeOptionalText(input.accessCode),
+      isPrimaryAdmin,
+      canManageNetwork: Boolean(
+        input.canManageNetwork ?? effectiveRole === 'admin'
+      ),
+      canSyncCloud: Boolean(
+        input.canSyncCloud ??
+          (effectiveRole === 'admin' ||
+            effectiveRole === 'manager' ||
+            effectiveRole === 'family_member')
+      ),
+      permissions: normalizeAccountPermissions(input.permissions, effectiveRole),
+      status: isPrimaryAdmin ? 'active' : status,
+    },
+  };
+}
+
+export function validateUpdateFarmAccount(
+  input: UpdateFarmAccountInput,
+  currentRole: FarmAccountRole = 'family_member'
+): ValidationResult<
+  Omit<UpdateFarmAccountInput, 'permissions'> & {
+    permissions?: Partial<FarmAccountPermissions>;
+  }
+> {
+  const errors: ValidationErrors<UpdateFarmAccountInput> = {};
+  const sanitized: UpdateFarmAccountInput = {};
+
+  if (input.displayName !== undefined) {
+    const displayName = input.displayName.trim();
+    if (!displayName) {
+      errors.displayName = 'Display name cannot be empty.';
+    } else if (displayName.length > 70) {
+      errors.displayName = 'Display name must be 70 characters or fewer.';
+    } else {
+      sanitized.displayName = displayName;
+    }
+  }
+
+  if (input.email !== undefined) {
+    const email = normalizeOptionalText(input.email);
+    if (email !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errors.email = 'Enter a valid email address or leave blank.';
+    } else {
+      sanitized.email = email;
+    }
+  }
+
+  if (input.phone !== undefined) {
+    sanitized.phone = normalizeOptionalText(input.phone);
+  }
+  if (input.relationship !== undefined) {
+    sanitized.relationship = normalizeOptionalText(input.relationship);
+  }
+  if (input.accessCode !== undefined) {
+    sanitized.accessCode = normalizeOptionalText(input.accessCode);
+  }
+
+  const nextRole = input.role ?? currentRole;
+  if (input.role !== undefined) {
+    if (!FARM_ACCOUNT_ROLES.includes(input.role)) {
+      errors.role = 'Select a valid farm network role.';
+    } else {
+      sanitized.role = input.role;
+    }
+  }
+
+  if (input.avatarKey !== undefined) {
+    if (!FARM_ACCOUNT_AVATARS.includes(input.avatarKey)) {
+      errors.avatarKey = 'Select a valid avatar.';
+    } else {
+      sanitized.avatarKey = input.avatarKey;
+    }
+  }
+
+  if (input.status !== undefined) {
+    if (!FARM_ACCOUNT_STATUSES.includes(input.status)) {
+      errors.status = 'Select a valid account status.';
+    } else {
+      sanitized.status = input.status;
+    }
+  }
+
+  if (input.canManageNetwork !== undefined) {
+    sanitized.canManageNetwork = Boolean(input.canManageNetwork);
+  }
+  if (input.canSyncCloud !== undefined) {
+    sanitized.canSyncCloud = Boolean(input.canSyncCloud);
+  }
+  if (input.lastSyncedAt !== undefined) {
+    sanitized.lastSyncedAt = input.lastSyncedAt;
+  }
+  if (input.permissions !== undefined) {
+    sanitized.permissions = normalizeAccountPermissions(
+      input.permissions,
+      nextRole
+    );
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { ok: false, errors };
+  }
+
+  return { ok: true, errors: {}, data: sanitized };
+}
+

@@ -84,6 +84,8 @@ describe('@farmdb/core phase 4 medical & alerts', () => {
       breed: 'Holstein',
       dob: '2022-05-10',
       imageUri: null,
+      sireId: null,
+      damId: null,
       status: 'active',
       createdAt: 1,
       updatedAt: 1,

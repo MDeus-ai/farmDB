@@ -1,67 +1,129 @@
 import {
+  advancePayDueDate,
+  computeHrSummary,
+  decodeFarmNetworkJoinKey,
+  DEFAULT_ADMIN_ACCOUNT,
   DEFAULT_FARM_SETTINGS,
   generateId,
+  generateShortJoinCode,
   getTodayIsoDate,
+  isAdminAccount,
+  mergeFarmSnapshots,
+  normalizeAccountPermissions,
+  normalizeSupabaseBaseUrl,
   normalizeTagNumber,
+  parseFarmSnapshotJson,
   roundAmount,
   validateFarmSettings,
   validateNewAlert,
+  validateNewAnimalOwnership,
+  validateNewFarmAccount,
+  validateNewFarmWorker,
   validateNewFinancialLog,
   validateNewLivestock,
   validateNewMedicalRecord,
   validateNewProductRecord,
+  validateNewWorkerPayment,
+  validateNewWorkerTask,
   validateUpdateAlert,
+  validateUpdateAnimalOwnership,
+  validateUpdateFarmAccount,
+  validateUpdateFarmWorker,
   validateUpdateFinancialLog,
   validateUpdateLivestock,
   validateUpdateMedicalRecord,
   validateUpdateProductRecord,
+  validateUpdateWorkerPayment,
+  validateUpdateWorkerTask,
   type AlertFilter,
   type AlertItem,
+  type AnimalOwnership,
+  type AnimalOwnershipFilter,
+  type CloudSyncDirection,
+  type CloudSyncLog,
+  type FarmAccount,
+  type FarmAccountFilter,
+  type FarmAccountRole,
   type FarmDbSnapshot,
   type FarmSettings,
+  type FarmWorker,
+  type FarmWorkerFilter,
   type FinancialLog,
   type FinancialLogFilter,
+  type HrDuePaymentAlertItem,
   type Livestock,
   type LivestockFilter,
   type MedicalRecord,
   type MedicalRecordFilter,
   type NewAlertInput,
+  type NewAnimalOwnershipInput,
+  type NewFarmAccountInput,
+  type NewFarmWorkerInput,
   type NewFinancialLogInput,
   type NewLivestockInput,
   type NewMedicalRecordInput,
   type NewProductRecordInput,
+  type NewWorkerPaymentInput,
+  type NewWorkerTaskInput,
   type ProductRecord,
   type ProductRecordFilter,
   type UpdateAlertInput,
+  type UpdateAnimalOwnershipInput,
+  type UpdateFarmAccountInput,
+  type UpdateFarmWorkerInput,
   type UpdateFinancialLogInput,
   type UpdateLivestockInput,
   type UpdateMedicalRecordInput,
   type UpdateProductRecordInput,
+  type UpdateWorkerPaymentInput,
+  type UpdateWorkerTaskInput,
+  type WorkerPayment,
+  type WorkerPaymentFilter,
+  type WorkerTask,
+  type WorkerTaskFilter,
 } from '@farmdb/core';
 import {
   AlertNotFoundError,
   AlertValidationError,
   DatabaseEventBus,
+  FarmAccountNotFoundError,
   FinancialLogNotFoundError,
   FinancialValidationError,
+  HrValidationError,
   LivestockNotFoundError,
   LivestockValidationError,
   MedicalRecordNotFoundError,
   MedicalValidationError,
+  NetworkValidationError,
+  OwnershipNotFoundError,
+  OwnershipValidationError,
   ProductionValidationError,
   ProductRecordNotFoundError,
   SettingsValidationError,
+  WorkerNotFoundError,
+  WorkerPaymentNotFoundError,
+  WorkerTaskNotFoundError,
+  type AcceptPendingAccountOptions,
   type AlertsRepository,
   type BackupRepository,
+  type CloudSyncResult,
   type CreateMedicalRecordOptions,
   type CreateMedicalRecordResult,
   type CreateProductRecordResult,
+  type CreateWorkerPaymentOptions,
+  type CreateWorkerPaymentResult,
   type FarmDbContextValue,
   type FarmSummary,
   type FinancialRepository,
+  type HrRepository,
+  type JoinFarmNetworkInput,
+  type JoinFarmNetworkResult,
   type LivestockRepository,
   type LogMilkYieldOptions,
+  type MarkWorkerPaymentPaidOptions,
   type MedicalRepository,
+  type NetworkRepository,
+  type OwnershipRepository,
   type ProductionRepository,
   type RestoreSnapshotResult,
   type SettingsRepository,
@@ -72,6 +134,12 @@ const PRODUCTION_KEY = 'farmdb_browser_preview_production_v1';
 const MEDICAL_KEY = 'farmdb_browser_preview_medical_v1';
 const FINANCIAL_KEY = 'farmdb_browser_preview_financial_v1';
 const ALERTS_KEY = 'farmdb_browser_preview_alerts_v1';
+const WORKERS_KEY = 'farmdb_browser_preview_workers_v1';
+const WORKER_PAYMENTS_KEY = 'farmdb_browser_preview_worker_payments_v1';
+const WORKER_TASKS_KEY = 'farmdb_browser_preview_worker_tasks_v1';
+const OWNERSHIPS_KEY = 'farmdb_browser_preview_ownerships_v1';
+const ACCOUNTS_KEY = 'farmdb_browser_preview_accounts_v1';
+const SYNC_LOGS_KEY = 'farmdb_browser_preview_sync_logs_v1';
 const SETTINGS_KEY = 'farmdb_browser_preview_settings_v1';
 
 function readJson<T>(key: string, fallback: T): T {
@@ -101,14 +169,18 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
 
   const settings: SettingsRepository = {
     async get(): Promise<FarmSettings> {
-      return readJson<FarmSettings>(SETTINGS_KEY, { ...DEFAULT_FARM_SETTINGS });
+      const stored = readJson<Partial<FarmSettings>>(SETTINGS_KEY, {});
+      const merged = validateFarmSettings({
+        ...DEFAULT_FARM_SETTINGS,
+        ...stored,
+      });
+      return merged.ok && merged.data ? merged.data : { ...DEFAULT_FARM_SETTINGS };
     },
     async update(input: Partial<FarmSettings>): Promise<FarmSettings> {
       const current = await this.get();
       const merged: FarmSettings = {
-        defaultMilkRatePerLiter:
-          input.defaultMilkRatePerLiter ?? current.defaultMilkRatePerLiter,
-        currencySymbol: input.currencySymbol ?? current.currencySymbol,
+        ...current,
+        ...input,
       };
       const validation = validateFarmSettings(merged);
       if (!validation.ok || !validation.data) {
@@ -120,6 +192,12 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       writeJson(SETTINGS_KEY, validation.data);
       events.emit(['settings']);
       return validation.data;
+    },
+    async reset(): Promise<FarmSettings> {
+      const defaults: FarmSettings = { ...DEFAULT_FARM_SETTINGS };
+      writeJson(SETTINGS_KEY, defaults);
+      events.emit(['settings']);
+      return defaults;
     },
   };
 
@@ -225,7 +303,13 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       const next = rows.filter((r) => r.id !== id);
       if (next.length === rows.length) return false;
       writeJson(FINANCIAL_KEY, next);
-      events.emit(['financial'], id);
+      writeJson(
+        WORKER_PAYMENTS_KEY,
+        readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, []).map((p) =>
+          p.financialLogId === id ? { ...p, financialLogId: null } : p
+        )
+      );
+      events.emit(['financial', 'hr'], id);
       return true;
     },
   };
@@ -616,10 +700,19 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     },
   };
 
+  function normalizePreviewLivestock(row: Livestock): Livestock {
+    return {
+      ...row,
+      sireId: row.sireId ?? null,
+      damId: row.damId ?? null,
+    };
+  }
+
   const livestock: LivestockRepository = {
     async list(filter?: LivestockFilter): Promise<Livestock[]> {
       const search = filter?.search?.trim().toLowerCase() ?? '';
       return readJson<Livestock[]>(LIVESTOCK_KEY, [])
+        .map(normalizePreviewLivestock)
         .filter((row) => {
           if (filter?.species && filter.species !== 'all' && row.species !== filter.species) {
             return false;
@@ -641,23 +734,24 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     },
 
     async getById(id: string): Promise<Livestock | null> {
-      return (
-        readJson<Livestock[]>(LIVESTOCK_KEY, []).find((row) => row.id === id) ??
-        null
+      const found = readJson<Livestock[]>(LIVESTOCK_KEY, []).find(
+        (row) => row.id === id
       );
+      return found ? normalizePreviewLivestock(found) : null;
     },
 
     async getByTagNumber(tagNumber: string): Promise<Livestock | null> {
       const normalized = normalizeTagNumber(tagNumber);
-      return (
-        readJson<Livestock[]>(LIVESTOCK_KEY, []).find(
-          (row) => row.tagNumber === normalized
-        ) ?? null
+      const found = readJson<Livestock[]>(LIVESTOCK_KEY, []).find(
+        (row) => row.tagNumber === normalized
       );
+      return found ? normalizePreviewLivestock(found) : null;
     },
 
     async create(input: NewLivestockInput): Promise<Livestock> {
-      const rows = readJson<Livestock[]>(LIVESTOCK_KEY, []);
+      const rows = readJson<Livestock[]>(LIVESTOCK_KEY, []).map(
+        normalizePreviewLivestock
+      );
       const validation = validateNewLivestock(input, {
         existingTags: rows.map((r) => r.tagNumber),
       });
@@ -676,6 +770,8 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         breed: validation.data.breed,
         dob: validation.data.dob,
         imageUri: validation.data.imageUri,
+        sireId: validation.data.sireId,
+        damId: validation.data.damId,
         status: validation.data.status,
         createdAt: now,
         updatedAt: now,
@@ -686,7 +782,9 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     },
 
     async update(id: string, input: UpdateLivestockInput): Promise<Livestock> {
-      const rows = readJson<Livestock[]>(LIVESTOCK_KEY, []);
+      const rows = readJson<Livestock[]>(LIVESTOCK_KEY, []).map(
+        normalizePreviewLivestock
+      );
       const index = rows.findIndex((r) => r.id === id);
       if (index === -1 || !rows[index]) {
         throw new LivestockNotFoundError(id);
@@ -695,11 +793,25 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       const validation = validateUpdateLivestock(input, {
         existingTags: rows.map((r) => r.tagNumber),
         currentTag: existing.tagNumber,
+        currentId: id,
       });
       if (!validation.ok || !validation.data) {
         const msg =
           Object.values(validation.errors).find(Boolean) ?? 'Invalid livestock update.';
         throw new LivestockValidationError(validation.errors, msg);
+      }
+
+      const nextSireId =
+        validation.data.sireId !== undefined
+          ? validation.data.sireId
+          : existing.sireId;
+      const nextDamId =
+        validation.data.damId !== undefined
+          ? validation.data.damId
+          : existing.damId;
+      if (nextSireId && nextDamId && nextSireId === nextDamId) {
+        const msg = 'Sire and Dam must be two different animals.';
+        throw new LivestockValidationError({ damId: msg }, msg);
       }
 
       const updated: Livestock = {
@@ -714,8 +826,16 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     },
 
     async remove(id: string): Promise<boolean> {
-      const rows = readJson<Livestock[]>(LIVESTOCK_KEY, []);
-      const next = rows.filter((r) => r.id !== id);
+      const rows = readJson<Livestock[]>(LIVESTOCK_KEY, []).map(
+        normalizePreviewLivestock
+      );
+      const next = rows
+        .filter((r) => r.id !== id)
+        .map((r) => ({
+          ...r,
+          sireId: r.sireId === id ? null : r.sireId,
+          damId: r.damId === id ? null : r.damId,
+        }));
       if (next.length === rows.length) {
         return false;
       }
@@ -744,8 +864,28 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           f.livestockId === id ? { ...f, livestockId: null } : f
         )
       );
+      writeJson(
+        WORKER_TASKS_KEY,
+        readJson<WorkerTask[]>(WORKER_TASKS_KEY, []).map((t) =>
+          t.livestockId === id ? { ...t, livestockId: null } : t
+        )
+      );
+      writeJson(
+        OWNERSHIPS_KEY,
+        readJson<AnimalOwnership[]>(OWNERSHIPS_KEY, []).filter(
+          (o) => o.livestockId !== id
+        )
+      );
       events.emit(
-        ['livestock', 'production', 'medical', 'financial', 'alerts'],
+        [
+          'livestock',
+          'ownerships',
+          'production',
+          'medical',
+          'financial',
+          'alerts',
+          'hr',
+        ],
         id
       );
       return true;
@@ -773,7 +913,1165 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     },
   };
 
-  const backup: BackupRepository = {
+  const hr: HrRepository = {
+    async listWorkers(filter?: FarmWorkerFilter): Promise<FarmWorker[]> {
+      const search = filter?.search?.trim().toLowerCase() ?? '';
+      return readJson<FarmWorker[]>(WORKERS_KEY, [])
+        .map((w) => ({
+          ...w,
+          paymentNotifiedForDueDate: w.paymentNotifiedForDueDate ?? null,
+        }))
+        .filter((w) => {
+          if (filter?.status && filter.status !== 'all' && w.status !== filter.status) {
+            return false;
+          }
+          if (search) {
+            const hay = `${w.name} ${w.role} ${w.responsibilities ?? ''}`.toLowerCase();
+            if (!hay.includes(search)) return false;
+          }
+          return true;
+        })
+        .sort(
+          (a, b) =>
+            a.nextPaymentDueDate.localeCompare(b.nextPaymentDueDate) ||
+            a.name.localeCompare(b.name)
+        );
+    },
+    async getWorkerById(id: string): Promise<FarmWorker | null> {
+      const found = readJson<FarmWorker[]>(WORKERS_KEY, []).find((w) => w.id === id);
+      return found
+        ? {
+            ...found,
+            paymentNotifiedForDueDate: found.paymentNotifiedForDueDate ?? null,
+          }
+        : null;
+    },
+    async createWorker(input: NewFarmWorkerInput): Promise<FarmWorker> {
+      const validation = validateNewFarmWorker(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ?? 'Invalid worker data.';
+        throw new HrValidationError(validation.errors, msg);
+      }
+      const now = Date.now();
+      const created: FarmWorker = {
+        id: generateId(),
+        name: validation.data.name,
+        role: validation.data.role,
+        phone: validation.data.phone,
+        responsibilities: validation.data.responsibilities,
+        salaryAmount: validation.data.salaryAmount,
+        payFrequency: validation.data.payFrequency,
+        nextPaymentDueDate: validation.data.nextPaymentDueDate,
+        status: validation.data.status,
+        hireDate: validation.data.hireDate,
+        paymentNotifiedForDueDate: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const rows = readJson<FarmWorker[]>(WORKERS_KEY, []);
+      writeJson(WORKERS_KEY, [created, ...rows]);
+      events.emit(['hr'], created.id);
+      return created;
+    },
+    async updateWorker(id: string, input: UpdateFarmWorkerInput): Promise<FarmWorker> {
+      const rows = readJson<FarmWorker[]>(WORKERS_KEY, []);
+      const idx = rows.findIndex((w) => w.id === id);
+      if (idx === -1 || !rows[idx]) throw new WorkerNotFoundError(id);
+      const validation = validateUpdateFarmWorker(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ?? 'Invalid worker update.';
+        throw new HrValidationError(validation.errors, msg);
+      }
+      const dueChanged =
+        validation.data.nextPaymentDueDate !== undefined &&
+        validation.data.nextPaymentDueDate !== rows[idx].nextPaymentDueDate;
+      const updated: FarmWorker = {
+        ...rows[idx],
+        ...validation.data,
+        paymentNotifiedForDueDate: dueChanged
+          ? null
+          : rows[idx].paymentNotifiedForDueDate ?? null,
+        updatedAt: Date.now(),
+      };
+      rows[idx] = updated;
+      writeJson(WORKERS_KEY, rows);
+      events.emit(['hr'], id);
+      return updated;
+    },
+    async removeWorker(id: string): Promise<boolean> {
+      const rows = readJson<FarmWorker[]>(WORKERS_KEY, []);
+      const next = rows.filter((w) => w.id !== id);
+      if (next.length === rows.length) return false;
+      writeJson(WORKERS_KEY, next);
+      writeJson(
+        WORKER_PAYMENTS_KEY,
+        readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, []).filter(
+          (p) => p.workerId !== id
+        )
+      );
+      writeJson(
+        WORKER_TASKS_KEY,
+        readJson<WorkerTask[]>(WORKER_TASKS_KEY, []).filter(
+          (t) => t.workerId !== id
+        )
+      );
+      events.emit(['hr'], id);
+      return true;
+    },
+    async listPayments(filter?: WorkerPaymentFilter): Promise<WorkerPayment[]> {
+      const search = filter?.search?.trim().toLowerCase() ?? '';
+      return readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, [])
+        .filter((p) => {
+          if (filter?.workerId && p.workerId !== filter.workerId) return false;
+          if (filter?.status && filter.status !== 'all' && p.status !== filter.status) {
+            return false;
+          }
+          if (search) {
+            const hay = `${p.periodLabel ?? ''} ${p.notes ?? ''}`.toLowerCase();
+            if (!hay.includes(search)) return false;
+          }
+          return true;
+        })
+        .sort(
+          (a, b) =>
+            a.status.localeCompare(b.status) ||
+            b.dueDate.localeCompare(a.dueDate) ||
+            b.createdAt - a.createdAt
+        );
+    },
+    async getPaymentById(id: string): Promise<WorkerPayment | null> {
+      return (
+        readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, []).find(
+          (p) => p.id === id
+        ) ?? null
+      );
+    },
+    async createPayment(
+      input: NewWorkerPaymentInput,
+      options?: CreateWorkerPaymentOptions
+    ): Promise<CreateWorkerPaymentResult> {
+      const validation = validateNewWorkerPayment(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ?? 'Invalid payment data.';
+        throw new HrValidationError(validation.errors, msg);
+      }
+      const worker = await this.getWorkerById(validation.data.workerId);
+      if (!worker) {
+        throw new HrValidationError(
+          { workerId: 'Selected worker does not exist.' },
+          'Selected worker does not exist.'
+        );
+      }
+      let generatedExpenseLog: FinancialLog | null = null;
+      if (validation.data.status === 'paid' && options?.autoRecordExpense) {
+        generatedExpenseLog = await financial.create({
+          transactionType: 'expense',
+          category: 'payroll',
+          amount: validation.data.amount,
+          date: validation.data.paidDate ?? getTodayIsoDate(),
+          notes: `Payroll (${worker.name} · ${worker.role})${
+            validation.data.periodLabel
+              ? ` — ${validation.data.periodLabel}`
+              : ''
+          }`,
+        });
+      }
+      const now = Date.now();
+      const payment: WorkerPayment = {
+        id: generateId(),
+        workerId: validation.data.workerId,
+        financialLogId: generatedExpenseLog?.id ?? null,
+        amount: validation.data.amount,
+        dueDate: validation.data.dueDate,
+        paidDate: validation.data.paidDate,
+        status: validation.data.status,
+        periodLabel: validation.data.periodLabel,
+        notes: validation.data.notes,
+        notifiedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const rows = readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, []);
+      writeJson(WORKER_PAYMENTS_KEY, [payment, ...rows]);
+
+      if (
+        validation.data.status === 'paid' &&
+        options?.advanceWorkerDueDate &&
+        validation.data.dueDate >= worker.nextPaymentDueDate
+      ) {
+        await this.updateWorker(worker.id, {
+          nextPaymentDueDate: advancePayDueDate(
+            worker.nextPaymentDueDate,
+            worker.payFrequency
+          ),
+        });
+      }
+
+      events.emit(generatedExpenseLog ? ['hr', 'financial'] : ['hr'], payment.id);
+      return { payment, generatedExpenseLog };
+    },
+    async updatePayment(
+      id: string,
+      input: UpdateWorkerPaymentInput
+    ): Promise<WorkerPayment> {
+      const rows = readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, []);
+      const idx = rows.findIndex((p) => p.id === id);
+      if (idx === -1 || !rows[idx]) throw new WorkerPaymentNotFoundError(id);
+      const existing = rows[idx];
+      const validation = validateUpdateWorkerPayment(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ?? 'Invalid payment update.';
+        throw new HrValidationError(validation.errors, msg);
+      }
+      const nextStatus = validation.data.status ?? existing.status;
+      let nextPaidDate =
+        validation.data.paidDate !== undefined
+          ? validation.data.paidDate
+          : existing.paidDate;
+      if (nextStatus === 'paid' && !nextPaidDate) {
+        nextPaidDate = getTodayIsoDate();
+      } else if (nextStatus === 'pending') {
+        nextPaidDate = null;
+      }
+      const resetNotified =
+        validation.data.dueDate !== undefined &&
+        validation.data.dueDate !== existing.dueDate;
+      const updated: WorkerPayment = {
+        ...existing,
+        ...validation.data,
+        paidDate: nextPaidDate,
+        notifiedAt: resetNotified ? null : existing.notifiedAt,
+        updatedAt: Date.now(),
+      };
+      rows[idx] = updated;
+      writeJson(WORKER_PAYMENTS_KEY, rows);
+      events.emit(['hr'], id);
+      return updated;
+    },
+    async markPaymentPaid(
+      id: string,
+      options?: MarkWorkerPaymentPaidOptions
+    ): Promise<CreateWorkerPaymentResult> {
+      const existing = await this.getPaymentById(id);
+      if (!existing) throw new WorkerPaymentNotFoundError(id);
+      const worker = await this.getWorkerById(existing.workerId);
+      const effectivePaidDate = options?.paidDate ?? getTodayIsoDate();
+
+      let generatedExpenseLog: FinancialLog | null = null;
+      let nextFinancialLogId = existing.financialLogId;
+      if (options?.autoRecordExpense && !existing.financialLogId && worker) {
+        generatedExpenseLog = await financial.create({
+          transactionType: 'expense',
+          category: 'payroll',
+          amount: existing.amount,
+          date: effectivePaidDate,
+          notes: `Payroll (${worker.name} · ${worker.role})${
+            existing.periodLabel ? ` — ${existing.periodLabel}` : ''
+          }`,
+        });
+        nextFinancialLogId = generatedExpenseLog.id;
+      }
+
+      const rows = readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, []);
+      const updated: WorkerPayment = {
+        ...existing,
+        status: 'paid',
+        paidDate: effectivePaidDate,
+        financialLogId: nextFinancialLogId,
+        updatedAt: Date.now(),
+      };
+      writeJson(
+        WORKER_PAYMENTS_KEY,
+        rows.map((r) => (r.id === id ? updated : r))
+      );
+
+      if (
+        worker &&
+        options?.advanceWorkerDueDate &&
+        existing.dueDate >= worker.nextPaymentDueDate
+      ) {
+        await this.updateWorker(worker.id, {
+          nextPaymentDueDate: advancePayDueDate(
+            worker.nextPaymentDueDate,
+            worker.payFrequency
+          ),
+        });
+      }
+
+      events.emit(generatedExpenseLog ? ['hr', 'financial'] : ['hr'], id);
+      return { payment: updated, generatedExpenseLog };
+    },
+    async removePayment(id: string): Promise<boolean> {
+      const rows = readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, []);
+      const next = rows.filter((p) => p.id !== id);
+      if (next.length === rows.length) return false;
+      writeJson(WORKER_PAYMENTS_KEY, next);
+      events.emit(['hr'], id);
+      return true;
+    },
+    async listTasks(filter?: WorkerTaskFilter): Promise<WorkerTask[]> {
+      const search = filter?.search?.trim().toLowerCase() ?? '';
+      return readJson<WorkerTask[]>(WORKER_TASKS_KEY, [])
+        .filter((t) => {
+          if (filter?.workerId && t.workerId !== filter.workerId) return false;
+          if (filter?.status && filter.status !== 'all' && t.status !== filter.status) {
+            return false;
+          }
+          if (
+            filter?.priority &&
+            filter.priority !== 'all' &&
+            t.priority !== filter.priority
+          ) {
+            return false;
+          }
+          if (search) {
+            const hay = `${t.title} ${t.description ?? ''}`.toLowerCase();
+            if (!hay.includes(search)) return false;
+          }
+          return true;
+        })
+        .sort(
+          (a, b) =>
+            (a.status === 'completed' ? 1 : 0) -
+              (b.status === 'completed' ? 1 : 0) ||
+            (a.dueDate ?? '9999-99-99').localeCompare(b.dueDate ?? '9999-99-99') ||
+            b.createdAt - a.createdAt
+        );
+    },
+    async getTaskById(id: string): Promise<WorkerTask | null> {
+      return (
+        readJson<WorkerTask[]>(WORKER_TASKS_KEY, []).find((t) => t.id === id) ??
+        null
+      );
+    },
+    async createTask(input: NewWorkerTaskInput): Promise<WorkerTask> {
+      const validation = validateNewWorkerTask(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ?? 'Invalid task data.';
+        throw new HrValidationError(validation.errors, msg);
+      }
+      const now = Date.now();
+      const created: WorkerTask = {
+        id: generateId(),
+        workerId: validation.data.workerId,
+        livestockId: validation.data.livestockId,
+        title: validation.data.title,
+        description: validation.data.description,
+        priority: validation.data.priority,
+        status: validation.data.status,
+        dueDate: validation.data.dueDate,
+        completedAt: validation.data.status === 'completed' ? now : null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const rows = readJson<WorkerTask[]>(WORKER_TASKS_KEY, []);
+      writeJson(WORKER_TASKS_KEY, [created, ...rows]);
+      events.emit(['hr'], created.id);
+      return created;
+    },
+    async updateTask(id: string, input: UpdateWorkerTaskInput): Promise<WorkerTask> {
+      const rows = readJson<WorkerTask[]>(WORKER_TASKS_KEY, []);
+      const idx = rows.findIndex((t) => t.id === id);
+      if (idx === -1 || !rows[idx]) throw new WorkerTaskNotFoundError(id);
+      const existing = rows[idx];
+      const validation = validateUpdateWorkerTask(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ?? 'Invalid task update.';
+        throw new HrValidationError(validation.errors, msg);
+      }
+      const now = Date.now();
+      const nextStatus = validation.data.status ?? existing.status;
+      let completedAt = existing.completedAt;
+      if (nextStatus === 'completed' && existing.status !== 'completed') {
+        completedAt = now;
+      } else if (nextStatus !== 'completed') {
+        completedAt = null;
+      }
+      const updated: WorkerTask = {
+        ...existing,
+        ...validation.data,
+        completedAt,
+        updatedAt: now,
+      };
+      rows[idx] = updated;
+      writeJson(WORKER_TASKS_KEY, rows);
+      events.emit(['hr'], id);
+      return updated;
+    },
+    async removeTask(id: string): Promise<boolean> {
+      const rows = readJson<WorkerTask[]>(WORKER_TASKS_KEY, []);
+      const next = rows.filter((t) => t.id !== id);
+      if (next.length === rows.length) return false;
+      writeJson(WORKER_TASKS_KEY, next);
+      events.emit(['hr'], id);
+      return true;
+    },
+    async listDuePaymentNotifications(
+      todayIso: string = getTodayIsoDate(),
+      leadDays = 3
+    ): Promise<HrDuePaymentAlertItem[]> {
+      const [allWorkers, allPayments] = await Promise.all([
+        this.listWorkers({}),
+        this.listPayments({ status: 'pending' }),
+      ]);
+      const summary = computeHrSummary(
+        allWorkers,
+        allPayments,
+        [],
+        todayIso,
+        leadDays
+      );
+      return summary.duePaymentAlerts.filter((item) =>
+        item.kind === 'pending_payment' && item.payment
+          ? item.payment.notifiedAt === null
+          : item.worker.paymentNotifiedForDueDate !== item.dueDate
+      );
+    },
+    async markPaymentNotificationsDelivered(
+      items: readonly HrDuePaymentAlertItem[],
+      notifiedAt: number = Date.now()
+    ): Promise<void> {
+      if (items.length === 0) return;
+      const payIds = new Set(
+        items
+          .filter((i) => i.kind === 'pending_payment' && i.payment)
+          .map((i) => i.payment!.id)
+      );
+      const workerDueMap = new Map(
+        items
+          .filter((i) => i.kind === 'scheduled_salary')
+          .map((i) => [i.worker.id, i.dueDate])
+      );
+      if (payIds.size > 0) {
+        writeJson(
+          WORKER_PAYMENTS_KEY,
+          readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, []).map((p) =>
+            payIds.has(p.id) ? { ...p, notifiedAt, updatedAt: notifiedAt } : p
+          )
+        );
+      }
+      if (workerDueMap.size > 0) {
+        writeJson(
+          WORKERS_KEY,
+          readJson<FarmWorker[]>(WORKERS_KEY, []).map((w) => {
+            const notifiedDue = workerDueMap.get(w.id);
+            return notifiedDue
+              ? { ...w, paymentNotifiedForDueDate: notifiedDue, updatedAt: notifiedAt }
+              : w;
+          })
+        );
+      }
+      events.emit(['hr']);
+    },
+  };
+
+  const ownerships: OwnershipRepository = {
+    async list(filter?: AnimalOwnershipFilter): Promise<AnimalOwnership[]> {
+      const search = filter?.search?.trim().toLowerCase() ?? '';
+      return readJson<AnimalOwnership[]>(OWNERSHIPS_KEY, [])
+        .filter((row) => {
+          if (filter?.livestockId && row.livestockId !== filter.livestockId) {
+            return false;
+          }
+          if (filter?.accountId && row.accountId !== filter.accountId) {
+            return false;
+          }
+          if (
+            filter?.category &&
+            filter.category !== 'all' &&
+            row.ownershipCategory !== filter.category
+          ) {
+            return false;
+          }
+          if (
+            filter?.status &&
+            filter.status !== 'all' &&
+            row.status !== filter.status
+          ) {
+            return false;
+          }
+          if (search) {
+            const hay = `${row.ownerName} ${row.purpose ?? ''} ${row.notes ?? ''}`.toLowerCase();
+            if (!hay.includes(search)) return false;
+          }
+          return true;
+        })
+        .sort(
+          (a, b) =>
+            a.status.localeCompare(b.status) || b.updatedAt - a.updatedAt
+        );
+    },
+    async getById(id: string): Promise<AnimalOwnership | null> {
+      return (
+        readJson<AnimalOwnership[]>(OWNERSHIPS_KEY, []).find(
+          (r) => r.id === id
+        ) ?? null
+      );
+    },
+    async create(input: NewAnimalOwnershipInput): Promise<AnimalOwnership> {
+      const validation = validateNewAnimalOwnership(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ??
+          'Invalid ownership data.';
+        throw new OwnershipValidationError(validation.errors, msg);
+      }
+      const now = Date.now();
+      const created: AnimalOwnership = {
+        id: generateId(),
+        livestockId: validation.data.livestockId,
+        ownerName: validation.data.ownerName,
+        ownerContact: validation.data.ownerContact,
+        accountId: validation.data.accountId,
+        ownershipCategory: validation.data.ownershipCategory,
+        sharePercentage: validation.data.sharePercentage,
+        purpose: validation.data.purpose,
+        startDate: validation.data.startDate,
+        expectedEndDate: validation.data.expectedEndDate,
+        boardingFee: validation.data.boardingFee,
+        status: validation.data.status,
+        notes: validation.data.notes,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const rows = readJson<AnimalOwnership[]>(OWNERSHIPS_KEY, []);
+      writeJson(OWNERSHIPS_KEY, [created, ...rows]);
+      events.emit(['ownerships'], created.id);
+      return created;
+    },
+    async update(
+      id: string,
+      input: UpdateAnimalOwnershipInput
+    ): Promise<AnimalOwnership> {
+      const rows = readJson<AnimalOwnership[]>(OWNERSHIPS_KEY, []);
+      const idx = rows.findIndex((r) => r.id === id);
+      if (idx === -1 || !rows[idx]) throw new OwnershipNotFoundError(id);
+      const validation = validateUpdateAnimalOwnership(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ??
+          'Invalid ownership update.';
+        throw new OwnershipValidationError(validation.errors, msg);
+      }
+      const updated: AnimalOwnership = {
+        ...rows[idx],
+        ...validation.data,
+        updatedAt: Date.now(),
+      };
+      rows[idx] = updated;
+      writeJson(OWNERSHIPS_KEY, rows);
+      events.emit(['ownerships'], id);
+      return updated;
+    },
+    async remove(id: string): Promise<boolean> {
+      const rows = readJson<AnimalOwnership[]>(OWNERSHIPS_KEY, []);
+      const next = rows.filter((r) => r.id !== id);
+      if (next.length === rows.length) return false;
+      writeJson(OWNERSHIPS_KEY, next);
+      events.emit(['ownerships'], id);
+      return true;
+    },
+  };
+
+  let backup!: BackupRepository;
+  let bypassSyncAccountGate = false;
+
+  const network: NetworkRepository = {
+    async listAccountsRaw(): Promise<FarmAccount[]> {
+      return readJson<FarmAccount[]>(ACCOUNTS_KEY, []).sort(
+        (a, b) =>
+          (b.isPrimaryAdmin ? 1 : 0) - (a.isPrimaryAdmin ? 1 : 0) ||
+          a.displayName.localeCompare(b.displayName)
+      );
+    },
+    async listAccounts(filter?: FarmAccountFilter): Promise<FarmAccount[]> {
+      await this.ensureAdminAccount();
+      const search = filter?.search?.trim().toLowerCase() ?? '';
+      return (await this.listAccountsRaw()).filter((a) => {
+        if (filter?.role && filter.role !== 'all' && a.role !== filter.role) {
+          return false;
+        }
+        if (
+          filter?.status &&
+          filter.status !== 'all' &&
+          a.status !== filter.status
+        ) {
+          return false;
+        }
+        if (search) {
+          const hay = `${a.displayName} ${a.email ?? ''} ${a.relationship ?? ''}`.toLowerCase();
+          if (!hay.includes(search)) return false;
+        }
+        return true;
+      });
+    },
+    async getAccountById(id: string): Promise<FarmAccount | null> {
+      return (
+        readJson<FarmAccount[]>(ACCOUNTS_KEY, []).find((a) => a.id === id) ??
+        null
+      );
+    },
+    async ensureAdminAccount(): Promise<FarmAccount> {
+      const rows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+      const found =
+        rows.find((a) => a.id === DEFAULT_ADMIN_ACCOUNT.id) ??
+        rows.find((a) => a.isPrimaryAdmin);
+      if (found) return found;
+      const now = Date.now();
+      const created: FarmAccount = {
+        ...DEFAULT_ADMIN_ACCOUNT,
+        createdAt: now,
+        updatedAt: now,
+      };
+      writeJson(ACCOUNTS_KEY, [created, ...rows]);
+      events.emit(['network'], created.id);
+      return created;
+    },
+    async getActiveAccount(): Promise<FarmAccount> {
+      const admin = await this.ensureAdminAccount();
+      const s = await settings.get();
+      if (s.activeAccountId === admin.id) return admin;
+      const found = await this.getAccountById(s.activeAccountId);
+      if (found && found.status !== 'suspended') return found;
+      await settings.update({ activeAccountId: admin.id });
+      return admin;
+    },
+    async switchActiveAccount(
+      accountId: string,
+      accessCode?: string
+    ): Promise<FarmAccount> {
+      await this.ensureAdminAccount();
+      const account = await this.getAccountById(accountId);
+      if (!account) throw new FarmAccountNotFoundError(accountId);
+      if (account.status === 'suspended' && !account.isPrimaryAdmin) {
+        throw new NetworkValidationError(
+          { status: 'This account is suspended.' },
+          'This account is suspended.'
+        );
+      }
+      if (
+        account.accessCode &&
+        account.accessCode.trim().length > 0 &&
+        (accessCode ?? '').trim() !== account.accessCode.trim()
+      ) {
+        throw new NetworkValidationError(
+          { accessCode: 'Incorrect access PIN / passcode.' },
+          'Incorrect access PIN / passcode.'
+        );
+      }
+      await settings.update({ activeAccountId: account.id });
+      events.emit(['network', 'settings'], account.id);
+      return account;
+    },
+    async createAccount(input: NewFarmAccountInput): Promise<FarmAccount> {
+      await this.ensureAdminAccount();
+      const validation = validateNewFarmAccount(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ??
+          'Invalid account data.';
+        throw new NetworkValidationError(validation.errors, msg);
+      }
+      const now = Date.now();
+      const created: FarmAccount = {
+        id: validation.data.id || generateId(),
+        displayName: validation.data.displayName,
+        email: validation.data.email,
+        phone: validation.data.phone,
+        role: validation.data.role,
+        relationship: validation.data.relationship,
+        avatarKey: validation.data.avatarKey,
+        accessCode: validation.data.accessCode,
+        isPrimaryAdmin: validation.data.isPrimaryAdmin,
+        canManageNetwork: validation.data.canManageNetwork,
+        canSyncCloud: validation.data.canSyncCloud,
+        permissions: validation.data.permissions,
+        status: validation.data.status,
+        lastSyncedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const rows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+      writeJson(ACCOUNTS_KEY, [created, ...rows]);
+      events.emit(['network'], created.id);
+      return created;
+    },
+    async updateAccount(
+      id: string,
+      input: UpdateFarmAccountInput
+    ): Promise<FarmAccount> {
+      const rows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+      const idx = rows.findIndex((a) => a.id === id);
+      if (idx === -1 || !rows[idx]) throw new FarmAccountNotFoundError(id);
+      const existing = rows[idx];
+      const validation = validateUpdateFarmAccount(input, existing.role);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ??
+          'Invalid account update.';
+        throw new NetworkValidationError(validation.errors, msg);
+      }
+      const nextRole: FarmAccountRole = existing.isPrimaryAdmin
+        ? 'admin'
+        : validation.data.role ?? existing.role;
+      const updated: FarmAccount = {
+        ...existing,
+        ...validation.data,
+        role: nextRole,
+        permissions: existing.isPrimaryAdmin
+          ? normalizeAccountPermissions(undefined, 'admin')
+          : validation.data.permissions
+            ? normalizeAccountPermissions(validation.data.permissions, nextRole)
+            : existing.permissions,
+        canManageNetwork: existing.isPrimaryAdmin
+          ? true
+          : validation.data.canManageNetwork ?? existing.canManageNetwork,
+        canSyncCloud: existing.isPrimaryAdmin
+          ? true
+          : validation.data.canSyncCloud ?? existing.canSyncCloud,
+        status: existing.isPrimaryAdmin
+          ? 'active'
+          : validation.data.status ?? existing.status,
+        updatedAt: Date.now(),
+      };
+      rows[idx] = updated;
+      writeJson(ACCOUNTS_KEY, rows);
+      events.emit(['network'], id);
+      return updated;
+    },
+    async removeAccount(id: string): Promise<boolean> {
+      const existing = await this.getAccountById(id);
+      if (!existing) return false;
+      if (existing.isPrimaryAdmin) {
+        throw new NetworkValidationError(
+          { isPrimaryAdmin: 'Primary Farm Owner (Admin) account cannot be deleted.' },
+          'Primary Farm Owner (Admin) account cannot be deleted.'
+        );
+      }
+      const s = await settings.get();
+      if (s.activeAccountId === id) {
+        await settings.update({ activeAccountId: DEFAULT_ADMIN_ACCOUNT.id });
+      }
+      writeJson(
+        ACCOUNTS_KEY,
+        readJson<FarmAccount[]>(ACCOUNTS_KEY, []).filter((a) => a.id !== id)
+      );
+      events.emit(['network'], id);
+      return true;
+    },
+    async rotateNetworkJoinKey(): Promise<string> {
+      const nextCode = generateShortJoinCode();
+      await settings.update({ networkJoinKey: nextCode });
+      events.emit(['network', 'settings']);
+      return nextCode;
+    },
+    async joinNetworkWithKey(
+      input: JoinFarmNetworkInput
+    ): Promise<JoinFarmNetworkResult> {
+      const decoded = decodeFarmNetworkJoinKey(input.joinKey);
+      if (!decoded) {
+        throw new NetworkValidationError(
+          { joinKey: 'Enter a valid Farm Network Join Key (FARM-XXXX or FDB1:...).' },
+          'Enter a valid Farm Network Join Key (FARM-XXXX or FDB1:...).'
+        );
+      }
+
+      let syncedWithCloud = false;
+      if (
+        decoded.kind === 'full' &&
+        decoded.supabaseUrl &&
+        decoded.supabaseAnonKey
+      ) {
+        await settings.update({
+          cloudSyncEnabled: true,
+          supabaseUrl: decoded.supabaseUrl,
+          supabaseAnonKey: decoded.supabaseAnonKey,
+          cloudWorkspaceId:
+            decoded.workspaceId || 'farmdb-homestead-main',
+          networkJoinKey: decoded.joinCode,
+        });
+        let pullRes: CloudSyncResult;
+        try {
+          bypassSyncAccountGate = true;
+          pullRes = await this.syncWithSupabase('pull');
+        } finally {
+          bypassSyncAccountGate = false;
+        }
+        if (!pullRes.ok) {
+          throw new NetworkValidationError(
+            { joinKey: `Unable to reach Supabase workspace: ${pullRes.message}` },
+            `Unable to reach Supabase workspace: ${pullRes.message}`
+          );
+        }
+        const postPull = await settings.get();
+        if (
+          pullRes.recordsPulled > 0 &&
+          postPull.networkJoinKey.trim().toUpperCase() !==
+            decoded.joinCode.toUpperCase()
+        ) {
+          throw new NetworkValidationError(
+            { joinKey: 'This Farm Network Join Key was rotated or revoked by the Admin.' },
+            'This Farm Network Join Key was rotated or revoked by the Admin.'
+          );
+        }
+        syncedWithCloud = true;
+      } else {
+        const s = await settings.get();
+        if (
+          decoded.joinCode.toUpperCase() !==
+          s.networkJoinKey.trim().toUpperCase()
+        ) {
+          throw new NetworkValidationError(
+            { joinKey: 'Invalid Farm Join Key. Ask your Farm Admin for the current code.' },
+            'Invalid Farm Join Key. Ask your Farm Admin for the current code.'
+          );
+        }
+      }
+
+      await this.ensureAdminAccount();
+
+      let targetAccount: FarmAccount;
+      if (input.accountId) {
+        const existing = await this.getAccountById(input.accountId);
+        if (!existing) throw new FarmAccountNotFoundError(input.accountId);
+        if (existing.isPrimaryAdmin) {
+          throw new NetworkValidationError(
+            { accountId: 'Primary Farm Owner cannot join as pending.' },
+            'Primary Farm Owner cannot join as pending.'
+          );
+        }
+        targetAccount = await this.updateAccount(existing.id, {
+          status: 'pending',
+          canManageNetwork: false,
+          canSyncCloud: true,
+        });
+      } else if (input.newAccount) {
+        targetAccount = await this.createAccount({
+          ...input.newAccount,
+          isPrimaryAdmin: false,
+          canManageNetwork: false,
+          canSyncCloud: true,
+          status: 'pending',
+        });
+      } else {
+        throw new NetworkValidationError(
+          { displayName: 'Provide user account details to join the Farm Network.' },
+          'Provide user account details to join the Farm Network.'
+        );
+      }
+
+      const updatedSettings = await settings.update({
+        activeAccountId: targetAccount.id,
+      });
+
+      if (updatedSettings.supabaseUrl && updatedSettings.supabaseAnonKey) {
+        try {
+          bypassSyncAccountGate = true;
+          const pushRes = await this.syncWithSupabase('bidirectional');
+          if (pushRes.ok) syncedWithCloud = true;
+        } catch {
+          // Safe fallback if offline.
+        } finally {
+          bypassSyncAccountGate = false;
+        }
+      }
+
+      events.emit(['network', 'settings'], targetAccount.id);
+      return {
+        account: targetAccount,
+        syncedWithCloud,
+        farmName: updatedSettings.farmName,
+      };
+    },
+    async acceptPendingAccount(
+      accountId: string,
+      options?: AcceptPendingAccountOptions
+    ): Promise<FarmAccount> {
+      const existing = await this.getAccountById(accountId);
+      if (!existing) throw new FarmAccountNotFoundError(accountId);
+      const updated = await this.updateAccount(accountId, {
+        status: 'active',
+        canManageNetwork: existing.isPrimaryAdmin ? true : false,
+        canSyncCloud: options?.canSyncCloud ?? true,
+        ...(options?.role !== undefined ? { role: options.role } : {}),
+        ...(options?.permissions !== undefined
+          ? { permissions: options.permissions }
+          : {}),
+      });
+      const currentSettings = await settings.get();
+      if (
+        currentSettings.cloudSyncEnabled &&
+        currentSettings.supabaseUrl &&
+        currentSettings.supabaseAnonKey
+      ) {
+        try {
+          await this.syncWithSupabase('bidirectional');
+        } catch {
+          // Local approval already saved.
+        }
+      }
+      events.emit(['network'], updated.id);
+      return updated;
+    },
+    async listSyncLogs(limit = 25): Promise<CloudSyncLog[]> {
+      return readJson<CloudSyncLog[]>(SYNC_LOGS_KEY, [])
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit);
+    },
+    async clearSyncLogs(): Promise<void> {
+      writeJson(SYNC_LOGS_KEY, []);
+      events.emit(['network']);
+    },
+    async syncWithSupabase(
+      direction: CloudSyncDirection
+    ): Promise<CloudSyncResult> {
+      const currentSettings = await settings.get();
+      const baseUrl = normalizeSupabaseBaseUrl(currentSettings.supabaseUrl);
+      const anonKey = currentSettings.supabaseAnonKey.trim();
+      const workspaceId = currentSettings.cloudWorkspaceId.trim();
+
+      const addLog = (
+        status: 'success' | 'error' | 'offline',
+        recordsPushed: number,
+        recordsPulled: number,
+        summary: string
+      ): CloudSyncLog => {
+        const log: CloudSyncLog = {
+          id: generateId(),
+          direction,
+          status,
+          recordsPushed,
+          recordsPulled,
+          summary,
+          createdAt: Date.now(),
+        };
+        const existing = readJson<CloudSyncLog[]>(SYNC_LOGS_KEY, []);
+        writeJson(SYNC_LOGS_KEY, [log, ...existing].slice(0, 60));
+        events.emit(['network']);
+        return log;
+      };
+
+      if (!bypassSyncAccountGate) {
+        const activeAccount = await this.getActiveAccount();
+        if (!isAdminAccount(activeAccount) && !activeAccount.canSyncCloud) {
+          const msg =
+            'User accounts can only sync with a cloud database when connected with an Admin Join Key.';
+          const log = addLog('error', 0, 0, msg);
+          return {
+            ok: false,
+            direction,
+            status: 'error',
+            recordsPushed: 0,
+            recordsPulled: 0,
+            message: msg,
+            log,
+          };
+        }
+      }
+
+      if (!baseUrl || !anonKey) {
+        const msg =
+          'Supabase URL and Anon/Publishable Key are required before cloud sync.';
+        const log = addLog('error', 0, 0, msg);
+        return {
+          ok: false,
+          direction,
+          status: 'error',
+          recordsPushed: 0,
+          recordsPulled: 0,
+          message: msg,
+          log,
+        };
+      }
+
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        const msg = 'Device appears offline. Local changes are safely queued.';
+        const log = addLog('offline', 0, 0, msg);
+        return {
+          ok: false,
+          direction,
+          status: 'offline',
+          recordsPushed: 0,
+          recordsPulled: 0,
+          message: msg,
+          log,
+        };
+      }
+
+      const restEndpoint = `${baseUrl}/rest/v1/farmdb_cloud_snapshots`;
+      const isPublishableKey = anonKey.startsWith('sb_publishable_');
+      const baseHeaders: Record<string, string> = {
+        apikey: anonKey,
+        'Content-Type': 'application/json',
+        ...(isPublishableKey ? {} : { Authorization: `Bearer ${anonKey}` }),
+      };
+
+      const fetchSupabase = async (
+        url: string,
+        init: RequestInit & { extraHeaders?: Record<string, string> }
+      ) => {
+        const res = await fetch(url, {
+          ...init,
+          headers: {
+            ...baseHeaders,
+            ...(init.extraHeaders ?? {}),
+          },
+        });
+        if (res.status === 401 && isPublishableKey) {
+          return fetch(url, {
+            ...init,
+            headers: {
+              ...baseHeaders,
+              Authorization: `Bearer ${anonKey}`,
+              ...(init.extraHeaders ?? {}),
+            },
+          });
+        }
+        return res;
+      };
+
+      try {
+        if (direction === 'test') {
+          const res = await fetchSupabase(
+            `${restEndpoint}?workspace_id=eq.${encodeURIComponent(workspaceId)}&select=workspace_id`,
+            { method: 'GET' }
+          );
+          if (!res.ok) {
+            const errText = await res.text();
+            const isMissingTable =
+              errText.includes('PGRST205') ||
+              errText.includes('42P01') ||
+              /does not exist|schema cache/i.test(errText);
+            const hint = isMissingTable
+              ? ' Table public.farmdb_cloud_snapshots not exposed yet — run the SQL Setup Script in Supabase SQL Editor.'
+              : errText
+                ? ` (${errText.slice(0, 140)})`
+                : '';
+            const msg = `Supabase returned HTTP ${res.status}.${hint}`;
+            const log = addLog('error', 0, 0, msg);
+            return {
+              ok: false,
+              direction,
+              status: 'error',
+              recordsPushed: 0,
+              recordsPulled: 0,
+              message: msg,
+              log,
+            };
+          }
+          const msg = `Connected cleanly to Supabase workspace "${workspaceId}".`;
+          const log = addLog('success', 0, 0, msg);
+          return {
+            ok: true,
+            direction,
+            status: 'success',
+            recordsPushed: 0,
+            recordsPulled: 0,
+            message: msg,
+            log,
+          };
+        }
+
+        await this.ensureAdminAccount();
+        const localSnap = await backup.exportSnapshot();
+        let pulled: FarmDbSnapshot | null = null;
+        if (direction === 'pull' || direction === 'bidirectional') {
+          const res = await fetchSupabase(
+            `${restEndpoint}?workspace_id=eq.${encodeURIComponent(workspaceId)}&select=snapshot`,
+            { method: 'GET' }
+          );
+          if (!res.ok) {
+            throw new Error(`Cloud pull failed (HTTP ${res.status})`);
+          }
+          const rows = (await res.json()) as Array<{ snapshot?: unknown }>;
+          if (rows[0]?.snapshot) {
+            pulled = parseFarmSnapshotJson(JSON.stringify(rows[0].snapshot));
+          }
+        }
+
+        let payload = localSnap;
+        let pulledCount = 0;
+        let pushedCount = 0;
+
+        if (pulled && (direction === 'pull' || direction === 'bidirectional')) {
+          const mergeRes = mergeFarmSnapshots(
+            localSnap,
+            pulled,
+            direction === 'pull'
+              ? 'cloud_priority'
+              : currentSettings.syncConflictStrategy,
+            {
+              includeFinancials: currentSettings.syncIncludeFinancials,
+              includeHr: currentSettings.syncIncludeHr,
+            }
+          );
+          payload = mergeRes.merged;
+          pulledCount = mergeRes.recordsPulled;
+          pushedCount = mergeRes.recordsPushed;
+          await backup.restoreSnapshot(payload);
+        }
+
+        if (direction === 'push' || direction === 'bidirectional') {
+          const pushRes = await fetchSupabase(
+            `${restEndpoint}?on_conflict=workspace_id`,
+            {
+              method: 'POST',
+              extraHeaders: {
+                Prefer: 'resolution=merge-duplicates,return=minimal',
+              },
+              body: JSON.stringify([
+                {
+                  workspace_id: workspaceId,
+                  farm_name: currentSettings.farmName,
+                  updated_by_account_id: currentSettings.activeAccountId,
+                  snapshot: payload,
+                  updated_at: new Date().toISOString(),
+                },
+              ]),
+            }
+          );
+          if (!pushRes.ok) {
+            throw new Error(`Cloud push failed (HTTP ${pushRes.status})`);
+          }
+          if (direction === 'push') {
+            pushedCount = payload.livestock.length + (payload.animalOwnerships?.length ?? 0);
+          }
+        }
+
+        const msg = `Supabase ${direction} sync succeeded (${pulledCount} pulled, ${pushedCount} pushed).`;
+        const log = addLog('success', pushedCount, pulledCount, msg);
+        return {
+          ok: true,
+          direction,
+          status: 'success',
+          recordsPushed: pushedCount,
+          recordsPulled: pulledCount,
+          message: msg,
+          log,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Supabase network error.';
+        const log = addLog('offline', 0, 0, msg);
+        return {
+          ok: false,
+          direction,
+          status: 'offline',
+          recordsPushed: 0,
+          recordsPulled: 0,
+          message: msg,
+          log,
+        };
+      }
+    },
+  };
+
+  backup = {
     async exportSnapshot(): Promise<FarmDbSnapshot> {
       const [
         currentSettings,
@@ -782,6 +2080,11 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         allMedical,
         allFinancial,
         allAlerts,
+        allWorkers,
+        allWorkerPayments,
+        allWorkerTasks,
+        allOwnerships,
+        allAccounts,
       ] = await Promise.all([
         settings.get(),
         livestock.list({}),
@@ -789,6 +2092,11 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         medical.list({}),
         financial.list({}),
         alerts.list({}),
+        hr.listWorkers({}),
+        hr.listPayments({}),
+        hr.listTasks({}),
+        ownerships.list({}),
+        network.listAccountsRaw(),
       ]);
 
       return {
@@ -801,17 +2109,39 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         medicalRecords: allMedical,
         financialLogs: allFinancial,
         alerts: allAlerts,
+        workers: allWorkers,
+        workerPayments: allWorkerPayments,
+        workerTasks: allWorkerTasks,
+        animalOwnerships: allOwnerships,
+        farmAccounts: allAccounts,
       };
     },
     async restoreSnapshot(
       snapshot: FarmDbSnapshot
     ): Promise<RestoreSnapshotResult> {
-      writeJson(SETTINGS_KEY, snapshot.settings);
-      writeJson(LIVESTOCK_KEY, snapshot.livestock);
+      const validatedSettings = validateFarmSettings({
+        ...DEFAULT_FARM_SETTINGS,
+        ...(snapshot.settings ?? {}),
+      });
+      writeJson(
+        SETTINGS_KEY,
+        validatedSettings.ok && validatedSettings.data
+          ? validatedSettings.data
+          : { ...DEFAULT_FARM_SETTINGS }
+      );
+      writeJson(
+        LIVESTOCK_KEY,
+        snapshot.livestock.map(normalizePreviewLivestock)
+      );
       writeJson(PRODUCTION_KEY, snapshot.productRecords);
       writeJson(MEDICAL_KEY, snapshot.medicalRecords);
       writeJson(FINANCIAL_KEY, snapshot.financialLogs);
       writeJson(ALERTS_KEY, snapshot.alerts);
+      writeJson(WORKERS_KEY, snapshot.workers ?? []);
+      writeJson(WORKER_PAYMENTS_KEY, snapshot.workerPayments ?? []);
+      writeJson(WORKER_TASKS_KEY, snapshot.workerTasks ?? []);
+      writeJson(OWNERSHIPS_KEY, snapshot.animalOwnerships ?? []);
+      writeJson(ACCOUNTS_KEY, snapshot.farmAccounts ?? []);
       events.emit(['*']);
       return {
         livestockCount: snapshot.livestock.length,
@@ -827,10 +2157,13 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     driverKind: 'memory-fallback',
     events,
     livestock,
+    ownerships,
     production,
     medical,
     financial,
     alerts,
+    hr,
+    network,
     settings,
     backup,
   };

@@ -1,42 +1,91 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import { BarChart } from 'react-native-chart-kit';
 import {
-  buildMonthlyProfitLossSeries,
+  CURRENCY_OPTIONS,
+  buildPeriodProfitLossSeries,
   computeFinancialSummary,
+  filterAndSortRecordsByDate,
+  FINANCIAL_PERIOD_BUCKETS,
   formatCategoryLabel,
+  formatCompactAxisNumber,
   formatCurrency,
+  formatDisplayDate,
+  RECORD_DATE_FILTER_OPTIONS,
+  type DateSortDirection,
   type FinancialLog,
+  type RecordDateFilter,
   type TransactionType,
 } from '@farmdb/core';
 import {
   useDeleteFinancialLog,
-  useFarmSettings,
   useFinancialLogList,
   useLivestockList,
   useUpdateFarmSettings,
 } from '@farmdb/db';
+import {
+  getCurrencyFlagSource,
+  getCurrencyOptionFlagSource,
+  MOBILE_APP_ICONS,
+} from '../assets/icons';
+import {
+  FARMDB_COLORS,
+  FARMDB_FONTS,
+  useUiScale,
+} from '../theme/uiScale';
+import { computeMobileYAxisGutter } from '../utils/chartAxis';
+import { AnimalEyeButton } from './AnimalQuickPreviewModal';
+import { AppIcon } from './FarmIcons';
+import { FarmScrollView } from './FarmScrollView';
+import { MobileNumberStepper } from './MobileNumberStepper';
 import { FinancialFormModal } from './FinancialFormModal';
+import {
+  ModernDropdown,
+  type ModernDropdownOption,
+} from './ModernDropdown';
 
 export function FinancialView() {
-  const { width } = useWindowDimensions();
-  const chartWidth = Math.max(260, width - 64);
+  const ui = useUiScale();
+  const { settings } = ui;
+  const iconMode = settings.mobileIconMode;
 
   const [typeFilter, setTypeFilter] = useState<TransactionType | 'all'>('all');
   const [search, setSearch] = useState('');
+  const [periodBucket, setPeriodBucket] = useState<'week' | 'month' | 'year'>('month');
+  const [dateFilter, setDateFilter] = useState<RecordDateFilter>('all');
+  const [dateSort, setDateSort] = useState<DateSortDirection>('desc');
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<FinancialLog | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const dateFilterOptions = useMemo<ModernDropdownOption<RecordDateFilter>[]>(
+    () =>
+      RECORD_DATE_FILTER_OPTIONS.map((opt) => ({
+        value: opt.value,
+        label: opt.shortLabel,
+        hint: opt.label,
+        iconSource: MOBILE_APP_ICONS.calendar,
+      })),
+    []
+  );
+
+  const dateSortOptions = useMemo<ModernDropdownOption<DateSortDirection>[]>(
+    () => [
+      { value: 'desc', label: 'Newest', iconSource: MOBILE_APP_ICONS.hourglass },
+      { value: 'asc', label: 'Oldest', iconSource: MOBILE_APP_ICONS.hourglass },
+    ],
+    []
+  );
 
   const livestockQuery = useLivestockList({});
-  const settingsQuery = useFarmSettings();
   const updateSettingsMutation = useUpdateFarmSettings();
   const allLogsQuery = useFinancialLogList({});
   const filteredLogsQuery = useFinancialLogList({
@@ -45,16 +94,68 @@ export function FinancialView() {
   });
   const deleteMutation = useDeleteFinancialLog();
 
-  const [rateInput, setRateInput] = useState('');
-  const [currencyInput, setCurrencyInput] = useState('$');
+  const [rateInput, setRateInput] = useState(
+    settings.defaultMilkRatePerLiter.toFixed(2)
+  );
+  const [currencyInput, setCurrencyInput] = useState(settings.currencySymbol);
+  const [customCurrency, setCustomCurrency] = useState(
+    !CURRENCY_OPTIONS.some((c) => c.symbol === settings.currencySymbol)
+  );
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (settingsQuery.data) {
-      setRateInput(settingsQuery.data.defaultMilkRatePerLiter.toFixed(2));
-      setCurrencyInput(settingsQuery.data.currencySymbol);
-    }
-  }, [settingsQuery.data]);
+    setRateInput(settings.defaultMilkRatePerLiter.toFixed(2));
+    setCurrencyInput(settings.currencySymbol);
+    setCustomCurrency(
+      !CURRENCY_OPTIONS.some((c) => c.symbol === settings.currencySymbol)
+    );
+  }, [settings.defaultMilkRatePerLiter, settings.currencySymbol]);
+
+  const typeFilterOptions = useMemo<
+    ModernDropdownOption<TransactionType | 'all'>[]
+  >(
+    () => [
+      {
+        value: 'all',
+        label: 'All Transactions',
+        customIcon: (
+          <AppIcon name="all" size={16} color={FARMDB_COLORS.accent} />
+        ),
+      },
+      {
+        value: 'income',
+        label: 'Income Only',
+        iconSource: MOBILE_APP_ICONS.money,
+      },
+      {
+        value: 'expense',
+        label: 'Expenses Only',
+        iconSource: MOBILE_APP_ICONS.budget,
+      },
+    ],
+    []
+  );
+
+  const currencyQuickOptions = useMemo<ModernDropdownOption<string>[]>(
+    () => [
+      ...CURRENCY_OPTIONS.map((opt) => ({
+        value: opt.symbol,
+        label: `${opt.code} (${opt.symbol})`,
+        iconSource: getCurrencyOptionFlagSource(opt),
+      })),
+      {
+        value: '__custom__',
+        label: 'Custom',
+        iconSource: getCurrencyFlagSource(currencyInput),
+      },
+    ],
+    [currencyInput]
+  );
+
+  const selectedQuickCurrency =
+    !customCurrency && CURRENCY_OPTIONS.some((c) => c.symbol === currencyInput)
+      ? currencyInput
+      : '__custom__';
 
   const animals = livestockQuery.data ?? [];
   const animalsById = useMemo(
@@ -63,13 +164,25 @@ export function FinancialView() {
   );
 
   const allLogs = allLogsQuery.data ?? [];
-  const visibleLogs = filteredLogsQuery.data ?? [];
-  const currency = settingsQuery.data?.currencySymbol ?? '$';
+  const visibleLogs = useMemo(
+    () =>
+      filterAndSortRecordsByDate(filteredLogsQuery.data ?? [], {
+        filter: dateFilter,
+        sort: dateSort,
+      }),
+    [filteredLogsQuery.data, dateFilter, dateSort]
+  );
+  const currency = settings.currencySymbol;
 
   const summary = useMemo(() => computeFinancialSummary(allLogs), [allLogs]);
   const monthlySeries = useMemo(
-    () => buildMonthlyProfitLossSeries(allLogs, 4),
-    [allLogs]
+    () =>
+      buildPeriodProfitLossSeries(
+        allLogs,
+        periodBucket,
+        periodBucket === 'year' ? 8 : periodBucket === 'month' ? 6 : 6
+      ),
+    [allLogs, periodBucket]
   );
 
   async function handleSaveSettings() {
@@ -85,229 +198,567 @@ export function FinancialView() {
     }
   }
 
+  async function handleDeleteLog(id: string) {
+    if (settings.confirmBeforeDelete && confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setConfirmDeleteId(null);
+    await deleteMutation.mutateAsync(id);
+  }
+
+  const statCardStyle = [
+    styles.statBox,
+    {
+      padding: ui.space(10),
+      borderRadius: Math.max(10, ui.radius - 2),
+      flexBasis: ui.isTablet
+        ? ('23%' as const)
+        : ui.isCompactPhone && (ui.isLargeText || ui.isLargeDensity)
+          ? ('100%' as const)
+          : ('45%' as const),
+      minWidth: 132,
+    },
+  ];
+
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.topActions}>
-        <View style={styles.summaryGrid}>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Income</Text>
-            <Text style={[styles.statValue, { color: '#1b6b3a' }]}>
-              {formatCurrency(summary.totalIncome, currency)}
-            </Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Expenses</Text>
-            <Text style={[styles.statValue, { color: '#b42318' }]}>
-              {formatCurrency(summary.totalExpense, currency)}
-            </Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Net Profit</Text>
-            <Text
-              style={[
-                styles.statValue,
-                { color: summary.netProfit >= 0 ? '#1b6b3a' : '#b42318' },
-              ]}
-            >
-              {formatCurrency(summary.netProfit, currency)}
-            </Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Margin</Text>
-            <Text style={styles.statValue}>
-              {summary.profitMarginPercent.toFixed(1)}%
-            </Text>
-          </View>
-        </View>
-
-        <Pressable
-          style={styles.addBtn}
-          onPress={() => {
-            setEditing(null);
-            setModalVisible(true);
-          }}
-        >
-          <Text style={styles.addBtnText}>+ Record Income / Expense</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Profit & Loss Snapshot</Text>
-        {allLogs.length === 0 ? (
-          <Text style={styles.mutedText}>
-            Record milk sales or expenses to view profit & loss charts.
-          </Text>
-        ) : (
-          <BarChart
-            data={{
-              labels:
-                monthlySeries.length > 1
-                  ? monthlySeries.map((m) => m.label.slice(2))
-                  : ['Income', 'Expenses', 'Net'],
-              datasets: [
-                {
-                  data:
-                    monthlySeries.length > 1
-                      ? monthlySeries.map((m) => Math.max(0, m.netProfit))
-                      : [
-                          summary.totalIncome,
-                          summary.totalExpense,
-                          Math.max(0, summary.netProfit),
-                        ],
-                },
-              ],
-            }}
-            width={chartWidth}
-            height={195}
-            fromZero
-            yAxisLabel={currency}
-            yAxisSuffix=""
-            chartConfig={{
-              backgroundColor: '#ffffff',
-              backgroundGradientFrom: '#ffffff',
-              backgroundGradientTo: '#f5f3ee',
-              decimalPlaces: 0,
-              color: (opacity = 1) => `rgba(45, 106, 79, ${opacity})`,
-              labelColor: (opacity = 1) => `rgba(28, 36, 30, ${opacity})`,
-            }}
-            style={styles.chart}
-          />
-        )}
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Standard Milk Sale Rate</Text>
-        <View style={styles.settingsRow}>
-          <TextInput
-            style={[styles.input, { flex: 1 }]}
-            value={rateInput}
-            onChangeText={setRateInput}
-            keyboardType="decimal-pad"
-            placeholder="0.65"
-          />
-          <TextInput
-            style={[styles.input, { width: 70 }]}
-            value={currencyInput}
-            onChangeText={setCurrencyInput}
-            maxLength={6}
-            placeholder="$"
-          />
-          <Pressable
-            style={styles.saveSmallBtn}
-            onPress={() => void handleSaveSettings()}
-          >
-            <Text style={styles.saveSmallBtnText}>Save</Text>
-          </Pressable>
-        </View>
-        {settingsMsg ? (
-          <Text style={styles.settingsMsg}>{settingsMsg}</Text>
-        ) : null}
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>
-          Transactions ({visibleLogs.length})
-        </Text>
-        <TextInput
-          style={[styles.input, { marginBottom: 10 }]}
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search category or notes..."
-        />
-
-        <View style={styles.filterRow}>
-          {(['all', 'income', 'expense'] as const).map((t) => (
-            <Pressable
-              key={t}
-              style={[
-                styles.filterChip,
-                typeFilter === t && styles.filterChipActive,
-              ]}
-              onPress={() => setTypeFilter(t)}
-            >
+      <FarmScrollView
+        dockAware
+        style={styles.container}
+        contentContainerStyle={[
+          styles.content,
+          {
+            padding: ui.contentPadding,
+            gap: ui.space(12),
+            paddingBottom: ui.bottomDockReserve,
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={[styles.topActions, { gap: ui.space(10) }]}>
+          <View style={[styles.summaryGrid, { gap: ui.space(8) }]}>
+            <View style={statCardStyle}>
+              <Text style={[styles.statLabel, { fontSize: ui.font(11) }]}>
+                Income
+              </Text>
               <Text
                 style={[
-                  styles.filterChipText,
-                  typeFilter === t && styles.filterChipTextActive,
+                  styles.statValue,
+                  { color: FARMDB_COLORS.success, fontSize: ui.font(15) },
                 ]}
               >
-                {t === 'all'
-                  ? 'All'
-                  : t === 'income'
-                    ? 'Income'
-                    : 'Expenses'}
+                {formatCurrency(summary.totalIncome, currency)}
               </Text>
-            </Pressable>
-          ))}
+            </View>
+            <View style={statCardStyle}>
+              <Text style={[styles.statLabel, { fontSize: ui.font(11) }]}>
+                Expenses
+              </Text>
+              <Text
+                style={[
+                  styles.statValue,
+                  { color: FARMDB_COLORS.danger, fontSize: ui.font(15) },
+                ]}
+              >
+                {formatCurrency(summary.totalExpense, currency)}
+              </Text>
+            </View>
+            <View style={statCardStyle}>
+              <Text style={[styles.statLabel, { fontSize: ui.font(11) }]}>
+                Net Profit
+              </Text>
+              <Text
+                style={[
+                  styles.statValue,
+                  {
+                    color:
+                      summary.netProfit >= 0
+                        ? FARMDB_COLORS.success
+                        : FARMDB_COLORS.danger,
+                    fontSize: ui.font(15),
+                  },
+                ]}
+              >
+                {formatCurrency(summary.netProfit, currency)}
+              </Text>
+            </View>
+            <View style={statCardStyle}>
+              <Text style={[styles.statLabel, { fontSize: ui.font(11) }]}>
+                Margin
+              </Text>
+              <Text style={[styles.statValue, { fontSize: ui.font(15) }]}>
+                {summary.profitMarginPercent.toFixed(1)}%
+              </Text>
+            </View>
+          </View>
+
+          <Pressable
+            accessibilityLabel="Record income or expense"
+            style={[
+              styles.addBtn,
+              {
+                minHeight: ui.controlHeight,
+                paddingHorizontal: ui.space(12),
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+              },
+            ]}
+            onPress={() => {
+              setEditing(null);
+              setModalVisible(true);
+            }}
+          >
+            <AppIcon name="plus" size={ui.font(18)} color="#ffffff" />
+            <Text style={[styles.addBtnText, { fontSize: ui.font(14) }]}>
+              {iconMode ? 'Add Entry' : 'Record Income / Expense'}
+            </Text>
+          </Pressable>
         </View>
 
-        {visibleLogs.length === 0 ? (
-          <Text style={styles.mutedText}>No matching transactions.</Text>
-        ) : (
-          visibleLogs.map((log) => {
-            const animal = log.livestockId
-              ? animalsById.get(log.livestockId)
-              : null;
-            return (
-              <View key={log.id} style={styles.logRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.logTitle}>
-                    {formatCategoryLabel(log.category)}
-                    {log.productRecordId ? ' (Auto)' : ''} ·{' '}
-                    <Text
-                      style={{
-                        color:
-                          log.transactionType === 'income'
-                            ? '#1b6b3a'
-                            : '#b42318',
-                      }}
-                    >
-                      {log.transactionType === 'income' ? '+' : '-'}
-                      {formatCurrency(log.amount, currency)}
-                    </Text>
-                  </Text>
-                  <Text style={styles.logMeta}>
-                    {log.date}
-                    {animal ? ` · ${animal.tagNumber}` : ' · General Farm'}
-                    {log.notes ? ` · ${log.notes}` : ''}
-                  </Text>
-                </View>
-
-                <View style={styles.rowBtns}>
+        <View
+          style={[
+            styles.card,
+            {
+              paddingHorizontal: ui.space(6),
+              paddingTop: ui.space(12),
+              paddingBottom: ui.space(6),
+              borderRadius: ui.radius,
+              gap: ui.space(6),
+            },
+          ]}
+        >
+          <View style={[styles.chartHeaderRow, { paddingHorizontal: ui.space(8), flexWrap: 'wrap', gap: 6 }]}>
+            <View style={{ flex: 1, minWidth: 120 }}>
+              <Text style={[styles.cardTitle, { fontSize: ui.font(16), marginBottom: 0 }]}>
+                {periodBucket === 'week'
+                  ? 'Weekly'
+                  : periodBucket === 'year'
+                    ? 'Yearly'
+                    : 'Monthly'}{' '}
+                P&amp;L ({currency})
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+              {FINANCIAL_PERIOD_BUCKETS.map((opt) => {
+                const active = periodBucket === opt.value;
+                return (
                   <Pressable
-                    style={styles.editBtn}
-                    onPress={() => {
-                      setEditing(log);
-                      setModalVisible(true);
+                    key={opt.value}
+                    onPress={() => setPeriodBucket(opt.value)}
+                    style={{
+                      paddingHorizontal: 9,
+                      paddingVertical: 4,
+                      borderRadius: 999,
+                      backgroundColor: active
+                        ? FARMDB_COLORS.accent
+                        : FARMDB_COLORS.cardAlt,
+                      borderWidth: 1,
+                      borderColor: active
+                        ? FARMDB_COLORS.accent
+                        : FARMDB_COLORS.border,
                     }}
                   >
-                    <Text style={styles.editBtnText}>Edit</Text>
+                    <Text
+                      style={{
+                        fontSize: ui.font(11),
+                        fontFamily: FARMDB_FONTS.semibold,
+                        color: active ? '#ffffff' : FARMDB_COLORS.textMuted,
+                      }}
+                    >
+                      {opt.label}
+                    </Text>
                   </Pressable>
-                  <Pressable
-                    style={styles.deleteBtn}
-                    onPress={() => void deleteMutation.mutateAsync(log.id)}
-                  >
-                    <Text style={styles.deleteBtnText}>Delete</Text>
-                  </Pressable>
-                </View>
-              </View>
-            );
-          })
-        )}
-      </View>
+                );
+              })}
+            </View>
+          </View>
+          {allLogs.length === 0 ? (
+            <Text style={[styles.mutedText, { fontSize: ui.font(13), paddingHorizontal: ui.space(8), paddingBottom: ui.space(6) }]}>
+              No financial entries yet.
+            </Text>
+          ) : (
+            (() => {
+              const recentSeries = monthlySeries.slice(-6);
+              const barLabels =
+                recentSeries.length > 1
+                  ? recentSeries.map((m) => m.label)
+                  : ['Income', 'Expenses', 'Net'];
+              const barValues =
+                recentSeries.length > 1
+                  ? recentSeries.map((m) => Math.max(0, m.netProfit))
+                  : [
+                    summary.totalIncome,
+                    summary.totalExpense,
+                    Math.max(0, summary.netProfit),
+                  ];
 
-      <FinancialFormModal
-        visible={modalVisible}
-        editing={editing}
-        animals={animals}
-        currencySymbol={currency}
-        onClose={() => setModalVisible(false)}
-      />
-    </ScrollView>
+              const finYAxisGutter = computeMobileYAxisGutter(
+                barValues,
+                (v) => formatCompactAxisNumber(v, 0),
+                {
+                  fontSize: 10.5,
+                  yLabelsOffset: 6,
+                  minGutter: 40,
+                  maxGutter: 84,
+                }
+              );
+
+              return (
+                <BarChart
+                  data={{
+                    labels: barLabels,
+                    datasets: [{ data: barValues }],
+                  }}
+                  width={ui.chartWidth}
+                  height={240}
+                  fromZero
+                  yAxisLabel=""
+                  yAxisSuffix=""
+                  yLabelsOffset={6}
+                  xLabelsOffset={-4}
+                  showValuesOnTopOfBars
+                  withInnerLines
+                  chartConfig={{
+                    backgroundColor: FARMDB_COLORS.surface,
+                    backgroundGradientFrom: FARMDB_COLORS.surface,
+                    backgroundGradientTo: FARMDB_COLORS.bg,
+                    decimalPlaces: 0,
+                    barPercentage: barLabels.length > 4 ? 0.58 : 0.72,
+                    color: (opacity = 1) => `rgba(45, 106, 79, ${opacity})`,
+                    labelColor: (opacity = 1) => `rgba(28, 36, 30, ${opacity})`,
+                    formatYLabel: (val) => formatCompactAxisNumber(val, 0),
+                    propsForBackgroundLines: {
+                      strokeDasharray: '4 4',
+                      stroke: '#e6dfd1',
+                    },
+                    propsForLabels: {
+                      fontSize: 10.5,
+                    },
+                  }}
+                  style={{
+                    borderRadius: 12,
+                    marginTop: 2,
+                    paddingRight: finYAxisGutter,
+                    paddingTop: 14,
+                    paddingBottom: 0,
+                  }}
+                />
+              );
+            })()
+          )}
+        </View>
+
+        <View
+          style={[styles.card, { padding: ui.space(14), borderRadius: ui.radius }]}
+        >
+          <View style={styles.sectionTitleRow}>
+            <AppIcon name="financial" size={ui.font(18)} />
+            <Text style={[styles.cardTitle, { fontSize: ui.font(16), marginBottom: 0, flexShrink: 1 }]}>
+              Standard Milk Sale Rate &amp; Currency
+            </Text>
+          </View>
+          <View style={[styles.settingsRow, { gap: ui.space(8), flexWrap: 'wrap' }]}>
+            <View style={{ flex: 1, minWidth: 132 }}>
+              <MobileNumberStepper
+                accessibilityLabel="Standard Milk Rate"
+                compact
+                min={0}
+                step={currencyInput === 'UGX' ? 100 : 0.05}
+                decimals={currencyInput === 'UGX' ? 0 : 2}
+                value={rateInput}
+                onChangeText={setRateInput}
+                placeholder="0.65"
+              />
+            </View>
+            <View style={{ minWidth: 136, flexGrow: 1 }}>
+              <ModernDropdown
+                value={selectedQuickCurrency}
+                options={currencyQuickOptions}
+                title="Currency"
+                accessibilityLabel="Currency"
+                onChange={(val) => {
+                  if (val === '__custom__') {
+                    setCustomCurrency(true);
+                  } else {
+                    setCustomCurrency(false);
+                    setCurrencyInput(val);
+                  }
+                }}
+              />
+            </View>
+            {selectedQuickCurrency === '__custom__' ? (
+              <TextInput
+                style={[
+                  styles.input,
+                  { minWidth: 84, flexGrow: 0.4, minHeight: ui.controlHeight, fontSize: ui.font(14) },
+                ]}
+                value={currencyInput}
+                onChangeText={setCurrencyInput}
+                maxLength={6}
+                placeholder="KES"
+              />
+            ) : null}
+            <Pressable
+              style={[
+                styles.saveSmallBtn,
+                { minHeight: ui.controlHeight, minWidth: 74, justifyContent: 'center', alignItems: 'center' },
+              ]}
+              onPress={() => void handleSaveSettings()}
+            >
+              <Text style={[styles.saveSmallBtnText, { fontSize: ui.font(13) }]}>
+                Save
+              </Text>
+            </Pressable>
+          </View>
+          {settingsMsg ? (
+            <Text style={[styles.settingsMsg, { fontSize: ui.font(12) }]}>
+              {settingsMsg}
+            </Text>
+          ) : null}
+        </View>
+
+        <View
+          style={[styles.card, { padding: ui.space(14), borderRadius: ui.radius }]}
+        >
+          <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+            Transactions ({visibleLogs.length})
+          </Text>
+          <View
+            style={[
+              styles.searchWrap,
+              {
+                marginBottom: 10,
+                minHeight: ui.controlHeight,
+                paddingHorizontal: ui.space(11),
+              },
+            ]}
+          >
+            <AppIcon
+              name="search"
+              size={ui.font(15)}
+              color={FARMDB_COLORS.textMuted}
+            />
+            <TextInput
+              style={[styles.searchInputInner, { fontSize: ui.font(14) }]}
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search category or notes..."
+              placeholderTextColor={FARMDB_COLORS.textMuted}
+            />
+            {search.length > 0 ? (
+              <Pressable onPress={() => setSearch('')} hitSlop={8}>
+                <AppIcon
+                  name="close"
+                  size={ui.font(15)}
+                  color={FARMDB_COLORS.textMuted}
+                />
+              </Pressable>
+            ) : null}
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: ui.space(8), marginBottom: ui.space(10), flexWrap: 'wrap' }}>
+            <View style={{ flex: 1, minWidth: ui.isCramped ? 140 : 120 }}>
+              <ModernDropdown
+                compact
+                value={typeFilter}
+                options={typeFilterOptions}
+                title="Filter Transactions"
+                accessibilityLabel="Filter transaction type"
+                onChange={setTypeFilter}
+              />
+            </View>
+            <View style={{ flex: 1, minWidth: ui.isCramped ? 124 : 96 }}>
+              <ModernDropdown
+                compact
+                value={dateFilter}
+                options={dateFilterOptions}
+                title="Timeframe"
+                accessibilityLabel="Filter by timeframe"
+                onChange={setDateFilter}
+              />
+            </View>
+            <View style={{ flex: 1, minWidth: ui.isCramped ? 116 : 92 }}>
+              <ModernDropdown
+                compact
+                value={dateSort}
+                options={dateSortOptions}
+                title="Sort Order"
+                accessibilityLabel="Sort transactions by date"
+                onChange={setDateSort}
+              />
+            </View>
+          </View>
+
+          {visibleLogs.length === 0 ? (
+            <Text style={[styles.mutedText, { fontSize: ui.font(13) }]}>
+              No matching transactions.
+            </Text>
+          ) : (
+            visibleLogs.map((log) => {
+              const animal = log.livestockId
+                ? animalsById.get(log.livestockId)
+                : null;
+              return (
+                <View key={log.id} style={[styles.logRow, { paddingVertical: ui.space(10), flexWrap: 'wrap' }]}>
+                  <View style={{ flex: 1, minWidth: 168 }}>
+                    <Text style={[styles.logTitle, { fontSize: ui.font(14) }]}>
+                      {formatCategoryLabel(log.category)}
+                      {log.productRecordId ? ' (Auto)' : ''} ·{' '}
+                      <Text
+                        style={{
+                          color:
+                            log.transactionType === 'income'
+                              ? FARMDB_COLORS.success
+                              : FARMDB_COLORS.danger,
+                        }}
+                      >
+                        {log.transactionType === 'income' ? '+' : '-'}
+                        {formatCurrency(log.amount, currency)}
+                      </Text>
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text style={[styles.logMeta, { fontSize: ui.font(12), flexShrink: 1 }]}>
+                        {formatDisplayDate(log.date, settings.dateFormat)}
+                        {animal ? ` · ${animal.tagNumber}` : ' · General Farm'}
+                        {log.notes ? ` · ${log.notes}` : ''}
+                      </Text>
+                      {animal ? <AnimalEyeButton livestockId={animal.id} /> : null}
+                    </View>
+                  </View>
+
+                  <View style={[styles.rowBtns, { flexWrap: 'wrap' }]}>
+                    {confirmDeleteId === log.id ? (
+                      <>
+                        <Pressable
+                          accessibilityLabel="Confirm delete"
+                          style={[
+                            styles.deleteBtn,
+                            {
+                              minHeight: ui.chipHeight - 2,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() => void handleDeleteLog(log.id)}
+                        >
+                          <AppIcon
+                            name="check"
+                            size={ui.font(14)}
+                            color={FARMDB_COLORS.danger}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
+                              Confirm
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                        <Pressable
+                          accessibilityLabel="Keep entry"
+                          style={[
+                            styles.editBtn,
+                            {
+                              minHeight: ui.chipHeight - 2,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() => setConfirmDeleteId(null)}
+                        >
+                          <AppIcon
+                            name="close"
+                            size={ui.font(14)}
+                            color={FARMDB_COLORS.text}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.editBtnText, { fontSize: ui.font(11) }]}>
+                              Keep
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      </>
+                    ) : (
+                      <>
+                        <Pressable
+                          accessibilityLabel="Edit financial entry"
+                          style={[
+                            styles.editBtn,
+                            {
+                              minHeight: ui.chipHeight - 2,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() => {
+                            setEditing(log);
+                            setModalVisible(true);
+                          }}
+                        >
+                          <AppIcon
+                            name="edit"
+                            size={ui.font(14)}
+                            color={FARMDB_COLORS.text}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.editBtnText, { fontSize: ui.font(11) }]}>
+                              Edit
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                        <Pressable
+                          accessibilityLabel="Delete financial entry"
+                          style={[
+                            styles.deleteBtn,
+                            {
+                              minHeight: ui.chipHeight - 2,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() => void handleDeleteLog(log.id)}
+                        >
+                          <AppIcon
+                            name="trash"
+                            size={ui.font(14)}
+                            color={FARMDB_COLORS.danger}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
+                              Delete
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      </>
+                    )}
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+
+        <FinancialFormModal
+          visible={modalVisible}
+          editing={editing}
+          animals={animals}
+          currencySymbol={currency}
+          onClose={() => setModalVisible(false)}
+        />
+      </FarmScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -329,7 +780,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   statBox: {
-    width: '48%',
+    flexGrow: 1,
+    flexShrink: 0,
+    flexBasis: '45%',
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#ddd6c8',
@@ -338,11 +791,12 @@ const styles = StyleSheet.create({
   },
   statLabel: {
     fontSize: 11,
+    fontFamily: FARMDB_FONTS.medium,
     color: '#5d675f',
   },
   statValue: {
     fontSize: 16,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     color: '#1c241e',
     marginTop: 2,
   },
@@ -354,7 +808,7 @@ const styles = StyleSheet.create({
   },
   addBtnText: {
     color: '#ffffff',
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     fontSize: 14,
   },
   card: {
@@ -364,17 +818,31 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
   },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
   cardTitle: {
     fontSize: 16,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     color: '#1c241e',
     marginBottom: 10,
   },
   chart: {
-    borderRadius: 10,
+    borderRadius: 12,
+    marginTop: 2,
+  },
+  chartHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
   },
   mutedText: {
     fontSize: 13,
+    fontFamily: FARMDB_FONTS.regular,
     color: '#5d675f',
   },
   settingsRow: {
@@ -390,6 +858,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 9,
     fontSize: 14,
+    fontFamily: FARMDB_FONTS.regular,
     color: '#1c241e',
   },
   saveSmallBtn: {
@@ -400,39 +869,14 @@ const styles = StyleSheet.create({
   },
   saveSmallBtnText: {
     color: '#ffffff',
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     fontSize: 13,
   },
   settingsMsg: {
     fontSize: 12,
     color: '#1b6b3a',
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     marginTop: 6,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  filterChip: {
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#ddd6c8',
-    backgroundColor: '#ffffff',
-  },
-  filterChipActive: {
-    backgroundColor: '#17271d',
-    borderColor: '#17271d',
-  },
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1c241e',
-  },
-  filterChipTextActive: {
-    color: '#ffffff',
   },
   logRow: {
     flexDirection: 'row',
@@ -444,11 +888,12 @@ const styles = StyleSheet.create({
   },
   logTitle: {
     fontSize: 14,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     color: '#1c241e',
   },
   logMeta: {
     fontSize: 12,
+    fontFamily: FARMDB_FONTS.regular,
     color: '#5d675f',
     marginTop: 2,
   },
@@ -465,7 +910,7 @@ const styles = StyleSheet.create({
   },
   editBtnText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#1c241e',
   },
   deleteBtn: {
@@ -476,7 +921,22 @@ const styles = StyleSheet.create({
   },
   deleteBtnText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#b42318',
+  },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#faf8f4',
+    borderWidth: 1,
+    borderColor: '#ddd6c8',
+    borderRadius: 10,
+  },
+  searchInputInner: {
+    flex: 1,
+    fontFamily: FARMDB_FONTS.regular,
+    color: '#1c241e',
+    paddingVertical: 8,
   },
 });

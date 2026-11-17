@@ -1,11 +1,18 @@
+import { DEFAULT_FARM_SETTINGS } from './analytics';
 import type {
   AlertItem,
+  AnimalOwnership,
+  FarmAccount,
   FarmSettings,
+  FarmWorker,
   FinancialLog,
   Livestock,
   MedicalRecord,
   ProductRecord,
+  WorkerPayment,
+  WorkerTask,
 } from './types';
+import { validateFarmSettings } from './validation';
 
 export interface FarmDbSnapshot {
   version: 1;
@@ -17,6 +24,11 @@ export interface FarmDbSnapshot {
   medicalRecords: MedicalRecord[];
   financialLogs: FinancialLog[];
   alerts: AlertItem[];
+  workers?: FarmWorker[];
+  workerPayments?: WorkerPayment[];
+  workerTasks?: WorkerTask[];
+  animalOwnerships?: AnimalOwnership[];
+  farmAccounts?: FarmAccount[];
 }
 
 export type ExportTableKey =
@@ -24,7 +36,12 @@ export type ExportTableKey =
   | 'product_records'
   | 'medical_records'
   | 'financial_logs'
-  | 'alerts';
+  | 'alerts'
+  | 'workers'
+  | 'worker_payments'
+  | 'worker_tasks'
+  | 'animal_ownerships'
+  | 'farm_accounts';
 
 export function escapeCsvCell(value: unknown): string {
   if (value === null || value === undefined) {
@@ -61,6 +78,8 @@ export function exportLivestockToCsv(rows: readonly Livestock[]): string {
       'breed',
       'dob',
       'image_uri',
+      'sire_id',
+      'dam_id',
       'status',
       'created_at',
       'updated_at',
@@ -73,6 +92,8 @@ export function exportLivestockToCsv(rows: readonly Livestock[]): string {
       r.breed,
       r.dob,
       r.imageUri,
+      r.sireId ?? null,
+      r.damId ?? null,
       r.status,
       r.createdAt,
       r.updatedAt,
@@ -194,6 +215,187 @@ export function exportAlertsToCsv(rows: readonly AlertItem[]): string {
   );
 }
 
+export function exportWorkersToCsv(rows: readonly FarmWorker[]): string {
+  return serializeRowsToCsv(
+    [
+      'id',
+      'name',
+      'role',
+      'phone',
+      'responsibilities',
+      'salary_amount',
+      'pay_frequency',
+      'next_payment_due_date',
+      'status',
+      'hire_date',
+      'payment_notified_for_due_date',
+      'created_at',
+      'updated_at',
+    ],
+    rows.map((r) => [
+      r.id,
+      r.name,
+      r.role,
+      r.phone,
+      r.responsibilities,
+      r.salaryAmount,
+      r.payFrequency,
+      r.nextPaymentDueDate,
+      r.status,
+      r.hireDate,
+      r.paymentNotifiedForDueDate ?? null,
+      r.createdAt,
+      r.updatedAt,
+    ])
+  );
+}
+
+export function exportWorkerPaymentsToCsv(
+  rows: readonly WorkerPayment[]
+): string {
+  return serializeRowsToCsv(
+    [
+      'id',
+      'worker_id',
+      'financial_log_id',
+      'amount',
+      'due_date',
+      'paid_date',
+      'status',
+      'period_label',
+      'notes',
+      'notified_at',
+      'created_at',
+      'updated_at',
+    ],
+    rows.map((r) => [
+      r.id,
+      r.workerId,
+      r.financialLogId,
+      r.amount,
+      r.dueDate,
+      r.paidDate,
+      r.status,
+      r.periodLabel,
+      r.notes,
+      r.notifiedAt,
+      r.createdAt,
+      r.updatedAt,
+    ])
+  );
+}
+
+export function exportWorkerTasksToCsv(rows: readonly WorkerTask[]): string {
+  return serializeRowsToCsv(
+    [
+      'id',
+      'worker_id',
+      'livestock_id',
+      'title',
+      'description',
+      'priority',
+      'status',
+      'due_date',
+      'completed_at',
+      'created_at',
+      'updated_at',
+    ],
+    rows.map((r) => [
+      r.id,
+      r.workerId,
+      r.livestockId,
+      r.title,
+      r.description,
+      r.priority,
+      r.status,
+      r.dueDate,
+      r.completedAt,
+      r.createdAt,
+      r.updatedAt,
+    ])
+  );
+}
+
+export function exportAnimalOwnershipsToCsv(
+  rows: readonly AnimalOwnership[]
+): string {
+  return serializeRowsToCsv(
+    [
+      'id',
+      'livestock_id',
+      'owner_name',
+      'owner_contact',
+      'account_id',
+      'ownership_category',
+      'share_percentage',
+      'purpose',
+      'start_date',
+      'expected_end_date',
+      'boarding_fee',
+      'status',
+      'notes',
+      'created_at',
+      'updated_at',
+    ],
+    rows.map((r) => [
+      r.id,
+      r.livestockId,
+      r.ownerName,
+      r.ownerContact,
+      r.accountId,
+      r.ownershipCategory,
+      r.sharePercentage,
+      r.purpose,
+      r.startDate,
+      r.expectedEndDate,
+      r.boardingFee,
+      r.status,
+      r.notes,
+      r.createdAt,
+      r.updatedAt,
+    ])
+  );
+}
+
+export function exportFarmAccountsToCsv(rows: readonly FarmAccount[]): string {
+  return serializeRowsToCsv(
+    [
+      'id',
+      'display_name',
+      'email',
+      'phone',
+      'role',
+      'relationship',
+      'avatar_key',
+      'is_primary_admin',
+      'can_manage_network',
+      'can_sync_cloud',
+      'permissions',
+      'status',
+      'last_synced_at',
+      'created_at',
+      'updated_at',
+    ],
+    rows.map((r) => [
+      r.id,
+      r.displayName,
+      r.email,
+      r.phone,
+      r.role,
+      r.relationship,
+      r.avatarKey,
+      r.isPrimaryAdmin ? 1 : 0,
+      r.canManageNetwork ? 1 : 0,
+      r.canSyncCloud ? 1 : 0,
+      JSON.stringify(r.permissions),
+      r.status,
+      r.lastSyncedAt,
+      r.createdAt,
+      r.updatedAt,
+    ])
+  );
+}
+
 export function buildAllCsvExports(
   snapshot: FarmDbSnapshot
 ): Record<`${ExportTableKey}.csv`, string> {
@@ -203,6 +405,13 @@ export function buildAllCsvExports(
     'medical_records.csv': exportMedicalRecordsToCsv(snapshot.medicalRecords),
     'financial_logs.csv': exportFinancialLogsToCsv(snapshot.financialLogs),
     'alerts.csv': exportAlertsToCsv(snapshot.alerts),
+    'workers.csv': exportWorkersToCsv(snapshot.workers ?? []),
+    'worker_payments.csv': exportWorkerPaymentsToCsv(snapshot.workerPayments ?? []),
+    'worker_tasks.csv': exportWorkerTasksToCsv(snapshot.workerTasks ?? []),
+    'animal_ownerships.csv': exportAnimalOwnershipsToCsv(
+      snapshot.animalOwnerships ?? []
+    ),
+    'farm_accounts.csv': exportFarmAccountsToCsv(snapshot.farmAccounts ?? []),
   };
 }
 
@@ -221,6 +430,16 @@ export function exportCsvByTable(
       return exportFinancialLogsToCsv(snapshot.financialLogs);
     case 'alerts':
       return exportAlertsToCsv(snapshot.alerts);
+    case 'workers':
+      return exportWorkersToCsv(snapshot.workers ?? []);
+    case 'worker_payments':
+      return exportWorkerPaymentsToCsv(snapshot.workerPayments ?? []);
+    case 'worker_tasks':
+      return exportWorkerTasksToCsv(snapshot.workerTasks ?? []);
+    case 'animal_ownerships':
+      return exportAnimalOwnershipsToCsv(snapshot.animalOwnerships ?? []);
+    case 'farm_accounts':
+      return exportFarmAccountsToCsv(snapshot.farmAccounts ?? []);
   }
 }
 
@@ -255,6 +474,12 @@ export function parseFarmSnapshotJson(raw: string): FarmDbSnapshot {
     throw new Error('Backup JSON is missing one or more required tables.');
   }
 
+  const mergedSettingsInput: Partial<FarmSettings> =
+    candidate.settings && typeof candidate.settings === 'object'
+      ? { ...DEFAULT_FARM_SETTINGS, ...candidate.settings }
+      : { ...DEFAULT_FARM_SETTINGS };
+  const validatedSettings = validateFarmSettings(mergedSettingsInput);
+
   return {
     version: 1,
     app: 'farmDB',
@@ -262,16 +487,30 @@ export function parseFarmSnapshotJson(raw: string): FarmDbSnapshot {
       typeof candidate.exportedAt === 'string'
         ? candidate.exportedAt
         : new Date().toISOString(),
-    settings:
-      candidate.settings &&
-      typeof candidate.settings.defaultMilkRatePerLiter === 'number' &&
-      typeof candidate.settings.currencySymbol === 'string'
-        ? candidate.settings
-        : { defaultMilkRatePerLiter: 0.65, currencySymbol: '$' },
-    livestock: candidate.livestock,
+    settings: validatedSettings.ok && validatedSettings.data
+      ? validatedSettings.data
+      : { ...DEFAULT_FARM_SETTINGS },
+    livestock: candidate.livestock.map((row) => ({
+      ...row,
+      sireId: row.sireId ?? null,
+      damId: row.damId ?? null,
+    })),
     productRecords: candidate.productRecords,
     medicalRecords: candidate.medicalRecords,
     financialLogs: candidate.financialLogs,
     alerts: candidate.alerts,
+    ...(Array.isArray(candidate.workers) ? { workers: candidate.workers } : {}),
+    ...(Array.isArray(candidate.workerPayments)
+      ? { workerPayments: candidate.workerPayments }
+      : {}),
+    ...(Array.isArray(candidate.workerTasks)
+      ? { workerTasks: candidate.workerTasks }
+      : {}),
+    ...(Array.isArray(candidate.animalOwnerships)
+      ? { animalOwnerships: candidate.animalOwnerships }
+      : {}),
+    ...(Array.isArray(candidate.farmAccounts)
+      ? { farmAccounts: candidate.farmAccounts }
+      : {}),
   };
 }

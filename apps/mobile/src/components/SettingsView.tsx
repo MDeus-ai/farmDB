@@ -1,0 +1,1627 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import {
+  CURRENCY_OPTIONS,
+  DATE_FORMATS,
+  FONT_SCALES,
+  formatCurrency,
+  formatSpeciesLabel,
+  generateSupabaseSetupSql,
+  isAdminAccount,
+  SPECIES_LIST,
+  SYNC_CONFLICT_STRATEGIES,
+  UI_DENSITIES,
+  VOLUME_UNITS,
+  type CloudSyncDirection,
+  type DateFormatPreference,
+  type FarmSettings,
+  type FontScale,
+  type Species,
+  type SyncConflictStrategy,
+  type UiDensity,
+  type VolumeUnit,
+} from '@farmdb/core';
+import {
+  useActiveFarmAccount,
+  useClearCloudSyncLogs,
+  useCloudSyncLogs,
+  useResetFarmSettings,
+  useTriggerCloudSync,
+  useUpdateFarmSettings,
+} from '@farmdb/db';
+import {
+  getCurrencyFlagSource,
+  getCurrencyOptionFlagSource,
+  getSpeciesPngSource,
+  MOBILE_APP_ICONS,
+} from '../assets/icons';
+import {
+  FARMDB_COLORS,
+  FARMDB_FONTS,
+  useUiScale,
+} from '../theme/uiScale';
+import { AppIcon } from './FarmIcons';
+import { FarmScrollView } from './FarmScrollView';
+import { MobileFileTabs } from './MobileFileTabs';
+import { MobileNumberStepper } from './MobileNumberStepper';
+import {
+  ModernDropdown,
+  type ModernDropdownOption,
+} from './ModernDropdown';
+
+interface SettingsViewProps {
+  onOpenBackup: () => void;
+  onOpenAuthPortal?: () => void;
+  onOpenTutorial?: () => void;
+}
+
+const FONT_SCALE_LABELS: Record<FontScale, string> = {
+  small: 'Small',
+  medium: 'Medium',
+  large: 'Large',
+  xlarge: 'X-Large',
+};
+
+const UI_DENSITY_LABELS: Record<UiDensity, string> = {
+  compact: 'Compact',
+  comfortable: 'Comfort',
+  spacious: 'Spacious',
+};
+
+const DATE_FORMAT_LABELS: Record<DateFormatPreference, string> = {
+  iso: 'YYYY-MM-DD',
+  mdy: 'MM/DD/YYYY',
+  dmy: 'DD/MM/YYYY',
+};
+
+const VOLUME_UNIT_LABELS: Record<VolumeUnit, string> = {
+  liters: 'Liters (L)',
+  gallons: 'Gallons (gal)',
+};
+
+interface PresetOption {
+  value: number;
+  label: string;
+}
+
+const INTERVAL_PRESETS: readonly PresetOption[] = [
+  { value: 30, label: '30s' },
+  { value: 60, label: '1m' },
+  { value: 300, label: '5m' },
+  { value: 900, label: '15m' },
+];
+
+const LEAD_DAYS_PRESETS: readonly PresetOption[] = [
+  { value: 0, label: '0d' },
+  { value: 1, label: '1d' },
+  { value: 3, label: '3d' },
+  { value: 7, label: '7d' },
+  { value: 14, label: '14d' },
+];
+
+const CLOUD_SYNC_PRESETS: readonly PresetOption[] = [
+  { value: 60, label: '1m' },
+  { value: 120, label: '2m' },
+  { value: 300, label: '5m' },
+  { value: 900, label: '15m' },
+];
+
+function MobileIntervalControl({
+  label,
+  accessibilityLabel,
+  min,
+  max,
+  step,
+  value,
+  onChangeText,
+  presets,
+}: {
+  label: string;
+  accessibilityLabel: string;
+  min: number;
+  max: number;
+  step: number;
+  value: string;
+  onChangeText: (next: string) => void;
+  presets: readonly PresetOption[];
+}) {
+  const ui = useUiScale();
+  const numericValue = Number(value);
+
+  const stepperMinWidth = Math.max(96, Math.round(92 * ui.fontMult));
+  const presetMinWidth = Math.max(42, Math.round(ui.font(11) * 3.6));
+
+  return (
+    <View style={{ gap: ui.space(5) }}>
+      <Text style={[styles.label, { fontSize: ui.font(12) }]}>{label}</Text>
+      <View style={[styles.presetRow, { gap: ui.space(8), flexWrap: 'wrap' }]}>
+        <View style={{ minWidth: stepperMinWidth, flexGrow: 0 }}>
+          <MobileNumberStepper
+            accessibilityLabel={accessibilityLabel}
+            compact
+            min={min}
+            max={max}
+            step={step}
+            decimals={0}
+            keyboardType="number-pad"
+            value={value}
+            onChangeText={onChangeText}
+          />
+        </View>
+        <View style={[styles.presetBar, { flexWrap: 'wrap', minWidth: 170 }]}>
+          {presets.map((preset) => {
+            const active = numericValue === preset.value;
+            return (
+              <Pressable
+                key={`${preset.value}-${preset.label}`}
+                style={[
+                  styles.presetBtn,
+                  active && styles.presetBtnActive,
+                  {
+                    minHeight: Math.max(30, ui.controlHeight - 8),
+                    minWidth: presetMinWidth,
+                    paddingHorizontal: ui.space(6),
+                    paddingVertical: ui.space(4),
+                  },
+                ]}
+                onPress={() => onChangeText(String(preset.value))}
+              >
+                <Text
+                  style={[
+                    styles.presetBtnText,
+                    active && styles.presetBtnTextActive,
+                    { fontSize: ui.font(11) },
+                  ]}
+                >
+                  {preset.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+export function SettingsView({
+  onOpenBackup,
+  onOpenAuthPortal,
+  onOpenTutorial,
+}: SettingsViewProps) {
+  const ui = useUiScale();
+  const { settings } = ui;
+  const updateMutation = useUpdateFarmSettings();
+  const resetMutation = useResetFarmSettings();
+  const activeAccountQuery = useActiveFarmAccount();
+  const logsQuery = useCloudSyncLogs(25);
+  const syncMut = useTriggerCloudSync();
+  const clearLogsMut = useClearCloudSyncLogs();
+
+  const activeAccount = activeAccountQuery.data;
+  const syncLogs = logsQuery.data ?? [];
+  const isAdmin = isAdminAccount(activeAccount);
+  const isAdminOrManager = isAdmin;
+
+  const [farmName, setFarmName] = useState(settings.farmName);
+  const [currencySymbol, setCurrencySymbol] = useState(settings.currencySymbol);
+  const [useCustomCurrency, setUseCustomCurrency] = useState(
+    !CURRENCY_OPTIONS.some((c) => c.symbol === settings.currencySymbol)
+  );
+  const [rateText, setRateText] = useState(
+    settings.defaultMilkRatePerLiter.toFixed(2)
+  );
+  const [intervalText, setIntervalText] = useState(
+    String(settings.alertCheckIntervalSeconds)
+  );
+  const [leadDaysText, setLeadDaysText] = useState(
+    String(settings.paymentAlertLeadDays)
+  );
+  const [activeTab, setActiveTab] = useState<'settings' | 'logs'>('settings');
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+
+  // Cloud Sync & Supabase DB form state (database settings)
+  const [cloudEnabled, setCloudEnabled] = useState(settings.cloudSyncEnabled);
+  const [supabaseUrl, setSupabaseUrl] = useState(settings.supabaseUrl);
+  const [supabaseKey, setSupabaseKey] = useState(settings.supabaseAnonKey);
+  const [workspaceId, setWorkspaceId] = useState(settings.cloudWorkspaceId);
+  const [autoSync, setAutoSync] = useState(settings.autoSyncOnInternet);
+  const [cloudInterval, setCloudInterval] = useState(
+    String(settings.cloudSyncIntervalSeconds)
+  );
+  const [strategy, setStrategy] = useState<SyncConflictStrategy>(
+    settings.syncConflictStrategy
+  );
+  const [syncFinancials, setSyncFinancials] = useState(
+    settings.syncIncludeFinancials
+  );
+  const [syncHr, setSyncHr] = useState(settings.syncIncludeHr);
+
+  useEffect(() => {
+    setFarmName(settings.farmName);
+    setCurrencySymbol(settings.currencySymbol);
+    setUseCustomCurrency(
+      !CURRENCY_OPTIONS.some((c) => c.symbol === settings.currencySymbol)
+    );
+    setRateText(settings.defaultMilkRatePerLiter.toFixed(2));
+    setIntervalText(String(settings.alertCheckIntervalSeconds));
+    setLeadDaysText(String(settings.paymentAlertLeadDays));
+    setCloudEnabled(settings.cloudSyncEnabled);
+    setSupabaseUrl(settings.supabaseUrl);
+    setSupabaseKey(settings.supabaseAnonKey);
+    setWorkspaceId(settings.cloudWorkspaceId);
+    setAutoSync(settings.autoSyncOnInternet);
+    setCloudInterval(String(settings.cloudSyncIntervalSeconds));
+    setStrategy(settings.syncConflictStrategy);
+    setSyncFinancials(settings.syncIncludeFinancials);
+    setSyncHr(settings.syncIncludeHr);
+  }, [settings]);
+
+  async function persistCloudForm() {
+    await updateMutation.mutateAsync({
+      cloudSyncEnabled: cloudEnabled,
+      supabaseUrl,
+      supabaseAnonKey: supabaseKey,
+      cloudWorkspaceId: workspaceId,
+      autoSyncOnInternet: autoSync,
+      cloudSyncIntervalSeconds: Number(cloudInterval),
+      syncConflictStrategy: strategy,
+      syncIncludeFinancials: syncFinancials,
+      syncIncludeHr: syncHr,
+    });
+  }
+
+  async function handleSaveCloud() {
+    try {
+      await persistCloudForm();
+      setFeedback({ kind: 'ok', text: 'Saved Supabase cloud database settings.' });
+    } catch (err) {
+      setFeedback({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Invalid Supabase configuration.',
+      });
+    }
+  }
+
+  async function handleSync(dir: CloudSyncDirection) {
+    try {
+      await persistCloudForm();
+      const res = await syncMut.mutateAsync(dir);
+      setFeedback({ kind: res.ok ? 'ok' : 'err', text: res.message });
+    } catch (err) {
+      setFeedback({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Supabase sync failed.',
+      });
+    }
+  }
+
+  const dateFormatOptions = useMemo<ModernDropdownOption<DateFormatPreference>[]>(
+    () =>
+      DATE_FORMATS.map((fmt) => ({
+        value: fmt,
+        label: DATE_FORMAT_LABELS[fmt],
+        iconSource: MOBILE_APP_ICONS.calendar,
+        hint: fmt === 'iso' ? 'ISO standard' : fmt === 'mdy' ? 'Month first' : 'Day first',
+      })),
+    []
+  );
+
+  const volumeUnitOptions = useMemo<ModernDropdownOption<VolumeUnit>[]>(
+    () =>
+      VOLUME_UNITS.map((unit) => ({
+        value: unit,
+        label: VOLUME_UNIT_LABELS[unit],
+        iconSource:
+          unit === 'liters' ? MOBILE_APP_ICONS.liter : MOBILE_APP_ICONS.gallon,
+      })),
+    []
+  );
+
+  const speciesOptions = useMemo<ModernDropdownOption<Species>[]>(
+    () =>
+      SPECIES_LIST.map((sp) => ({
+        value: sp,
+        label: formatSpeciesLabel(sp),
+        iconSource: getSpeciesPngSource(sp),
+      })),
+    []
+  );
+
+  const currencyOptions = useMemo<ModernDropdownOption<string>[]>(
+    () => [
+      ...CURRENCY_OPTIONS.map((opt) => ({
+        value: opt.symbol,
+        label: opt.label,
+        iconSource: getCurrencyOptionFlagSource(opt),
+        hint: opt.code,
+      })),
+      {
+        value: '__custom__',
+        label: 'Custom symbol...',
+        iconSource: getCurrencyFlagSource(currencySymbol),
+        hint: 'Enter any custom code or sign',
+      },
+    ],
+    [currencySymbol]
+  );
+
+  const selectedCurrencyValue =
+    !useCustomCurrency && CURRENCY_OPTIONS.some((c) => c.symbol === currencySymbol)
+      ? currencySymbol
+      : '__custom__';
+
+  async function patchSetting(
+    patch: Partial<FarmSettings>,
+    successText = 'Preference updated.'
+  ) {
+    setFeedback(null);
+    try {
+      await updateMutation.mutateAsync(patch);
+      setFeedback({ kind: 'ok', text: successText });
+    } catch (err) {
+      setFeedback({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Unable to save setting.',
+      });
+    }
+  }
+
+  async function handleSaveProfile() {
+    setFeedback(null);
+    try {
+      await updateMutation.mutateAsync({
+        farmName,
+        currencySymbol,
+        defaultMilkRatePerLiter: Number(rateText),
+        alertCheckIntervalSeconds: Number(intervalText),
+        paymentAlertLeadDays: Number(leadDaysText),
+      });
+      setFeedback({
+        kind: 'ok',
+        text: 'Farm profile, financial rates, and check cadence saved.',
+      });
+    } catch (err) {
+      setFeedback({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Invalid settings input.',
+      });
+    }
+  }
+
+  async function handleReset() {
+    setFeedback(null);
+    try {
+      await resetMutation.mutateAsync();
+      setConfirmReset(false);
+      setFeedback({
+        kind: 'ok',
+        text: 'Preferences restored to default settings.',
+      });
+    } catch (err) {
+      setFeedback({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Could not reset settings.',
+      });
+    }
+  }
+
+  const cardStyle = [
+    styles.card,
+    { padding: ui.space(14), borderRadius: ui.radius, gap: ui.space(12) },
+  ];
+
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <FarmScrollView
+        dockAware
+        contentContainerStyle={{
+          padding: ui.contentPadding,
+          paddingBottom: ui.bottomDockReserve,
+          gap: ui.space(12),
+        }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={[styles.topBar, { gap: ui.space(10), flexWrap: 'wrap' }]}>
+          <View style={{ flex: 1, minWidth: 160 }}>
+            <Text style={[styles.heading, { fontSize: ui.font(20) }]}>
+              Settings &amp; UI
+            </Text>
+            <Text style={[styles.subHeading, { fontSize: ui.font(12) }]}>
+              Adjust readability, element sizes, formatting, and defaults
+            </Text>
+          </View>
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              gap: 6,
+              alignItems: 'center',
+            }}
+          >
+            {!isAdmin ? (
+              <View style={styles.previewStatus}>
+                <Text style={[styles.previewStatusText, { fontSize: ui.font(11) }]}>
+                  {activeAccount?.canSyncCloud
+                    ? 'User Account · Admin Network'
+                    : 'User Account · Local DB'}
+                </Text>
+              </View>
+            ) : null}
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                {
+                  minHeight: ui.chipHeight + 2,
+                  paddingHorizontal: ui.space(12),
+                  borderRadius: 999,
+                  flexDirection: 'row',
+                  gap: 6,
+                },
+              ]}
+              onPress={onOpenBackup}
+              accessibilityLabel="Open Backup"
+            >
+              <AppIcon name="backup" size={ui.font(16)} color={FARMDB_COLORS.text} />
+              {!settings.mobileIconMode ? (
+                <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                  Backup
+                </Text>
+              ) : null}
+            </Pressable>
+
+            {onOpenTutorial ? (
+              <Pressable
+                style={[
+                  styles.secondaryBtn,
+                  {
+                    minHeight: ui.chipHeight + 2,
+                    paddingHorizontal: ui.space(12),
+                    borderRadius: 999,
+                    flexDirection: 'row',
+                    gap: 6,
+                  },
+                ]}
+                onPress={onOpenTutorial}
+                accessibilityLabel="App Guide"
+              >
+                <AppIcon name="note" size={ui.font(16)} color={FARMDB_COLORS.text} />
+                {!settings.mobileIconMode ? (
+                  <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                    Guide
+                  </Text>
+                ) : null}
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+
+        {isAdmin ? (
+          <MobileFileTabs
+            surfaceTone="page"
+            activeId={activeTab}
+            onChange={setActiveTab}
+            tabs={[
+              { id: 'settings', label: 'Settings & Cloud', icon: 'settings' },
+              { id: 'logs', label: `Sync Logs (${syncLogs.length})`, icon: 'dataSync' },
+            ]}
+          />
+        ) : null}
+
+        {feedback ? (
+          <View
+            style={[
+              styles.feedbackBanner,
+              feedback.kind === 'err' && styles.feedbackBannerErr,
+              { padding: ui.space(11), borderRadius: ui.radius },
+            ]}
+          >
+            <Text
+              style={[
+                styles.feedbackText,
+                feedback.kind === 'err' && styles.feedbackTextErr,
+                { fontSize: ui.font(13) },
+              ]}
+            >
+              {feedback.text}
+            </Text>
+          </View>
+        ) : null}
+
+        {isAdmin && activeTab === 'logs' ? (
+          <View style={cardStyle}>
+            <View style={styles.saveBar}>
+              <View style={styles.sectionTitleRow}>
+                <AppIcon name="dataSync" size={ui.font(18)} />
+                <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+                  Cloud Sync Logs ({syncLogs.length})
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                <Pressable
+                  style={[
+                    styles.primaryBtn,
+                    {
+                      minHeight: 34,
+                      paddingHorizontal: 12,
+                      borderRadius: 999,
+                      flexDirection: 'row',
+                      gap: 5,
+                    },
+                  ]}
+                  onPress={() => void handleSync('bidirectional')}
+                  disabled={syncMut.isPending}
+                >
+                  <AppIcon name="dataSync" size={ui.font(13)} color="#ffffff" />
+                  <Text
+                    style={[styles.primaryBtnText, { fontSize: ui.font(11) }]}
+                  >
+                    {syncMut.isPending ? 'Syncing...' : 'Sync Now'}
+                  </Text>
+                </Pressable>
+                {syncLogs.length > 0 && isAdminOrManager ? (
+                  <Pressable
+                    style={[
+                      styles.secondaryBtn,
+                      {
+                        minHeight: 34,
+                        paddingHorizontal: 12,
+                        borderRadius: 999,
+                      },
+                    ]}
+                    onPress={() => void clearLogsMut.mutateAsync()}
+                  >
+                    <Text
+                      style={[styles.secondaryBtnText, { fontSize: ui.font(11) }]}
+                    >
+                      Clear Logs
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+
+            {syncLogs.length === 0 ? (
+              <Text style={[styles.subHeading, { fontSize: ui.font(12) }]}>
+                No cloud sync logs recorded yet. Tap Sync Now above or configure Supabase under Settings.
+              </Text>
+            ) : (
+              <View style={{ gap: ui.space(8) }}>
+                {syncLogs.map((log) => (
+                  <View key={log.id} style={styles.logRowCard}>
+                    <View style={styles.rowBetween}>
+                      <Text
+                        style={[
+                          styles.switchLabel,
+                          { fontSize: ui.font(12), textTransform: 'capitalize' },
+                        ]}
+                      >
+                        {log.direction} · {log.status}
+                      </Text>
+                      <Text
+                        style={[styles.subHeading, { fontSize: ui.font(11) }]}
+                      >
+                        {log.recordsPulled}↓ / {log.recordsPushed}↑
+                      </Text>
+                    </View>
+                    <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                      {log.summary}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        ) : (
+          <>
+
+        <View style={cardStyle}>
+          <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+            Appearance &amp; Accessibility
+          </Text>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Font Size
+            </Text>
+            <View style={styles.segmentWrap}>
+              {FONT_SCALES.map((scale) => {
+                const active = settings.fontScale === scale;
+                return (
+                  <Pressable
+                    key={scale}
+                    style={[
+                      styles.segmentBtn,
+                      active && styles.segmentBtnActive,
+                      {
+                        minHeight: ui.chipHeight,
+                        minWidth: ui.isCramped ? '46%' : 76,
+                        paddingHorizontal: ui.space(8),
+                        paddingVertical: ui.space(6),
+                        borderRadius: Math.max(8, ui.radius - 5),
+                      },
+                    ]}
+                    onPress={() =>
+                      void patchSetting(
+                        { fontScale: scale },
+                        `Font size set to ${FONT_SCALE_LABELS[scale]}.`
+                      )
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        active && styles.segmentTextActive,
+                        { fontSize: ui.font(12), textAlign: 'center' },
+                      ]}
+                    >
+                      {FONT_SCALE_LABELS[scale]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              UI Element Size &amp; Touch Spacing
+            </Text>
+            <View style={styles.segmentWrap}>
+              {UI_DENSITIES.map((density) => {
+                const active = settings.uiDensity === density;
+                return (
+                  <Pressable
+                    key={density}
+                    style={[
+                      styles.segmentBtn,
+                      active && styles.segmentBtnActive,
+                      {
+                        minHeight: ui.chipHeight,
+                        minWidth: ui.isCramped ? 96 : 76,
+                        paddingHorizontal: ui.space(8),
+                        paddingVertical: ui.space(6),
+                        borderRadius: Math.max(8, ui.radius - 5),
+                      },
+                    ]}
+                    onPress={() =>
+                      void patchSetting(
+                        { uiDensity: density },
+                        `Element size set to ${UI_DENSITY_LABELS[density]}.`
+                      )
+                    }
+                  >
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        active && styles.segmentTextActive,
+                        { fontSize: ui.font(12), textAlign: 'center' },
+                      ]}
+                    >
+                      {UI_DENSITY_LABELS[density]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+                Compact Icon UI (Default)
+              </Text>
+              <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                Use icons for navigation tabs, species badges, and row actions. Switch off for text labels. System buttons always stay iconic.
+              </Text>
+            </View>
+            <Switch
+              value={settings.mobileIconMode}
+              onValueChange={(v) =>
+                void patchSetting(
+                  { mobileIconMode: v },
+                  v
+                    ? 'Compact Icon UI enabled.'
+                    : 'Word labels enabled alongside system icons.'
+                )
+              }
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+        </View>
+
+        <View style={cardStyle}>
+          <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+            Units &amp; Herd Defaults
+          </Text>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Date Format
+            </Text>
+            <ModernDropdown
+              value={settings.dateFormat}
+              options={dateFormatOptions}
+              title="Date Format"
+              accessibilityLabel="Date Format"
+              onChange={(fmt) =>
+                void patchSetting(
+                  { dateFormat: fmt },
+                  `Date format set to ${DATE_FORMAT_LABELS[fmt]}.`
+                )
+              }
+            />
+          </View>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Milk Yield Display Unit
+            </Text>
+            <ModernDropdown
+              value={settings.volumeUnit}
+              options={volumeUnitOptions}
+              title="Milk Yield Display Unit"
+              accessibilityLabel="Milk Yield Display Unit"
+              onChange={(unit) =>
+                void patchSetting(
+                  { volumeUnit: unit },
+                  `Yields will show in ${VOLUME_UNIT_LABELS[unit]}.`
+                )
+              }
+            />
+          </View>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Default Species for New Livestock
+            </Text>
+            <ModernDropdown
+              value={settings.defaultSpecies}
+              options={speciesOptions}
+              title="Default Livestock Species"
+              accessibilityLabel="Default Livestock Species"
+              onChange={(sp) =>
+                void patchSetting(
+                  { defaultSpecies: sp },
+                  `Default species set to ${formatSpeciesLabel(sp)}.`
+                )
+              }
+            />
+          </View>
+        </View>
+
+        <View style={cardStyle}>
+          <View style={styles.sectionTitleRow}>
+            <AppIcon name="farmer" size={ui.font(20)} />
+            <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+              Farm Profile &amp; Financial Rate
+            </Text>
+          </View>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Farm / Operation Name
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                { minHeight: ui.controlHeight, fontSize: ui.font(14) },
+              ]}
+              value={farmName}
+              maxLength={60}
+              onChangeText={setFarmName}
+              placeholder="farmDB Homestead"
+              placeholderTextColor={FARMDB_COLORS.textMuted}
+            />
+          </View>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Currency
+            </Text>
+            <ModernDropdown
+              value={selectedCurrencyValue}
+              options={currencyOptions}
+              title="Select Currency"
+              accessibilityLabel="Currency"
+              onChange={(nextVal) => {
+                if (nextVal === '__custom__') {
+                  setUseCustomCurrency(true);
+                } else {
+                  setUseCustomCurrency(false);
+                  setCurrencySymbol(nextVal);
+                  void patchSetting(
+                    { currencySymbol: nextVal },
+                    `Currency set to ${nextVal}.`
+                  );
+                }
+              }}
+            />
+          </View>
+
+          {selectedCurrencyValue === '__custom__' ? (
+            <View style={{ gap: ui.space(6) }}>
+              <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                Custom Currency Symbol
+              </Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  { minHeight: ui.controlHeight, fontSize: ui.font(14) },
+                ]}
+                value={currencySymbol}
+                maxLength={6}
+                onChangeText={setCurrencySymbol}
+                placeholder="e.g. KES, EUR, €"
+                placeholderTextColor={FARMDB_COLORS.textMuted}
+              />
+            </View>
+          ) : null}
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Milk Rate ({currencySymbol || '$'}/L)
+            </Text>
+            <MobileNumberStepper
+              accessibilityLabel="Milk Rate"
+              min={0}
+              step={currencySymbol === 'UGX' ? 100 : 0.05}
+              decimals={currencySymbol === 'UGX' ? 0 : 2}
+              value={rateText}
+              onChangeText={setRateText}
+              placeholder="0.65"
+            />
+          </View>
+
+          <MobileIntervalControl
+            label="Background Alert Check Interval (15–3600s)"
+            accessibilityLabel="Background Alert Check Interval"
+            min={15}
+            max={3600}
+            step={5}
+            value={intervalText}
+            onChangeText={setIntervalText}
+            presets={INTERVAL_PRESETS}
+          />
+
+          <MobileIntervalControl
+            label="Alert Before Worker Payment Due (0–30 days)"
+            accessibilityLabel="Payment Alert Lead Days"
+            min={0}
+            max={30}
+            step={1}
+            value={leadDaysText}
+            onChangeText={setLeadDaysText}
+            presets={LEAD_DAYS_PRESETS}
+          />
+
+          <View style={styles.saveBar}>
+            <Text style={[styles.subHeading, { fontSize: ui.font(12) }]}>
+              10 L est.:{' '}
+              {formatCurrency(
+                (Number(rateText) || 0) * 10,
+                currencySymbol || '$'
+              )}
+            </Text>
+            <Pressable
+              style={[
+                styles.primaryBtn,
+                {
+                  minHeight: ui.controlHeight,
+                  paddingHorizontal: ui.space(16),
+                  borderRadius: Math.max(10, ui.radius - 2),
+                },
+              ]}
+              onPress={() => void handleSaveProfile()}
+              disabled={updateMutation.isPending}
+            >
+              <Text style={[styles.primaryBtnText, { fontSize: ui.font(14) }]}>
+                {updateMutation.isPending ? 'Saving...' : 'Save Profile'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={cardStyle}>
+          <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+            Automation, Alerts &amp; Safety
+          </Text>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.switchLabel, { fontSize: ui.font(13) }]}>
+                Auto-record milk sale income
+              </Text>
+              <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                Pre-enable Milk Sale creation on yield logs
+              </Text>
+            </View>
+            <Switch
+              value={settings.autoRecordMilkSaleByDefault}
+              onValueChange={(v) =>
+                void patchSetting(
+                  { autoRecordMilkSaleByDefault: v },
+                  'Milk sale default updated.'
+                )
+              }
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.switchLabel, { fontSize: ui.font(13) }]}>
+                Auto-record medical expenses
+              </Text>
+              <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                Pre-enable financial expense entry for vet costs
+              </Text>
+            </View>
+            <Switch
+              value={settings.autoRecordMedicalExpenseByDefault}
+              onValueChange={(v) =>
+                void patchSetting(
+                  { autoRecordMedicalExpenseByDefault: v },
+                  'Medical expense default updated.'
+                )
+              }
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.switchLabel, { fontSize: ui.font(13) }]}>
+                Auto-record salary payments as expenses
+              </Text>
+              <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                Pre-enable Payroll Expense creation when paying farm workers
+              </Text>
+            </View>
+            <Switch
+              value={settings.autoRecordPayrollExpenseByDefault}
+              onValueChange={(v) =>
+                void patchSetting(
+                  { autoRecordPayrollExpenseByDefault: v },
+                  'Payroll expense default updated.'
+                )
+              }
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.switchLabel, { fontSize: ui.font(13) }]}>
+                Due-alert local notifications
+              </Text>
+              <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                Notify automatically when scheduled tasks are due
+              </Text>
+            </View>
+            <Switch
+              value={settings.enableNotifications}
+              onValueChange={(v) =>
+                void patchSetting(
+                  { enableNotifications: v },
+                  v
+                    ? 'Alert notifications enabled.'
+                    : 'Alert notifications paused.'
+                )
+              }
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.switchLabel, { fontSize: ui.font(13) }]}>
+                Confirm before deleting records
+              </Text>
+              <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                Require an extra confirmation tap before deletions
+              </Text>
+            </View>
+            <Switch
+              value={settings.confirmBeforeDelete}
+              onValueChange={(v) =>
+                void patchSetting(
+                  { confirmBeforeDelete: v },
+                  v
+                    ? 'Delete confirmation enabled.'
+                    : 'Single-tap delete enabled.'
+                )
+              }
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+
+          <View style={styles.divider} />
+
+          <View style={styles.saveBar}>
+            <Text
+              style={[styles.subHeading, { flex: 1, fontSize: ui.font(11) }]}
+            >
+              Stored locally in SQLite farm_settings
+            </Text>
+            {confirmReset ? (
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <Pressable
+                  style={[
+                    styles.dangerBtn,
+                    {
+                      minHeight: ui.chipHeight,
+                      paddingHorizontal: ui.space(10),
+                      borderRadius: Math.max(8, ui.radius - 4),
+                    },
+                  ]}
+                  onPress={() => void handleReset()}
+                  disabled={resetMutation.isPending}
+                >
+                  <Text
+                    style={[styles.dangerBtnText, { fontSize: ui.font(12) }]}
+                  >
+                    Confirm
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.secondaryBtn,
+                    {
+                      minHeight: ui.chipHeight,
+                      paddingHorizontal: ui.space(10),
+                      borderRadius: Math.max(8, ui.radius - 4),
+                    },
+                  ]}
+                  onPress={() => setConfirmReset(false)}
+                >
+                  <Text
+                    style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}
+                  >
+                    Cancel
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable
+                style={[
+                  styles.secondaryBtn,
+                  {
+                    minHeight: ui.chipHeight,
+                    paddingHorizontal: ui.space(12),
+                    borderRadius: Math.max(8, ui.radius - 4),
+                  },
+                ]}
+                onPress={() => setConfirmReset(true)}
+              >
+                <Text
+                  style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}
+                >
+                  Reset Defaults
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+
+        {/* Cloud Sync & Supabase Database Settings (Admin only) */}
+        {isAdmin ? (
+        <View style={cardStyle}>
+          <View style={styles.sectionTitleRow}>
+            <AppIcon
+              name={settings.supabaseUrl ? 'cloudHosting' : 'cloudOffline'}
+              size={ui.font(18)}
+            />
+            <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+              Cloud Sync &amp; Supabase Database
+            </Text>
+          </View>
+          <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+            Connect your local SQLite database to a Supabase cloud project for cross-device and Farm Network sync.
+          </Text>
+
+          <View style={styles.syncActionRow}>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                styles.syncActionBtn,
+                { minHeight: ui.chipHeight, borderRadius: 999 },
+              ]}
+              onPress={() => void handleSync('test')}
+              disabled={syncMut.isPending}
+            >
+              <AppIcon name="web" size={ui.font(14)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(11) }]}>
+                Test
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.primaryBtn,
+                styles.syncActionBtn,
+                { minHeight: ui.chipHeight, borderRadius: 999 },
+              ]}
+              onPress={() => void handleSync('bidirectional')}
+              disabled={syncMut.isPending}
+            >
+              <AppIcon name="dataSync" size={ui.font(14)} />
+              <Text style={[styles.primaryBtnText, { fontSize: ui.font(11) }]}>
+                {syncMut.isPending ? 'Syncing...' : 'Sync Now'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                styles.syncActionBtn,
+                { minHeight: ui.chipHeight, borderRadius: 999 },
+              ]}
+              onPress={() => void handleSync('push')}
+              disabled={syncMut.isPending}
+            >
+              <AppIcon name="upload" size={ui.font(14)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(11) }]}>
+                Push
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                styles.syncActionBtn,
+                { minHeight: ui.chipHeight, borderRadius: 999 },
+              ]}
+              onPress={() => void handleSync('pull')}
+              disabled={syncMut.isPending}
+            >
+              <AppIcon name="download" size={ui.font(14)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(11) }]}>
+                Pull
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Supabase Project URL
+            </Text>
+            <TextInput
+              style={[styles.input, { fontSize: ui.font(13) }]}
+              value={supabaseUrl}
+              onChangeText={setSupabaseUrl}
+              placeholder="https://your-project.supabase.co"
+              autoCapitalize="none"
+            />
+          </View>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Supabase Anon / Publishable Key
+            </Text>
+            <TextInput
+              style={[styles.input, { fontSize: ui.font(13) }]}
+              value={supabaseKey}
+              onChangeText={setSupabaseKey}
+              placeholder="sb_publishable_... or eyJhbGci..."
+              secureTextEntry
+              autoCapitalize="none"
+            />
+          </View>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Shared Workspace ID
+            </Text>
+            <TextInput
+              style={[styles.input, { fontSize: ui.font(13) }]}
+              value={workspaceId}
+              onChangeText={setWorkspaceId}
+              placeholder="farmdb-homestead-main"
+              autoCapitalize="none"
+            />
+          </View>
+
+          <View style={{ gap: ui.space(6) }}>
+            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+              Sync Conflict Resolution
+            </Text>
+            <ModernDropdown
+              value={strategy}
+              options={SYNC_CONFLICT_STRATEGIES.map((s) => ({
+                value: s,
+                label:
+                  s === 'last_write_wins'
+                    ? 'Latest Edit Wins'
+                    : s === 'local_priority'
+                      ? 'Local Device Priority'
+                      : 'Cloud Priority',
+                iconSource: MOBILE_APP_ICONS.dataSync,
+              }))}
+              title="Conflict Resolution"
+              onChange={setStrategy}
+            />
+          </View>
+
+          <MobileIntervalControl
+            label="Auto-Sync Interval (seconds: 30–86400)"
+            accessibilityLabel="Auto-Sync Interval"
+            min={30}
+            max={86400}
+            step={30}
+            value={cloudInterval}
+            onChangeText={setCloudInterval}
+            presets={CLOUD_SYNC_PRESETS}
+          />
+
+          <View style={styles.switchRow}>
+            <Text style={[styles.switchLabel, { flex: 1, minWidth: 0, paddingRight: 10, fontSize: ui.font(13) }]}>
+              Enable Supabase Cloud Sync
+            </Text>
+            <Switch
+              value={cloudEnabled}
+              onValueChange={setCloudEnabled}
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+          <View style={styles.switchRow}>
+            <Text style={[styles.switchLabel, { flex: 1, minWidth: 0, paddingRight: 10, fontSize: ui.font(13) }]}>
+              Auto-sync on internet connect
+            </Text>
+            <Switch
+              value={autoSync}
+              onValueChange={setAutoSync}
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+          <View style={styles.switchRow}>
+            <Text style={[styles.switchLabel, { flex: 1, minWidth: 0, paddingRight: 10, fontSize: ui.font(13) }]}>
+              Include Financial Ledger in sync
+            </Text>
+            <Switch
+              value={syncFinancials}
+              onValueChange={setSyncFinancials}
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+          <View style={styles.switchRow}>
+            <Text style={[styles.switchLabel, { flex: 1, minWidth: 0, paddingRight: 10, fontSize: ui.font(13) }]}>
+              Include Human Resources in sync
+            </Text>
+            <Switch
+              value={syncHr}
+              onValueChange={setSyncHr}
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+
+          <View style={styles.syncActionRow}>
+            <Pressable
+              style={[
+                styles.primaryBtn,
+                {
+                  flex: 1,
+                  minWidth: 148,
+                  minHeight: ui.controlHeight,
+                  borderRadius: 999,
+                  paddingHorizontal: 14,
+                  paddingVertical: ui.space(6),
+                },
+              ]}
+              onPress={() => void handleSaveCloud()}
+              disabled={updateMutation.isPending}
+            >
+              <Text style={[styles.primaryBtnText, { fontSize: ui.font(13), textAlign: 'center' }]}>
+                Save Cloud Settings
+              </Text>
+            </Pressable>
+            {onOpenAuthPortal ? (
+              <Pressable
+                style={[
+                  styles.secondaryBtn,
+                  {
+                    flexGrow: 1,
+                    minWidth: 132,
+                    minHeight: ui.controlHeight,
+                    borderRadius: 999,
+                    paddingHorizontal: 14,
+                    paddingVertical: ui.space(6),
+                  },
+                ]}
+                onPress={onOpenAuthPortal}
+              >
+                <Text
+                  style={[styles.secondaryBtnText, { fontSize: ui.font(12), textAlign: 'center' }]}
+                >
+                  Login / Join Key
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+
+          <Text style={[styles.label, { fontSize: ui.font(11), marginTop: 4 }]}>
+            Supabase SQL Setup Script (long-press to select &amp; run in SQL Editor):
+          </Text>
+          <Text style={styles.sqlBox} selectable>
+            {generateSupabaseSetupSql()}
+          </Text>
+        </View>
+        ) : null}
+          </>
+        )}
+      </FarmScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  heading: {
+    fontFamily: FARMDB_FONTS.extrabold,
+    color: FARMDB_COLORS.text,
+  },
+  subHeading: {
+    fontFamily: FARMDB_FONTS.regular,
+    color: FARMDB_COLORS.textMuted,
+    marginTop: 2,
+  },
+  feedbackBanner: {
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    borderWidth: 1,
+    borderColor: '#a8d5be',
+  },
+  feedbackBannerErr: {
+    backgroundColor: FARMDB_COLORS.warnBg,
+    borderColor: FARMDB_COLORS.warnBorder,
+  },
+  feedbackText: {
+    color: '#173e2b',
+    fontFamily: FARMDB_FONTS.semibold,
+  },
+  feedbackTextErr: {
+    color: FARMDB_COLORS.warnText,
+  },
+  card: {
+    backgroundColor: FARMDB_COLORS.surface,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cardTitle: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.text,
+    flexShrink: 1,
+  },
+  label: {
+    fontFamily: FARMDB_FONTS.semibold,
+    color: FARMDB_COLORS.text,
+  },
+  segmentWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    padding: 4,
+    borderRadius: 10,
+    backgroundColor: FARMDB_COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+  },
+  segmentBtn: {
+    flexGrow: 1,
+    minWidth: 74,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  segmentBtnActive: {
+    backgroundColor: FARMDB_COLORS.surface,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.accent,
+  },
+  segmentText: {
+    color: FARMDB_COLORS.textMuted,
+    fontFamily: FARMDB_FONTS.semibold,
+  },
+  segmentTextActive: {
+    color: FARMDB_COLORS.accent,
+    fontFamily: FARMDB_FONTS.bold,
+  },
+  previewStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: FARMDB_COLORS.successSoft,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  previewStatusText: {
+    color: FARMDB_COLORS.success,
+    fontFamily: FARMDB_FONTS.bold,
+  },
+  input: {
+    backgroundColor: FARMDB_COLORS.cardAlt,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontFamily: FARMDB_FONTS.regular,
+    color: FARMDB_COLORS.text,
+  },
+  presetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+  },
+  presetBar: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+    gap: 3,
+    padding: 3,
+    borderRadius: 10,
+    backgroundColor: FARMDB_COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+  },
+  presetBtn: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  presetBtnActive: {
+    backgroundColor: FARMDB_COLORS.surface,
+    borderColor: FARMDB_COLORS.accent,
+  },
+  presetBtnText: {
+    color: FARMDB_COLORS.textMuted,
+    fontFamily: FARMDB_FONTS.semibold,
+  },
+  presetBtnTextActive: {
+    color: FARMDB_COLORS.accent,
+    fontFamily: FARMDB_FONTS.bold,
+  },
+  saveBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  primaryBtn: {
+    backgroundColor: FARMDB_COLORS.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryBtnText: {
+    color: '#ffffff',
+    fontFamily: FARMDB_FONTS.bold,
+  },
+  secondaryBtn: {
+    backgroundColor: FARMDB_COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryBtnText: {
+    color: FARMDB_COLORS.text,
+    fontFamily: FARMDB_FONTS.bold,
+  },
+  dangerBtn: {
+    backgroundColor: FARMDB_COLORS.dangerSoft,
+    borderWidth: 1,
+    borderColor: '#f4c7c3',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dangerBtnText: {
+    color: FARMDB_COLORS.danger,
+    fontFamily: FARMDB_FONTS.bold,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  switchLabel: {
+    fontFamily: FARMDB_FONTS.semibold,
+    color: FARMDB_COLORS.text,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: FARMDB_COLORS.surfaceMuted,
+  },
+  syncActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  syncActionBtn: {
+    flexDirection: 'row',
+    gap: 5,
+    paddingHorizontal: 12,
+    flexGrow: 1,
+  },
+  sqlBox: {
+    backgroundColor: '#17271d',
+    color: '#e6f2ec',
+    padding: 12,
+    borderRadius: 10,
+    fontFamily: FARMDB_FONTS.mono,
+    fontSize: 10,
+  },
+  logRowCard: {
+    backgroundColor: FARMDB_COLORS.cardAlt,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+    borderRadius: 10,
+    padding: 10,
+    gap: 4,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+});

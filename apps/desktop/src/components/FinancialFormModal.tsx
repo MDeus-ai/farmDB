@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   EXPENSE_CATEGORIES,
   formatCategoryLabel,
@@ -20,6 +19,11 @@ import {
   useCreateFinancialLog,
   useUpdateFinancialLog,
 } from '@farmdb/db';
+import { APP_ICONS } from '../assets/icons';
+import { buildAnimalSelectOption } from '../utils/animalOptions';
+import { ModernDatePicker } from './ModernDatePicker';
+import { ModernSelect, type ModernSelectOption } from './ModernSelect';
+import { NumberStepper } from './NumberStepper';
 
 interface FinancialFormModalProps {
   open: boolean;
@@ -79,6 +83,45 @@ export function FinancialFormModal({
   const availableCategories =
     transactionType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
+
+  const typeOptions = useMemo<ModernSelectOption<TransactionType>[]>(
+    () =>
+      TRANSACTION_TYPES.map((t) => ({
+        value: t,
+        label: t === 'income' ? 'Income' : 'Expense',
+        iconSrc: t === 'income' ? APP_ICONS.money : APP_ICONS.budget,
+      })),
+    []
+  );
+
+  const categoryOptions = useMemo<ModernSelectOption<FinancialCategory>[]>(
+    () =>
+      availableCategories.map((cat) => ({
+        value: cat,
+        label: formatCategoryLabel(cat),
+        iconSrc:
+          cat === 'milk_sale'
+            ? APP_ICONS.milkBottle
+            : cat === 'meds' || cat === 'veterinary'
+              ? APP_ICONS.syringe
+              : cat === 'livestock_sale'
+                ? APP_ICONS.cow
+                : APP_ICONS.budget,
+      })),
+    [availableCategories]
+  );
+
+  const animalOptions = useMemo<ModernSelectOption<string>[]>(
+    () => [
+      { value: '', label: 'General Farm Transaction', iconSrc: APP_ICONS.barnAlt },
+      ...animals.map((a) =>
+        buildAnimalSelectOption(a, {
+          label: `${a.tagNumber}${a.name ? ` — ${a.name}` : ''}`,
+        })
+      ),
+    ],
+    [animals]
+  );
 
   function handleTypeChange(nextType: TransactionType) {
     setTransactionType(nextType);
@@ -164,7 +207,7 @@ export function FinancialFormModal({
             onClick={onClose}
             aria-label="Close form"
           >
-            <X size={16} />
+            <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
           </button>
         </div>
 
@@ -174,55 +217,43 @@ export function FinancialFormModal({
               <label className="form-label" htmlFor="fin-type">
                 Type
               </label>
-              <select
+              <ModernSelect
                 id="fin-type"
-                className="select"
+                fullWidth
+                ariaLabel="Transaction type"
                 value={transactionType}
-                onChange={(e) =>
-                  handleTypeChange(e.target.value as TransactionType)
-                }
-              >
-                {TRANSACTION_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t === 'income' ? 'Income' : 'Expense'}
-                  </option>
-                ))}
-              </select>
+                options={typeOptions}
+                onChange={handleTypeChange}
+              />
             </div>
 
             <div className="form-field">
               <label className="form-label" htmlFor="fin-category">
                 Category
               </label>
-              <select
+              <ModernSelect
                 id="fin-category"
-                className="select"
+                fullWidth
+                ariaLabel="Category"
                 value={category}
-                onChange={(e) =>
-                  setCategory(e.target.value as FinancialCategory)
-                }
-              >
-                {availableCategories.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {formatCategoryLabel(cat)}
-                  </option>
-                ))}
-              </select>
+                options={categoryOptions}
+                onChange={setCategory}
+              />
             </div>
 
             <div className="form-field">
               <label className="form-label" htmlFor="fin-amount">
                 Amount ({currencySymbol}) *
               </label>
-              <input
+              <NumberStepper
                 id="fin-amount"
-                type="number"
-                step="0.01"
-                min="0.01"
-                className="input"
+                ariaLabel="Amount"
+                min={0.01}
+                step={currencySymbol === 'UGX' ? 500 : 1}
+                decimals={currencySymbol === 'UGX' ? 0 : 2}
                 placeholder="0.00"
                 value={amountText}
-                onChange={(e) => setAmountText(e.target.value)}
+                onChange={setAmountText}
                 autoFocus
               />
               {errors.amount && (
@@ -234,12 +265,11 @@ export function FinancialFormModal({
               <label className="form-label" htmlFor="fin-date">
                 Date *
               </label>
-              <input
+              <ModernDatePicker
                 id="fin-date"
-                type="date"
-                className="input"
+                ariaLabel="Transaction date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={setDate}
               />
               {errors.date && (
                 <span className="field-error">{errors.date}</span>
@@ -250,20 +280,15 @@ export function FinancialFormModal({
               <label className="form-label" htmlFor="fin-animal">
                 Linked Animal (Optional)
               </label>
-              <select
+              <ModernSelect
                 id="fin-animal"
-                className="select"
+                fullWidth
+                searchable
+                ariaLabel="Linked animal"
                 value={livestockId}
-                onChange={(e) => setLivestockId(e.target.value)}
-              >
-                <option value="">General Farm Transaction</option>
-                {animals.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.tagNumber}
-                    {a.name ? ` — ${a.name}` : ''}
-                  </option>
-                ))}
-              </select>
+                options={animalOptions}
+                onChange={setLivestockId}
+              />
             </div>
 
             <div className="form-field full">

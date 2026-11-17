@@ -1,9 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
-  FlatList,
   Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -11,13 +9,17 @@ import {
 } from 'react-native';
 import {
   formatAnimalAge,
-  formatIsoDate,
+  formatDisplayDate,
+  formatOwnershipCategoryLabel,
   formatSpeciesLabel,
   formatStatusLabel,
+  getPrimaryOwnershipByLivestockMap,
   LIVESTOCK_STATUSES,
+  sortLivestockItems,
   SPECIES_LIST,
   type Livestock,
   type LivestockFilter,
+  type LivestockSortOption,
   type LivestockStatus,
   type Species,
 } from '@farmdb/core';
@@ -26,45 +28,43 @@ import {
   useDeleteLivestock,
   useFarmSummary,
   useLivestockList,
+  useOwnershipList,
 } from '@farmdb/db';
+import {
+  getSpeciesPngSource,
+  getStatusPngSource,
+  MOBILE_APP_ICONS,
+} from '../assets/icons';
 import { deleteManagedLivestockPhoto } from '../services/imageStorage';
+import {
+  FARMDB_COLORS,
+  FARMDB_FONTS,
+  useUiScale,
+} from '../theme/uiScale';
+import { AppIcon, SpeciesIcon, StatusIcon } from './FarmIcons';
+import { FarmFlatList } from './FarmScrollView';
 import { LivestockDetailModal } from './LivestockDetailModal';
 import { LivestockFormModal } from './LivestockFormModal';
+import {
+  ModernDropdown,
+  type ModernDropdownOption,
+} from './ModernDropdown';
 
-const SAMPLE_HERD = [
-  {
-    species: 'cow' as const,
-    tagNumber: 'COW-402',
-    name: 'Bessie',
-    breed: 'Holstein',
-    dob: '2022-03-14',
-    status: 'active' as const,
-  },
-  {
-    species: 'cow' as const,
-    tagNumber: 'COW-409',
-    name: 'Daisy',
-    breed: 'Jersey',
-    dob: '2023-07-02',
-    status: 'active' as const,
-  },
-  {
-    species: 'cow' as const,
-    tagNumber: 'COW-318',
-    name: 'Willow',
-    breed: 'Ayrshire',
-    dob: '2021-11-20',
-    status: 'active' as const,
-  },
-];
+interface LivestockListViewProps {
+  onOpenFamilyTree?: (animalId: string) => void;
+}
 
-export function LivestockListView() {
+export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) {
+  const ui = useUiScale();
+  const iconMode = ui.settings.mobileIconMode;
   const [search, setSearch] = useState('');
   const [species, setSpecies] = useState<Species | 'all'>('all');
   const [status, setStatus] = useState<LivestockStatus | 'all'>('active');
+  const [sortBy, setSortBy] = useState<LivestockSortOption>('updated');
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<Livestock | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const filter: LivestockFilter = useMemo(
     () => ({ search, species, status }),
@@ -73,28 +73,155 @@ export function LivestockListView() {
 
   const listQuery = useLivestockList(filter);
   const allForTagsQuery = useLivestockList({});
+  const ownershipsQuery = useOwnershipList({ status: 'active' });
   const summaryQuery = useFarmSummary();
   const createMutation = useCreateLivestock();
   const deleteMutation = useDeleteLivestock();
+
+  const ownershipByAnimal = useMemo(
+    () => getPrimaryOwnershipByLivestockMap(ownershipsQuery.data ?? []),
+    [ownershipsQuery.data]
+  );
 
   const existingTags = useMemo(
     () => (allForTagsQuery.data ?? []).map((item) => item.tagNumber),
     [allForTagsQuery.data]
   );
 
-  const items = listQuery.data ?? [];
+  const items = useMemo(
+    () => sortLivestockItems(listQuery.data ?? [], sortBy),
+    [listQuery.data, sortBy]
+  );
   const summary = summaryQuery.data;
 
+  const sortOptions = useMemo<ModernDropdownOption<LivestockSortOption>[]>(
+    () => [
+      { value: 'updated', label: 'Updated', iconSource: MOBILE_APP_ICONS.sync },
+      { value: 'created_desc', label: 'Added: Newest', iconSource: MOBILE_APP_ICONS.calendar },
+      { value: 'created_asc', label: 'Added: Oldest', iconSource: MOBILE_APP_ICONS.hourglass },
+      { value: 'dob_desc', label: 'DOB: Youngest', iconSource: MOBILE_APP_ICONS.sprout },
+      { value: 'dob_asc', label: 'DOB: Oldest', iconSource: MOBILE_APP_ICONS.calendar },
+      { value: 'tag', label: 'Tag (A–Z)', iconSource: MOBILE_APP_ICONS.pin },
+      { value: 'name', label: 'Name (A–Z)', iconSource: MOBILE_APP_ICONS.copyWriting },
+    ],
+    []
+  );
+
+  const statusFilterOptions = useMemo<
+    ModernDropdownOption<LivestockStatus | 'all'>[]
+  >(
+    () => [
+      {
+        value: 'all',
+        label: 'All Statuses',
+        customIcon: (
+          <AppIcon name="all" size={16} color={FARMDB_COLORS.accent} />
+        ),
+      },
+      ...LIVESTOCK_STATUSES.map((st) => ({
+        value: st,
+        label: formatStatusLabel(st),
+        iconSource: getStatusPngSource(st),
+      })),
+    ],
+    []
+  );
+
+  const speciesFilterOptions = useMemo<ModernDropdownOption<Species | 'all'>[]>(
+    () => [
+      {
+        value: 'all',
+        label: 'All Species',
+        iconSource: MOBILE_APP_ICONS.group,
+      },
+      ...SPECIES_LIST.map((sp) => ({
+        value: sp,
+        label: formatSpeciesLabel(sp),
+        iconSource: getSpeciesPngSource(sp),
+      })),
+    ],
+    []
+  );
+
   async function handleLoadSample() {
-    const existing = new Set(existingTags);
-    for (const animal of SAMPLE_HERD) {
-      if (!existing.has(animal.tagNumber)) {
-        await createMutation.mutateAsync(animal);
-      }
+    const existingByTag = new Map(
+      (allForTagsQuery.data ?? []).map((item) => [item.tagNumber, item.id])
+    );
+
+    async function ensureSample(input: {
+      tagNumber: string;
+      name: string;
+      breed: string;
+      dob: string;
+      sireTag?: string;
+      damTag?: string;
+    }) {
+      const foundId = existingByTag.get(input.tagNumber);
+      if (foundId) return foundId;
+      const created = await createMutation.mutateAsync({
+        species: 'cow',
+        tagNumber: input.tagNumber,
+        name: input.name,
+        breed: input.breed,
+        dob: input.dob,
+        status: 'active',
+        sireId: input.sireTag ? (existingByTag.get(input.sireTag) ?? null) : null,
+        damId: input.damTag ? (existingByTag.get(input.damTag) ?? null) : null,
+      });
+      existingByTag.set(created.tagNumber, created.id);
+      return created.id;
     }
+
+    await ensureSample({
+      tagNumber: 'BULL-101',
+      name: 'Titan',
+      breed: 'Holstein',
+      dob: '2019-04-10',
+    });
+    await ensureSample({
+      tagNumber: 'COW-318',
+      name: 'Willow',
+      breed: 'Ayrshire',
+      dob: '2020-03-18',
+    });
+    await ensureSample({
+      tagNumber: 'BULL-108',
+      name: 'Orion',
+      breed: 'Jersey',
+      dob: '2020-07-12',
+    });
+    await ensureSample({
+      tagNumber: 'COW-402',
+      name: 'Bessie',
+      breed: 'Holstein',
+      dob: '2022-03-14',
+      sireTag: 'BULL-101',
+      damTag: 'COW-318',
+    });
+    await ensureSample({
+      tagNumber: 'COW-409',
+      name: 'Daisy',
+      breed: 'Jersey',
+      dob: '2022-09-02',
+      sireTag: 'BULL-108',
+      damTag: 'COW-318',
+    });
+    await ensureSample({
+      tagNumber: 'COW-512',
+      name: 'Clover',
+      breed: 'Holstein',
+      dob: '2024-06-21',
+      sireTag: 'BULL-108',
+      damTag: 'COW-402',
+    });
   }
 
   async function handleDelete(item: Livestock) {
+    if (ui.settings.confirmBeforeDelete && confirmDeleteId !== item.id) {
+      setConfirmDeleteId(item.id);
+      return;
+    }
+    setConfirmDeleteId(null);
     const removed = await deleteMutation.mutateAsync(item.id);
     if (removed) {
       deleteManagedLivestockPhoto(item.imageUri);
@@ -105,161 +232,406 @@ export function LivestockListView() {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.topRow}>
-        <View style={styles.statBox}>
-          <Text style={styles.statLabel}>Active Herd</Text>
-          <Text style={styles.statValue}>{summary?.activeLivestock ?? 0}</Text>
+    <View
+      style={[
+        styles.container,
+        { paddingHorizontal: ui.contentPadding, paddingTop: ui.space(8) },
+      ]}
+    >
+      {/* Search + Add Action Row */}
+      <View style={[styles.searchActionRow, { gap: ui.space(8), marginBottom: ui.space(6) }]}>
+        <View
+          style={[
+            styles.searchWrap,
+            {
+              flex: 1,
+              minHeight: ui.controlHeight,
+              paddingHorizontal: ui.space(12),
+              borderRadius: Math.max(10, ui.radius - 2),
+            },
+          ]}
+        >
+          <AppIcon
+            name="search"
+            size={ui.font(16)}
+            color={FARMDB_COLORS.textMuted}
+          />
+          <TextInput
+            style={[
+              styles.searchInputInner,
+              { fontSize: ui.font(14) },
+            ]}
+            placeholder="Search tag, name, or breed..."
+            placeholderTextColor={FARMDB_COLORS.textMuted}
+            value={search}
+            onChangeText={setSearch}
+          />
+          {search.length > 0 ? (
+            <Pressable
+              onPress={() => setSearch('')}
+              hitSlop={8}
+              accessibilityLabel="Clear search"
+            >
+              <AppIcon
+                name="close"
+                size={ui.font(15)}
+                color={FARMDB_COLORS.textMuted}
+              />
+            </Pressable>
+          ) : null}
         </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statLabel}>Cows</Text>
-          <Text style={styles.statValue}>{summary?.cowCount ?? 0}</Text>
-        </View>
+
         <Pressable
-          style={styles.addBtn}
+          accessibilityLabel="Add Livestock"
+          style={[
+            styles.addBtn,
+            {
+              minHeight: ui.controlHeight,
+              paddingHorizontal: ui.space(iconMode ? 14 : 16),
+              borderRadius: Math.max(10, ui.radius - 2),
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+            },
+          ]}
           onPress={() => {
             setEditing(null);
             setModalVisible(true);
           }}
         >
-          <Text style={styles.addBtnText}>+ Add Animal</Text>
+          <AppIcon name="plus" size={ui.font(18)} color="#ffffff" />
+          {!iconMode ? (
+            <Text style={[styles.addBtnText, { fontSize: ui.font(13) }]}>
+              Add
+            </Text>
+          ) : null}
         </Pressable>
       </View>
 
-      <TextInput
-        style={styles.searchInput}
-        placeholder="Search by tag, name, or breed..."
-        value={search}
-        onChangeText={setSearch}
-      />
+      {/* Filters & Date Sort */}
+      <View style={[styles.filterDropdownRow, { gap: ui.space(6), marginBottom: ui.space(8) }]}>
+        <View style={{ flex: 1, minWidth: ui.isCramped ? 128 : 96 }}>
+          <ModernDropdown
+            compact
+            value={status}
+            options={statusFilterOptions}
+            title="Status"
+            accessibilityLabel="Filter by Status"
+            onChange={setStatus}
+          />
+        </View>
+        <View style={{ flex: 1, minWidth: ui.isCramped ? 128 : 96 }}>
+          <ModernDropdown
+            compact
+            value={species}
+            options={speciesFilterOptions}
+            title="Species"
+            accessibilityLabel="Filter by Species"
+            onChange={setSpecies}
+          />
+        </View>
+        <View style={{ flex: 1, minWidth: ui.isCramped ? 140 : 96 }}>
+          <ModernDropdown
+            compact
+            value={sortBy}
+            options={sortOptions}
+            title="Sort By"
+            accessibilityLabel="Sort livestock"
+            onChange={setSortBy}
+          />
+        </View>
+      </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.chipScroll}
-        contentContainerStyle={styles.filterRow}
-      >
-        {(['all', ...LIVESTOCK_STATUSES] as const).map((st) => (
-          <Pressable
-            key={`st-${st}`}
-            style={[styles.filterChip, status === st && styles.filterChipActive]}
-            onPress={() => setStatus(st)}
-          >
-            <Text
-              style={[
-                styles.filterChipText,
-                status === st && styles.filterChipTextActive,
-              ]}
-            >
-              {st === 'all' ? 'All Status' : formatStatusLabel(st)}
-            </Text>
-          </Pressable>
-        ))}
-
-        {(['all', ...SPECIES_LIST] as const).map((sp) => (
-          <Pressable
-            key={`sp-${sp}`}
-            style={[
-              styles.filterChip,
-              species === sp && styles.filterChipSpeciesActive,
-            ]}
-            onPress={() => setSpecies(sp)}
-          >
-            <Text
-              style={[
-                styles.filterChipText,
-                species === sp && styles.filterChipTextActive,
-              ]}
-            >
-              {sp === 'all' ? 'All Species' : formatSpeciesLabel(sp)}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
-      <FlatList
+      <FarmFlatList
+        dockAware
         data={items}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          { gap: ui.space(10), paddingBottom: ui.bottomDockReserve },
+        ]}
+        ListHeaderComponent={
+          <View
+            style={[
+              styles.statsBar,
+              {
+                paddingVertical: ui.space(6),
+                paddingHorizontal: ui.space(6),
+                borderRadius: Math.max(9, ui.radius - 3),
+                flexWrap: 'wrap',
+                gap: ui.space(4),
+              },
+            ]}
+          >
+            {[
+              { label: 'Active', value: summary?.activeLivestock ?? 0 },
+              { label: 'Cows', value: summary?.cowCount ?? 0 },
+              { label: 'Total', value: summary?.totalLivestock ?? 0 },
+            ].map((stat, idx) => (
+              <React.Fragment key={stat.label}>
+                {idx > 0 && !ui.isCramped ? <View style={styles.statDivider} /> : null}
+                <View
+                  style={[
+                    styles.statInlineItem,
+                    {
+                      flexWrap: 'wrap',
+                      minWidth: ui.isCramped ? 84 : 70,
+                      paddingVertical: 2,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.statLabel, { fontSize: ui.font(11) }]}>
+                    {stat.label}
+                  </Text>
+                  <Text style={[styles.statValue, { fontSize: ui.font(13) }]}>
+                    {stat.value}
+                  </Text>
+                </View>
+              </React.Fragment>
+            ))}
+          </View>
+        }
         ListEmptyComponent={
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>No livestock found</Text>
-            <Text style={styles.emptySub}>
-              {listQuery.isLoading
-                ? 'Reading local SQLite database...'
-                : 'Add an animal with camera photo or load sample cows into local SQLite.'}
+          <View
+            style={[
+              styles.emptyCard,
+              { padding: ui.space(22), borderRadius: ui.radius, gap: ui.space(10) },
+            ]}
+          >
+            <AppIcon name="barnAlt" size={ui.font(34)} />
+            <Text style={[styles.emptyTitle, { fontSize: ui.font(16) }]}>
+              {listQuery.isLoading ? 'Loading...' : 'No livestock found'}
             </Text>
             {!listQuery.isLoading && (summary?.totalLivestock ?? 0) === 0 ? (
               <Pressable
-                style={styles.sampleBtn}
+                style={[
+                  styles.sampleBtn,
+                  {
+                    minHeight: ui.controlHeight,
+                    paddingHorizontal: ui.space(16),
+                    justifyContent: 'center',
+                  },
+                ]}
                 onPress={() => void handleLoadSample()}
                 disabled={createMutation.isPending}
               >
-                <Text style={styles.sampleBtnText}>Load Sample Herd (3 Cows)</Text>
+                <Text style={[styles.sampleBtnText, { fontSize: ui.font(13) }]}>
+                  Load Sample Herd
+                </Text>
               </Pressable>
             ) : null}
           </View>
         }
-        renderItem={({ item }) => (
-          <Pressable
-            style={styles.card}
-            onPress={() => setSelectedId(item.id)}
-          >
-            <View style={styles.cardRow}>
-              {item.imageUri ? (
-                <Image source={{ uri: item.imageUri }} style={styles.thumb} />
-              ) : (
-                <View style={styles.thumbPlaceholder}>
-                  <Text style={styles.thumbPlaceholderText}>
-                    {item.tagNumber.slice(0, 3)}
-                  </Text>
-                </View>
-              )}
-
-              <View style={styles.cardMain}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.tagPill}>
-                    <Text style={styles.tagText}>{item.tagNumber}</Text>
+        renderItem={({ item }) => {
+          const own = ownershipByAnimal.get(item.id);
+          const showOwnership = own && own.ownershipCategory !== 'farm_owned';
+          return (
+            <Pressable
+              style={[
+                styles.card,
+                { padding: ui.space(14), borderRadius: ui.radius, gap: ui.space(10) },
+              ]}
+              onPress={() => setSelectedId(item.id)}
+            >
+              <View style={[styles.cardTopRow, { gap: ui.space(12) }]}>
+                {item.imageUri ? (
+                  <Image
+                    source={{ uri: item.imageUri }}
+                    style={[
+                      styles.thumb,
+                      {
+                        width: ui.thumbSize,
+                        height: ui.thumbSize,
+                        borderRadius: Math.max(10, ui.radius - 3),
+                      },
+                    ]}
+                  />
+                ) : (
+                  <View
+                    style={[
+                      styles.thumbPlaceholder,
+                      {
+                        width: ui.thumbSize,
+                        height: ui.thumbSize,
+                        borderRadius: Math.max(10, ui.radius - 3),
+                      },
+                    ]}
+                  >
+                    <SpeciesIcon
+                      species={item.species}
+                      size={ui.font(24)}
+                      color={FARMDB_COLORS.accent}
+                    />
                   </View>
-                  <Text style={styles.speciesMeta}>
-                    {formatSpeciesLabel(item.species)} · {formatStatusLabel(item.status)}
+                )}
+
+                <View style={styles.cardMain}>
+                  <View style={[styles.cardTitleBar, { flexWrap: 'wrap' }]}>
+                    <Text
+                      style={[styles.animalName, { fontSize: ui.font(16), flexShrink: 1 }]}
+                      numberOfLines={2}
+                    >
+                      {item.name ?? 'Unnamed'}
+                    </Text>
+                    <View style={styles.tagPill}>
+                      <Text style={[styles.tagText, { fontSize: ui.font(11) }]}>
+                        {item.tagNumber}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={[styles.animalMeta, { fontSize: ui.font(13) }]}>
+                    {formatSpeciesLabel(item.species)}
+                    {item.breed ? ` · ${item.breed}` : ''}
+                    {item.dob ? ` · ${formatAnimalAge(item.dob)}` : ''}
+                  </Text>
+
+                  {showOwnership ? (
+                    <View style={styles.ownershipChip}>
+                      <Text style={[styles.ownershipChipText, { fontSize: ui.font(10) }]}>
+                        {formatOwnershipCategoryLabel(own.ownershipCategory)} · {own.ownerName}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+
+              <View style={[styles.cardFooterBar, { flexWrap: 'wrap' }]}>
+                <View style={[styles.statusPillWrap, { minWidth: 110 }]}>
+                  <StatusIcon status={item.status} size={ui.font(13)} />
+                  <Text style={[styles.speciesMeta, { fontSize: ui.font(11), flexShrink: 1 }]}>
+                    {formatStatusLabel(item.status)}
+                    {item.dob ? ` · ${formatDisplayDate(item.dob, ui.settings.dateFormat)}` : ''}
                   </Text>
                 </View>
 
-                <Text style={styles.animalName}>
-                  {item.name ?? 'Unnamed Animal'}
-                </Text>
-                <Text style={styles.animalMeta}>
-                  {item.breed ?? '—'} · {formatIsoDate(item.dob)}
-                  {item.dob ? ` (${formatAnimalAge(item.dob)})` : ''}
-                </Text>
-
-                <View style={styles.cardActions}>
+                <View style={[styles.cardActions, { gap: ui.space(6), flexWrap: 'wrap' }]}>
                   <Pressable
-                    style={styles.secondaryAction}
+                    accessibilityLabel={`Edit ${item.tagNumber}`}
+                    style={[
+                      styles.secondaryAction,
+                      {
+                        minHeight: Math.max(30, ui.chipHeight - 4),
+                        paddingHorizontal: ui.space(10),
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 4,
+                      },
+                    ]}
                     onPress={() => {
                       setEditing(item);
                       setModalVisible(true);
                     }}
                   >
-                    <Text style={styles.secondaryActionText}>Edit</Text>
+                    <AppIcon
+                      name="edit"
+                      size={ui.font(13)}
+                      color={FARMDB_COLORS.text}
+                    />
+                    {!iconMode ? (
+                      <Text style={[styles.secondaryActionText, { fontSize: ui.font(11) }]}>
+                        Edit
+                      </Text>
+                    ) : null}
                   </Pressable>
-                  <Pressable
-                    style={styles.dangerAction}
-                    onPress={() => void handleDelete(item)}
-                  >
-                    <Text style={styles.dangerActionText}>Delete</Text>
-                  </Pressable>
+
+                  {confirmDeleteId === item.id ? (
+                    <>
+                      <Pressable
+                        accessibilityLabel="Confirm delete"
+                        style={[
+                          styles.dangerAction,
+                          {
+                            minHeight: Math.max(30, ui.chipHeight - 4),
+                            paddingHorizontal: ui.space(10),
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 4,
+                          },
+                        ]}
+                        onPress={() => void handleDelete(item)}
+                      >
+                        <AppIcon
+                          name="check"
+                          size={ui.font(13)}
+                          color={FARMDB_COLORS.danger}
+                        />
+                        {!iconMode ? (
+                          <Text style={[styles.dangerActionText, { fontSize: ui.font(11) }]}>
+                            Confirm
+                          </Text>
+                        ) : null}
+                      </Pressable>
+                      <Pressable
+                        accessibilityLabel="Keep record"
+                        style={[
+                          styles.secondaryAction,
+                          {
+                            minHeight: Math.max(30, ui.chipHeight - 4),
+                            paddingHorizontal: ui.space(10),
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 4,
+                          },
+                        ]}
+                        onPress={() => setConfirmDeleteId(null)}
+                      >
+                        <AppIcon
+                          name="close"
+                          size={ui.font(13)}
+                          color={FARMDB_COLORS.text}
+                        />
+                        {!iconMode ? (
+                          <Text style={[styles.secondaryActionText, { fontSize: ui.font(11) }]}>
+                            Keep
+                          </Text>
+                        ) : null}
+                      </Pressable>
+                    </>
+                  ) : (
+                    <Pressable
+                      accessibilityLabel={`Delete ${item.tagNumber}`}
+                      style={[
+                        styles.dangerAction,
+                        {
+                          minHeight: Math.max(30, ui.chipHeight - 4),
+                          paddingHorizontal: ui.space(10),
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 4,
+                        },
+                      ]}
+                      onPress={() => void handleDelete(item)}
+                    >
+                      <AppIcon
+                        name="trash"
+                        size={ui.font(13)}
+                        color={FARMDB_COLORS.danger}
+                      />
+                      {!iconMode ? (
+                        <Text style={[styles.dangerActionText, { fontSize: ui.font(11) }]}>
+                          Delete
+                        </Text>
+                      ) : null}
+                    </Pressable>
+                  )}
                 </View>
               </View>
-            </View>
-          </Pressable>
-        )}
+            </Pressable>
+          );
+        }}
       />
 
       <LivestockDetailModal
         livestockId={selectedId}
         onClose={() => setSelectedId(null)}
+        onSelectAnimal={(id) => setSelectedId(id)}
+        onOpenFamilyTree={onOpenFamilyTree}
         onEdit={(animal) => {
           setSelectedId(null);
           setEditing(animal);
@@ -281,31 +653,69 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 8,
   },
-  topRow: {
+  statsBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-  },
-  statBox: {
-    flex: 1,
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#ddd6c8',
     borderRadius: 10,
-    padding: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+  },
+  statInlineItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 4,
+  },
+  statDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: '#e7e1d4',
+  },
+  searchActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  cardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  cardTitleBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  cardFooterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingTop: 9,
+    borderTopWidth: 1,
+    borderTopColor: '#f1ede4',
+  },
+  statusPillWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    flexShrink: 1,
   },
   statLabel: {
     fontSize: 11,
+    fontFamily: FARMDB_FONTS.medium,
     color: '#5d675f',
   },
   statValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1c241e',
-    marginTop: 2,
+    fontSize: 13,
+    fontFamily: FARMDB_FONTS.bold,
+    color: '#2d6a4f',
   },
   addBtn: {
     backgroundColor: '#2d6a4f',
@@ -315,51 +725,32 @@ const styles = StyleSheet.create({
   },
   addBtnText: {
     color: '#ffffff',
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     fontSize: 13,
   },
-  searchInput: {
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#ddd6c8',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    marginBottom: 10,
-    color: '#1c241e',
-  },
-  chipScroll: {
-    flexGrow: 0,
-    marginBottom: 12,
-  },
-  filterRow: {
+  searchWrap: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-    paddingRight: 8,
-  },
-  filterChip: {
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: 999,
+    backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#ddd6c8',
-    backgroundColor: '#ffffff',
   },
-  filterChipActive: {
-    backgroundColor: '#17271d',
-    borderColor: '#17271d',
-  },
-  filterChipSpeciesActive: {
-    backgroundColor: '#2d6a4f',
-    borderColor: '#2d6a4f',
-  },
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: '600',
+  searchInputInner: {
+    flex: 1,
+    fontFamily: FARMDB_FONTS.regular,
     color: '#1c241e',
+    paddingVertical: 8,
   },
-  filterChipTextActive: {
-    color: '#ffffff',
+  filterDropdownRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  metaBadgeGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   listContent: {
     paddingBottom: 24,
@@ -391,13 +782,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  thumbPlaceholderText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#2d6a4f',
-  },
   cardMain: {
     flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  ownershipChip: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: '#e6f2ec',
+  },
+  ownershipChipText: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: '#2d6a4f',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -412,29 +812,30 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   tagText: {
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.monoBold,
     fontSize: 12,
     color: '#1c241e',
   },
   speciesMeta: {
     fontSize: 12,
     color: '#5d675f',
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
   },
   animalName: {
     fontSize: 16,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     color: '#1c241e',
   },
   animalMeta: {
     fontSize: 12,
+    fontFamily: FARMDB_FONTS.regular,
     color: '#5d675f',
     marginTop: 2,
   },
   cardActions: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 9,
+    alignItems: 'center',
+    gap: 6,
   },
   secondaryAction: {
     paddingHorizontal: 12,
@@ -446,7 +847,7 @@ const styles = StyleSheet.create({
   },
   secondaryActionText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#1c241e',
   },
   dangerAction: {
@@ -457,7 +858,7 @@ const styles = StyleSheet.create({
   },
   dangerActionText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#b42318',
   },
   emptyCard: {
@@ -470,11 +871,12 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: 16,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     color: '#1c241e',
   },
   emptySub: {
     fontSize: 13,
+    fontFamily: FARMDB_FONTS.regular,
     color: '#5d675f',
     textAlign: 'center',
     marginTop: 6,
@@ -488,7 +890,7 @@ const styles = StyleSheet.create({
   },
   sampleBtnText: {
     color: '#2d6a4f',
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     fontSize: 13,
   },
 });

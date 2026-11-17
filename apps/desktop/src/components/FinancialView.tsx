@@ -9,15 +9,24 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Pencil, Plus, Search, Settings, Trash2 } from 'lucide-react';
+import { Search } from 'lucide-react';
 import {
-  buildMonthlyProfitLossSeries,
+  buildPeriodProfitLossSeries,
   computeFinancialSummary,
+  CURRENCY_OPTIONS,
+  DEFAULT_FARM_SETTINGS,
+  filterAndSortRecordsByDate,
   FINANCIAL_CATEGORIES,
+  FINANCIAL_PERIOD_BUCKETS,
   formatCategoryLabel,
+  formatCompactAxisNumber,
   formatCurrency,
+  formatDisplayDate,
+  RECORD_DATE_FILTER_OPTIONS,
+  type DateSortDirection,
   type FinancialCategory,
   type FinancialLog,
+  type RecordDateFilter,
   type TransactionType,
 } from '@farmdb/core';
 import {
@@ -27,7 +36,12 @@ import {
   useLivestockList,
   useUpdateFarmSettings,
 } from '@farmdb/db';
+import { APP_ICONS, getCurrencyFlagIcon } from '../assets/icons';
+import { computeDesktopNumericYAxisWidth } from '../utils/chartAxis';
+import { AnimalEyeButton } from './AnimalQuickPreviewModal';
 import { FinancialFormModal } from './FinancialFormModal';
+import { ModernSelect, type ModernSelectOption } from './ModernSelect';
+import { NumberStepper } from './NumberStepper';
 
 export function FinancialView() {
   const [typeFilter, setTypeFilter] = useState<TransactionType | 'all'>('all');
@@ -35,11 +49,16 @@ export function FinancialView() {
     FinancialCategory | 'all'
   >('all');
   const [search, setSearch] = useState('');
+  const [periodBucket, setPeriodBucket] = useState<'week' | 'month' | 'year'>('month');
+  const [dateFilter, setDateFilter] = useState<RecordDateFilter>('all');
+  const [dateSort, setDateSort] = useState<DateSortDirection>('desc');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<FinancialLog | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const livestockQuery = useLivestockList({});
   const settingsQuery = useFarmSettings();
+  const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
   const updateSettingsMutation = useUpdateFarmSettings();
   const allLogsQuery = useFinancialLogList({});
   const filteredLogsQuery = useFinancialLogList({
@@ -67,13 +86,103 @@ export function FinancialView() {
   );
 
   const allLogs = allLogsQuery.data ?? [];
-  const visibleLogs = filteredLogsQuery.data ?? [];
+  const visibleLogs = useMemo(
+    () =>
+      filterAndSortRecordsByDate(filteredLogsQuery.data ?? [], {
+        filter: dateFilter,
+        sort: dateSort,
+      }),
+    [filteredLogsQuery.data, dateFilter, dateSort]
+  );
   const currency = settingsQuery.data?.currencySymbol ?? '$';
 
   const summary = useMemo(() => computeFinancialSummary(allLogs), [allLogs]);
   const monthlySeries = useMemo(
-    () => buildMonthlyProfitLossSeries(allLogs, 6),
-    [allLogs]
+    () =>
+      buildPeriodProfitLossSeries(
+        allLogs,
+        periodBucket,
+        periodBucket === 'year' ? 20 : 12
+      ),
+    [allLogs, periodBucket]
+  );
+
+  const dateFilterOptions = useMemo<ModernSelectOption<RecordDateFilter>[]>(
+    () =>
+      RECORD_DATE_FILTER_OPTIONS.map((opt) => ({
+        value: opt.value,
+        label: opt.label,
+        iconSrc: APP_ICONS.calendar,
+      })),
+    []
+  );
+
+  const dateSortOptions = useMemo<ModernSelectOption<DateSortDirection>[]>(
+    () => [
+      { value: 'desc', label: 'Newest First', iconSrc: APP_ICONS.hourglass },
+      { value: 'asc', label: 'Oldest First', iconSrc: APP_ICONS.hourglass },
+    ],
+    []
+  );
+
+  const financeYAxisWidth = useMemo(
+    () =>
+      computeDesktopNumericYAxisWidth(
+        monthlySeries.flatMap((m) => [m.income, m.expense]),
+        (v) => formatCompactAxisNumber(v, 0),
+        { minWidth: 44, maxWidth: 88 }
+      ),
+    [monthlySeries]
+  );
+
+  const currencyPresetOptions = useMemo<ModernSelectOption<string>[]>(
+    () => [
+      ...CURRENCY_OPTIONS.map((opt) => ({
+        value: opt.symbol,
+        label: opt.label,
+        iconSrc: getCurrencyFlagIcon(opt.flagKey),
+      })),
+      {
+        value: '__custom__',
+        label: 'Custom...',
+        iconSrc: APP_ICONS.dollarSymbol,
+      },
+    ],
+    []
+  );
+
+  const typeFilterOptions = useMemo<ModernSelectOption<TransactionType | 'all'>[]>(
+    () => [
+      { value: 'all', label: 'All Types', iconSrc: APP_ICONS.budget },
+      { value: 'income', label: 'Income', iconSrc: APP_ICONS.money },
+      { value: 'expense', label: 'Expense', iconSrc: APP_ICONS.copyWriting },
+    ],
+    []
+  );
+
+  const categoryFilterOptions = useMemo<
+    ModernSelectOption<FinancialCategory | 'all'>[]
+  >(
+    () => [
+      { value: 'all', label: 'All Categories', iconSrc: APP_ICONS.budget },
+      ...FINANCIAL_CATEGORIES.map((cat) => ({
+        value: cat,
+        label: formatCategoryLabel(cat),
+        iconSrc:
+          cat === 'milk_sale'
+            ? APP_ICONS.milkBottle
+            : cat === 'meds' || cat === 'veterinary'
+              ? APP_ICONS.syringe
+              : cat === 'livestock_sale'
+                ? APP_ICONS.cow
+                : APP_ICONS.budget,
+      })),
+    ],
+    []
+  );
+
+  const isPresetCurrency = CURRENCY_OPTIONS.some(
+    (opt) => opt.symbol === currencyInput
   );
 
   async function handleSaveSettings(event: React.FormEvent) {
@@ -98,9 +207,6 @@ export function FinancialView() {
       <div className="page-header">
         <div>
           <h1 className="page-title">Financial Ledger</h1>
-          <p className="page-subtitle">
-            Track milk sale income, feed and medical expenses, and farm profit/loss margins.
-          </p>
         </div>
 
         <button
@@ -111,7 +217,7 @@ export function FinancialView() {
             setModalOpen(true);
           }}
         >
-          <Plus size={17} />
+          <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
           Add Transaction
         </button>
       </div>
@@ -148,50 +254,70 @@ export function FinancialView() {
       </div>
 
       <div className="split-grid">
-        <div className="card">
+        <div className="card chart-card">
           <div className="chart-header">
             <div>
-              <h2 className="card-section-title" style={{ marginBottom: 2 }}>
-                Monthly Income vs. Expenses
+              <h2 className="card-section-title" style={{ marginBottom: 0 }}>
+                {periodBucket === 'week'
+                  ? 'Weekly'
+                  : periodBucket === 'year'
+                    ? 'Yearly'
+                    : 'Monthly'}{' '}
+                Income vs. Expenses
               </h2>
-              <p className="page-subtitle" style={{ fontSize: '0.82rem' }}>
-                Trailing 6 active months
-              </p>
+            </div>
+            <div className="segmented-group" role="group" aria-label="Financial chart period">
+              {FINANCIAL_PERIOD_BUCKETS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`segmented-btn ${periodBucket === opt.value ? 'active' : ''}`}
+                  onClick={() => setPeriodBucket(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </div>
 
           {monthlySeries.length === 0 ? (
-            <div className="empty-state" style={{ padding: '48px 12px' }}>
-              Log income or expense transactions to visualize profit & loss margins.
+            <div className="empty-state" style={{ padding: '48px 12px', flex: 1, display: 'grid', placeItems: 'center' }}>
+              No financial data yet.
             </div>
           ) : (
-            <div style={{ width: '100%', height: 240 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={monthlySeries}
-                  margin={{ top: 10, right: 12, left: -4, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ebe6dc" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5d675f' }} />
-                  <YAxis tick={{ fontSize: 11, fill: '#5d675f' }} />
-                  <Tooltip
-                    formatter={(value) => formatCurrency(Number(value), currency)}
-                  />
-                  <Legend />
-                  <Bar
-                    dataKey="income"
-                    name="Income"
-                    fill="#2d6a4f"
-                    radius={[5, 5, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="expense"
-                    name="Expense"
-                    fill="#c44536"
-                    radius={[5, 5, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="chart-fill-wrap">
+              <div className="chart-fill-inner">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={monthlySeries}
+                    margin={{ top: 6, right: 12, left: 4, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ebe6dc" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5d675f' }} />
+                    <YAxis
+                      width={financeYAxisWidth}
+                      tick={{ fontSize: 11, fill: '#5d675f' }}
+                      tickFormatter={(v) => formatCompactAxisNumber(v, 0)}
+                    />
+                    <Tooltip
+                      formatter={(value) => formatCurrency(Number(value), currency)}
+                    />
+                    <Legend />
+                    <Bar
+                      dataKey="income"
+                      name="Income"
+                      fill="#2d6a4f"
+                      radius={[5, 5, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="expense"
+                      name="Expense"
+                      fill="#c44536"
+                      radius={[5, 5, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           )}
         </div>
@@ -199,14 +325,11 @@ export function FinancialView() {
         <div className="card">
           <div className="chart-header">
             <div>
-              <h2 className="card-section-title" style={{ marginBottom: 2 }}>
-                Standard Milk Rate & Breakdown
+              <h2 className="card-section-title" style={{ marginBottom: 0 }}>
+                Standard Milk Rate &amp; Currency
               </h2>
-              <p className="page-subtitle" style={{ fontSize: '0.82rem' }}>
-                Used when auto-recording sales from daily milk yields
-              </p>
             </div>
-            <Settings size={17} color="#5d675f" />
+            <img src={APP_ICONS.settings} alt="" className="app-icon-md" />
           </div>
 
           <form onSubmit={handleSaveSettings} className="settings-form">
@@ -215,27 +338,48 @@ export function FinancialView() {
                 <label className="form-label" htmlFor="setting-rate">
                   Rate per Liter
                 </label>
-                <input
+                <NumberStepper
                   id="setting-rate"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  className="input"
+                  ariaLabel="Rate per Liter"
+                  min={0}
+                  step={currencyInput === 'UGX' ? 100 : 0.05}
+                  decimals={currencyInput === 'UGX' ? 0 : 2}
                   value={rateInput}
-                  onChange={(e) => setRateInput(e.target.value)}
+                  onChange={setRateInput}
                 />
               </div>
               <div className="form-field">
                 <label className="form-label" htmlFor="setting-currency">
-                  Currency Symbol
+                  Currency
                 </label>
-                <input
+                <ModernSelect
                   id="setting-currency"
-                  className="input"
-                  maxLength={6}
-                  value={currencyInput}
-                  onChange={(e) => setCurrencyInput(e.target.value)}
+                  fullWidth
+                  ariaLabel="Select currency"
+                  value={isPresetCurrency ? currencyInput : '__custom__'}
+                  options={currencyPresetOptions}
+                  onChange={(next) => {
+                    if (next === '__custom__') {
+                      setCurrencyInput((prev) =>
+                        CURRENCY_OPTIONS.some((o) => o.symbol === prev)
+                          ? ''
+                          : prev
+                      );
+                    } else {
+                      setCurrencyInput(next);
+                    }
+                  }}
                 />
+                {!isPresetCurrency && (
+                  <input
+                    className="input"
+                    style={{ marginTop: 6 }}
+                    maxLength={6}
+                    value={currencyInput}
+                    onChange={(e) => setCurrencyInput(e.target.value)}
+                    placeholder="Symbol (e.g. KES)"
+                  />
+                )}
               </div>
             </div>
 
@@ -292,34 +436,33 @@ export function FinancialView() {
             />
           </div>
 
-          <select
-            className="select"
-            aria-label="Filter by transaction type"
+          <ModernSelect
+            ariaLabel="Filter by transaction type"
             value={typeFilter}
-            onChange={(e) =>
-              setTypeFilter(e.target.value as TransactionType | 'all')
-            }
-          >
-            <option value="all">All Types</option>
-            <option value="income">Income</option>
-            <option value="expense">Expense</option>
-          </select>
+            options={typeFilterOptions}
+            onChange={setTypeFilter}
+          />
 
-          <select
-            className="select"
-            aria-label="Filter by category"
+          <ModernSelect
+            ariaLabel="Filter by category"
             value={categoryFilter}
-            onChange={(e) =>
-              setCategoryFilter(e.target.value as FinancialCategory | 'all')
-            }
-          >
-            <option value="all">All Categories</option>
-            {FINANCIAL_CATEGORIES.map((cat) => (
-              <option key={cat} value={cat}>
-                {formatCategoryLabel(cat)}
-              </option>
-            ))}
-          </select>
+            options={categoryFilterOptions}
+            onChange={setCategoryFilter}
+          />
+
+          <ModernSelect
+            ariaLabel="Filter by date timeframe"
+            value={dateFilter}
+            options={dateFilterOptions}
+            onChange={setDateFilter}
+          />
+
+          <ModernSelect
+            ariaLabel="Sort financial logs by date"
+            value={dateSort}
+            options={dateSortOptions}
+            onChange={setDateSort}
+          />
         </div>
 
         {visibleLogs.length === 0 ? (
@@ -345,7 +488,7 @@ export function FinancialView() {
                     : null;
                   return (
                     <tr key={log.id}>
-                      <td>{log.date}</td>
+                      <td>{formatDisplayDate(log.date, settings.dateFormat)}</td>
                       <td>
                         <span
                           className={`status-pill ${
@@ -367,7 +510,10 @@ export function FinancialView() {
                       </td>
                       <td>
                         {animal ? (
-                          <span className="tag-chip">{animal.tagNumber}</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <span className="tag-chip">{animal.tagNumber}</span>
+                            <AnimalEyeButton livestockId={animal.id} />
+                          </span>
                         ) : (
                           'General Farm'
                         )}
@@ -388,26 +534,57 @@ export function FinancialView() {
                       <td>{log.notes ?? '—'}</td>
                       <td>
                         <div className="row-actions">
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => {
-                              setEditing(log);
-                              setModalOpen(true);
-                            }}
-                            aria-label="Edit financial entry"
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-sm"
-                            onClick={() => void deleteMutation.mutateAsync(log.id)}
-                            disabled={deleteMutation.isPending}
-                            aria-label="Delete financial entry"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => {
+                                setEditing(log);
+                                setModalOpen(true);
+                              }}
+                              aria-label="Edit financial entry"
+                            >
+                              <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
+                            </button>
+                          {confirmDeleteId === log.id ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => {
+                                  setConfirmDeleteId(null);
+                                  void deleteMutation.mutateAsync(log.id);
+                                }}
+                                disabled={deleteMutation.isPending}
+                              >
+                                <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setConfirmDeleteId(null)}
+                              >
+                                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              onClick={() => {
+                                if (settings.confirmBeforeDelete) {
+                                  setConfirmDeleteId(log.id);
+                                } else {
+                                  void deleteMutation.mutateAsync(log.id);
+                                }
+                              }}
+                              disabled={deleteMutation.isPending}
+                              aria-label="Delete financial entry"
+                            >
+                              <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

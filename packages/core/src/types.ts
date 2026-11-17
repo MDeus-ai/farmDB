@@ -1,4 +1,4 @@
-export const SPECIES_LIST = ['cow', 'goat', 'sheep', 'other'] as const;
+export const SPECIES_LIST = ['cow', 'goat', 'sheep', 'duck', 'other'] as const;
 export type Species = (typeof SPECIES_LIST)[number];
 
 export const LIVESTOCK_STATUSES = ['active', 'sold', 'deceased'] as const;
@@ -13,6 +13,7 @@ export const FINANCIAL_CATEGORIES = [
   'feed',
   'meds',
   'veterinary',
+  'payroll',
   'equipment',
   'other',
 ] as const;
@@ -28,6 +29,7 @@ export const EXPENSE_CATEGORIES: readonly FinancialCategory[] = [
   'feed',
   'meds',
   'veterinary',
+  'payroll',
   'equipment',
   'other',
 ];
@@ -40,6 +42,8 @@ export interface Livestock {
   breed: string | null;
   dob: string | null;
   imageUri: string | null;
+  sireId: string | null;
+  damId: string | null;
   status: LivestockStatus;
   createdAt: number;
   updatedAt: number;
@@ -52,6 +56,8 @@ export interface NewLivestockInput {
   breed?: string | null;
   dob?: string | null;
   imageUri?: string | null;
+  sireId?: string | null;
+  damId?: string | null;
   status?: LivestockStatus;
 }
 
@@ -62,6 +68,8 @@ export interface UpdateLivestockInput {
   breed?: string | null;
   dob?: string | null;
   imageUri?: string | null;
+  sireId?: string | null;
+  damId?: string | null;
   status?: LivestockStatus;
 }
 
@@ -181,9 +189,69 @@ export interface FinancialLogFilter {
   search?: string;
 }
 
+export const FONT_SCALES = ['small', 'medium', 'large', 'xlarge'] as const;
+export type FontScale = (typeof FONT_SCALES)[number];
+
+export const UI_DENSITIES = ['compact', 'comfortable', 'spacious'] as const;
+export type UiDensity = (typeof UI_DENSITIES)[number];
+
+export const DATE_FORMATS = ['iso', 'mdy', 'dmy'] as const;
+export type DateFormatPreference = (typeof DATE_FORMATS)[number];
+
+export const VOLUME_UNITS = ['liters', 'gallons'] as const;
+export type VolumeUnit = (typeof VOLUME_UNITS)[number];
+
+export interface CurrencyOption {
+  code: string;
+  symbol: string;
+  label: string;
+  flagKey: 'usa' | 'uganda' | 'uk';
+}
+
+export const CURRENCY_OPTIONS: readonly CurrencyOption[] = [
+  { code: 'USD', symbol: '$', label: 'US Dollar ($)', flagKey: 'usa' },
+  { code: 'UGX', symbol: 'UGX', label: 'Uganda Shilling (UGX)', flagKey: 'uganda' },
+  { code: 'GBP', symbol: '£', label: 'British Pound (£)', flagKey: 'uk' },
+] as const;
+
+export const SYNC_CONFLICT_STRATEGIES = [
+  'last_write_wins',
+  'local_priority',
+  'cloud_priority',
+] as const;
+export type SyncConflictStrategy = (typeof SYNC_CONFLICT_STRATEGIES)[number];
+
+export type CloudSyncDirection = 'push' | 'pull' | 'bidirectional' | 'test';
+export type CloudSyncStatus = 'success' | 'error' | 'offline';
+
 export interface FarmSettings {
+  farmName: string;
   defaultMilkRatePerLiter: number;
   currencySymbol: string;
+  fontScale: FontScale;
+  uiDensity: UiDensity;
+  dateFormat: DateFormatPreference;
+  volumeUnit: VolumeUnit;
+  defaultSpecies: Species;
+  autoRecordMilkSaleByDefault: boolean;
+  autoRecordMedicalExpenseByDefault: boolean;
+  autoRecordPayrollExpenseByDefault: boolean;
+  paymentAlertLeadDays: number;
+  alertCheckIntervalSeconds: number;
+  enableNotifications: boolean;
+  confirmBeforeDelete: boolean;
+  mobileIconMode: boolean;
+  activeAccountId: string;
+  cloudSyncEnabled: boolean;
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+  cloudWorkspaceId: string;
+  autoSyncOnInternet: boolean;
+  cloudSyncIntervalSeconds: number;
+  syncConflictStrategy: SyncConflictStrategy;
+  syncIncludeFinancials: boolean;
+  syncIncludeHr: boolean;
+  networkJoinKey: string;
 }
 
 export interface AlertItem {
@@ -222,4 +290,349 @@ export interface AlertFilter {
   status?: 'open' | 'resolved' | 'all';
   livestockId?: string;
   search?: string;
+}
+
+export const WORKER_STATUSES = ['active', 'on_leave', 'inactive'] as const;
+export type WorkerStatus = (typeof WORKER_STATUSES)[number];
+
+export const WORKER_PAY_FREQUENCIES = [
+  'monthly',
+  'biweekly',
+  'weekly',
+  'daily',
+] as const;
+export type WorkerPayFrequency = (typeof WORKER_PAY_FREQUENCIES)[number];
+
+export const WORKER_PAYMENT_STATUSES = ['pending', 'paid'] as const;
+export type WorkerPaymentStatus = (typeof WORKER_PAYMENT_STATUSES)[number];
+
+export const WORKER_TASK_PRIORITIES = ['low', 'medium', 'high'] as const;
+export type WorkerTaskPriority = (typeof WORKER_TASK_PRIORITIES)[number];
+
+export const WORKER_TASK_STATUSES = [
+  'pending',
+  'in_progress',
+  'completed',
+] as const;
+export type WorkerTaskStatus = (typeof WORKER_TASK_STATUSES)[number];
+
+export interface FarmWorker {
+  id: string;
+  name: string;
+  role: string;
+  phone: string | null;
+  responsibilities: string | null;
+  salaryAmount: number;
+  payFrequency: WorkerPayFrequency;
+  nextPaymentDueDate: string;
+  status: WorkerStatus;
+  hireDate: string | null;
+  paymentNotifiedForDueDate: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface NewFarmWorkerInput {
+  name: string;
+  role: string;
+  phone?: string | null;
+  responsibilities?: string | null;
+  salaryAmount: number;
+  payFrequency?: WorkerPayFrequency;
+  nextPaymentDueDate?: string;
+  status?: WorkerStatus;
+  hireDate?: string | null;
+}
+
+export interface UpdateFarmWorkerInput {
+  name?: string;
+  role?: string;
+  phone?: string | null;
+  responsibilities?: string | null;
+  salaryAmount?: number;
+  payFrequency?: WorkerPayFrequency;
+  nextPaymentDueDate?: string;
+  status?: WorkerStatus;
+  hireDate?: string | null;
+}
+
+export interface FarmWorkerFilter {
+  status?: WorkerStatus | 'all';
+  search?: string;
+}
+
+export interface WorkerPayment {
+  id: string;
+  workerId: string;
+  financialLogId: string | null;
+  amount: number;
+  dueDate: string;
+  paidDate: string | null;
+  status: WorkerPaymentStatus;
+  periodLabel: string | null;
+  notes: string | null;
+  notifiedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface NewWorkerPaymentInput {
+  workerId: string;
+  amount: number;
+  dueDate: string;
+  paidDate?: string | null;
+  status?: WorkerPaymentStatus;
+  periodLabel?: string | null;
+  notes?: string | null;
+}
+
+export interface UpdateWorkerPaymentInput {
+  workerId?: string;
+  amount?: number;
+  dueDate?: string;
+  paidDate?: string | null;
+  status?: WorkerPaymentStatus;
+  periodLabel?: string | null;
+  notes?: string | null;
+}
+
+export interface WorkerPaymentFilter {
+  workerId?: string;
+  status?: WorkerPaymentStatus | 'all';
+  search?: string;
+}
+
+export interface WorkerTask {
+  id: string;
+  workerId: string;
+  livestockId: string | null;
+  title: string;
+  description: string | null;
+  priority: WorkerTaskPriority;
+  status: WorkerTaskStatus;
+  dueDate: string | null;
+  completedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface NewWorkerTaskInput {
+  workerId: string;
+  livestockId?: string | null;
+  title: string;
+  description?: string | null;
+  priority?: WorkerTaskPriority;
+  status?: WorkerTaskStatus;
+  dueDate?: string | null;
+}
+
+export interface UpdateWorkerTaskInput {
+  workerId?: string;
+  livestockId?: string | null;
+  title?: string;
+  description?: string | null;
+  priority?: WorkerTaskPriority;
+  status?: WorkerTaskStatus;
+  dueDate?: string | null;
+}
+
+export interface WorkerTaskFilter {
+  workerId?: string;
+  status?: WorkerTaskStatus | 'all';
+  priority?: WorkerTaskPriority | 'all';
+  search?: string;
+}
+
+export const OWNERSHIP_CATEGORIES = [
+  'farm_owned',
+  'external_boarded',
+  'sold_retained',
+  'breeding_loan_in',
+  'care_quarantine',
+  'co_owned',
+] as const;
+export type OwnershipCategory = (typeof OWNERSHIP_CATEGORIES)[number];
+
+export const OWNERSHIP_STATUSES = [
+  'active',
+  'returned',
+  'picked_up',
+  'transferred',
+] as const;
+export type OwnershipStatus = (typeof OWNERSHIP_STATUSES)[number];
+
+export interface AnimalOwnership {
+  id: string;
+  livestockId: string;
+  ownerName: string;
+  ownerContact: string | null;
+  accountId: string | null;
+  ownershipCategory: OwnershipCategory;
+  sharePercentage: number;
+  purpose: string | null;
+  startDate: string;
+  expectedEndDate: string | null;
+  boardingFee: number;
+  status: OwnershipStatus;
+  notes: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface NewAnimalOwnershipInput {
+  livestockId: string;
+  ownerName: string;
+  ownerContact?: string | null;
+  accountId?: string | null;
+  ownershipCategory?: OwnershipCategory;
+  sharePercentage?: number;
+  purpose?: string | null;
+  startDate?: string;
+  expectedEndDate?: string | null;
+  boardingFee?: number;
+  status?: OwnershipStatus;
+  notes?: string | null;
+}
+
+export interface UpdateAnimalOwnershipInput {
+  livestockId?: string;
+  ownerName?: string;
+  ownerContact?: string | null;
+  accountId?: string | null;
+  ownershipCategory?: OwnershipCategory;
+  sharePercentage?: number;
+  purpose?: string | null;
+  startDate?: string;
+  expectedEndDate?: string | null;
+  boardingFee?: number;
+  status?: OwnershipStatus;
+  notes?: string | null;
+}
+
+export interface AnimalOwnershipFilter {
+  livestockId?: string;
+  accountId?: string;
+  category?: OwnershipCategory | 'all';
+  status?: OwnershipStatus | 'all';
+  search?: string;
+}
+
+export const FARM_ACCOUNT_ROLES = [
+  'admin',
+  'manager',
+  'family_member',
+  'external_owner',
+  'veterinarian',
+  'staff_viewer',
+] as const;
+export type FarmAccountRole = (typeof FARM_ACCOUNT_ROLES)[number];
+
+export const FARM_ACCOUNT_STATUSES = [
+  'active',
+  'pending',
+  'invited',
+  'suspended',
+] as const;
+export type FarmAccountStatus = (typeof FARM_ACCOUNT_STATUSES)[number];
+
+export const FARM_ACCOUNT_AVATARS = [
+  'farmer',
+  'farmerFemale',
+  'peasant',
+  'staff',
+] as const;
+export type FarmAccountAvatar = (typeof FARM_ACCOUNT_AVATARS)[number];
+
+export const FARM_MODULE_ACCESS_LEVELS = [
+  'none',
+  'view',
+  'edit',
+  'full',
+] as const;
+export type FarmModuleAccessLevel = (typeof FARM_MODULE_ACCESS_LEVELS)[number];
+
+export const FARM_PERMISSION_MODULES = [
+  'livestock',
+  'ownerships',
+  'family_tree',
+  'production',
+  'medical',
+  'financial',
+  'alerts',
+  'hr',
+  'statistics',
+  'backup',
+  'settings',
+] as const;
+export type FarmPermissionModule = (typeof FARM_PERMISSION_MODULES)[number];
+
+export type FarmAccountPermissions = Record<
+  FarmPermissionModule,
+  FarmModuleAccessLevel
+>;
+
+export interface FarmAccount {
+  id: string;
+  displayName: string;
+  email: string | null;
+  phone: string | null;
+  role: FarmAccountRole;
+  relationship: string | null;
+  avatarKey: FarmAccountAvatar;
+  accessCode: string | null;
+  isPrimaryAdmin: boolean;
+  canManageNetwork: boolean;
+  canSyncCloud: boolean;
+  permissions: FarmAccountPermissions;
+  status: FarmAccountStatus;
+  lastSyncedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface NewFarmAccountInput {
+  id?: string;
+  displayName: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: FarmAccountRole;
+  relationship?: string | null;
+  avatarKey?: FarmAccountAvatar;
+  accessCode?: string | null;
+  isPrimaryAdmin?: boolean;
+  canManageNetwork?: boolean;
+  canSyncCloud?: boolean;
+  permissions?: Partial<FarmAccountPermissions>;
+  status?: FarmAccountStatus;
+}
+
+export interface UpdateFarmAccountInput {
+  displayName?: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: FarmAccountRole;
+  relationship?: string | null;
+  avatarKey?: FarmAccountAvatar;
+  accessCode?: string | null;
+  canManageNetwork?: boolean;
+  canSyncCloud?: boolean;
+  permissions?: Partial<FarmAccountPermissions>;
+  status?: FarmAccountStatus;
+  lastSyncedAt?: number | null;
+}
+
+export interface FarmAccountFilter {
+  role?: FarmAccountRole | 'all';
+  status?: FarmAccountStatus | 'all';
+  search?: string;
+}
+
+export interface CloudSyncLog {
+  id: string;
+  direction: CloudSyncDirection;
+  status: CloudSyncStatus;
+  recordsPushed: number;
+  recordsPulled: number;
+  summary: string;
+  createdAt: number;
 }

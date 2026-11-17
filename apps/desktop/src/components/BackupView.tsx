@@ -1,15 +1,7 @@
 import { useEffect, useState } from 'react';
-import {
-  Database as DbIcon,
-  Download,
-  FileJson,
-  FileSpreadsheet,
-  FolderOutput,
-  HardDriveDownload,
-  Upload,
-} from 'lucide-react';
 import type { ExportTableKey } from '@farmdb/core';
 import { useFarmDb, useFarmSummary } from '@farmdb/db';
+import { APP_ICONS } from '../assets/icons';
 import type { TauriSqlController } from '../db/tauriDriver';
 import {
   backupDesktopSqliteFile,
@@ -32,6 +24,11 @@ const EXPORT_TABLES: Array<{ key: ExportTableKey; label: string }> = [
   { key: 'medical_records', label: 'Medical History' },
   { key: 'financial_logs', label: 'Financial Ledger' },
   { key: 'alerts', label: 'Alerts & Notes' },
+  { key: 'workers', label: 'Farm Workers' },
+  { key: 'worker_payments', label: 'Salary Payments' },
+  { key: 'worker_tasks', label: 'Worker Tasks' },
+  { key: 'animal_ownerships', label: 'Animal Ownerships' },
+  { key: 'farm_accounts', label: 'Farm Network Accounts' },
 ];
 
 export function BackupView({ sqlController }: BackupViewProps) {
@@ -136,9 +133,6 @@ export function BackupView({ sqlController }: BackupViewProps) {
       <div className="page-header">
         <div>
           <h1 className="page-title">Export &amp; Backup</h1>
-          <p className="page-subtitle">
-            Export portable CSV/JSON spreadsheets or copy and restore your physical SQLite database file.
-          </p>
         </div>
       </div>
 
@@ -165,7 +159,10 @@ export function BackupView({ sqlController }: BackupViewProps) {
 
       {statusMessage && (
         <div className="alert-toast-banner" role="status">
-          <span>{statusMessage}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src={APP_ICONS.databaseCheck} alt="" className="app-icon-md" />
+            <span>{statusMessage}</span>
+          </div>
         </div>
       )}
 
@@ -179,14 +176,11 @@ export function BackupView({ sqlController }: BackupViewProps) {
         <div className="card">
           <div className="chart-header">
             <div>
-              <h2 className="card-section-title" style={{ marginBottom: 2 }}>
+              <h2 className="card-section-title" style={{ marginBottom: 0 }}>
                 Portable CSV &amp; JSON Export
               </h2>
-              <p className="page-subtitle" style={{ fontSize: '0.82rem' }}>
-                Download all farm tables for spreadsheets or cross-device transfer
-              </p>
             </div>
-            <FileSpreadsheet size={18} color="#2d6a4f" />
+            <img src={APP_ICONS.cloud} alt="" className="app-icon-md" />
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
@@ -196,7 +190,7 @@ export function BackupView({ sqlController }: BackupViewProps) {
               onClick={() => void handleExportJson()}
               disabled={busy}
             >
-              <FileJson size={16} />
+              <img src={APP_ICONS.downloadDrive} alt="" className="app-icon-sm" />
               Export Full JSON
             </button>
             <button
@@ -205,7 +199,7 @@ export function BackupView({ sqlController }: BackupViewProps) {
               onClick={() => void handleExportAllCsv()}
               disabled={busy}
             >
-              <FolderOutput size={16} />
+              <img src={APP_ICONS.downloads} alt="" className="app-icon-sm" />
               Export All CSVs
             </button>
             <button
@@ -214,7 +208,7 @@ export function BackupView({ sqlController }: BackupViewProps) {
               onClick={() => void handleImportJson()}
               disabled={busy}
             >
-              <Upload size={16} />
+              <img src={APP_ICONS.uploadArrow} alt="" className="app-icon-sm" />
               Restore from JSON
             </button>
           </div>
@@ -231,7 +225,7 @@ export function BackupView({ sqlController }: BackupViewProps) {
                 onClick={() => void handleExportTableCsv(tbl.key)}
                 disabled={busy}
               >
-                <Download size={14} />
+                <img src={APP_ICONS.downloads} alt="" className="app-icon-sm" />
                 {tbl.label}
               </button>
             ))}
@@ -241,14 +235,11 @@ export function BackupView({ sqlController }: BackupViewProps) {
         <div className="card">
           <div className="chart-header">
             <div>
-              <h2 className="card-section-title" style={{ marginBottom: 2 }}>
+              <h2 className="card-section-title" style={{ marginBottom: 0 }}>
                 SQLite File Backup &amp; Restore (.db)
               </h2>
-              <p className="page-subtitle" style={{ fontSize: '0.82rem' }}>
-                Copy the local <code>farmdb.db</code> file to an external drive or restore on a new PC
-              </p>
             </div>
-            <DbIcon size={18} color="#2d6a4f" />
+            <img src={APP_ICONS.database} alt="" className="app-icon-md" />
           </div>
 
           {dbPath && (
@@ -259,9 +250,7 @@ export function BackupView({ sqlController }: BackupViewProps) {
 
           {!inTauri ? (
             <p style={{ color: 'var(--text-muted)', marginBottom: 0 }}>
-              Raw <code>.db</code> file backup and restore is active when running
-              inside the Tauri desktop app (<code>npm run dev:tauri</code>). Use
-              JSON Export/Restore above while previewing in a browser.
+              Desktop app (Tauri) only.
             </p>
           ) : (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
@@ -271,7 +260,7 @@ export function BackupView({ sqlController }: BackupViewProps) {
                 onClick={() => void handleBackupSqlite()}
                 disabled={busy || !sqlController}
               >
-                <HardDriveDownload size={16} />
+                <img src={APP_ICONS.downloadDrive} alt="" className="app-icon-sm" />
                 Save .db Backup
               </button>
               <button
@@ -280,19 +269,12 @@ export function BackupView({ sqlController }: BackupViewProps) {
                 onClick={() => void handleRestoreSqlite()}
                 disabled={busy || !sqlController}
               >
-                <Upload size={16} />
+                <img src={APP_ICONS.upload} alt="" className="app-icon-sm" />
                 Restore from .db File
               </button>
             </div>
           )}
 
-          {inTauri && (
-            <p style={{ marginTop: 12, marginBottom: 0, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-              Restoring validates the SQLite header, saves a safety copy (
-              <code>.pre-restore.bak</code>), replaces <code>farmdb.db</code>, and
-              applies any pending migrations automatically.
-            </p>
-          )}
         </div>
       </div>
     </>

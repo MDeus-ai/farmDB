@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Area,
   AreaChart,
@@ -8,15 +8,27 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Droplets, Plus, Search, Trash2 } from 'lucide-react';
+import { Search } from 'lucide-react';
 import {
-  buildDailyYieldSeries,
   buildTopProducers,
+  buildYieldSeriesForTimeframe,
+  convertDisplayVolumeToLiters,
+  convertLitersToDisplayVolume,
+  DEFAULT_FARM_SETTINGS,
+  filterAndSortRecordsByDate,
+  formatCompactAxisNumber,
   formatCurrency,
+  formatDisplayDate,
+  formatVolume,
   getTodayIsoDate,
+  getVolumeUnitShortLabel,
+  RECORD_DATE_FILTER_OPTIONS,
   roundAmount,
   validateNewProductRecord,
+  type DateSortDirection,
   type NewProductRecordInput,
+  type RecordDateFilter,
+  type StatisticsTimeframe,
   type ValidationErrors,
 } from '@farmdb/core';
 import {
@@ -27,12 +39,31 @@ import {
   useLivestockList,
   useProductRecordList,
 } from '@farmdb/db';
+import { APP_ICONS } from '../assets/icons';
+import { buildAnimalSelectOption } from '../utils/animalOptions';
+import { computeDesktopNumericYAxisWidth } from '../utils/chartAxis';
+import { AnimalEyeButton } from './AnimalQuickPreviewModal';
+import { ModernDatePicker } from './ModernDatePicker';
+import { ModernSelect, type ModernSelectOption } from './ModernSelect';
+import { NumberStepper } from './NumberStepper';
+
+type ChartWindow = Extract<StatisticsTimeframe, '14d' | 'weeks' | 'months' | 'years'>;
+
+const PRODUCTION_CHART_WINDOWS: readonly { value: ChartWindow; label: string }[] = [
+  { value: '14d', label: '14D' },
+  { value: 'weeks', label: 'Weeks' },
+  { value: 'months', label: 'Months' },
+  { value: 'years', label: 'Years' },
+];
 
 export function ProductionView() {
   const livestockQuery = useLivestockList({});
   const settingsQuery = useFarmSettings();
   const [filterLivestockId, setFilterLivestockId] = useState<string>('');
   const [search, setSearch] = useState('');
+  const [chartWindow, setChartWindow] = useState<ChartWindow>('14d');
+  const [dateFilter, setDateFilter] = useState<RecordDateFilter>('all');
+  const [dateSort, setDateSort] = useState<DateSortDirection>('desc');
 
   const allProductionQuery = useProductRecordList({});
   const filteredProductionQuery = useProductRecordList({
@@ -54,16 +85,65 @@ export function ProductionView() {
     [animals]
   );
 
-  const settings = settingsQuery.data;
-  const currency = settings?.currencySymbol ?? '$';
-  const defaultRate = settings?.defaultMilkRatePerLiter ?? 0.65;
+  const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+
+  const activeAnimalOptions = useMemo<ModernSelectOption<string>[]>(
+    () =>
+      activeAnimals.map((animal) =>
+        buildAnimalSelectOption(animal, {
+          dateFormat: settings.dateFormat,
+          label: `${animal.tagNumber}${animal.name ? ` — ${animal.name}` : ''}`,
+        })
+      ),
+    [activeAnimals, settings.dateFormat]
+  );
+
+  const filterAnimalOptions = useMemo<ModernSelectOption<string>[]>(
+    () => [
+      { value: '', label: 'All Animals', iconSrc: APP_ICONS.group },
+      ...animals.map((animal) =>
+        buildAnimalSelectOption(animal, {
+          dateFormat: settings.dateFormat,
+          label: `${animal.tagNumber}${animal.name ? ` — ${animal.name}` : ''}`,
+        })
+      ),
+    ],
+    [animals, settings.dateFormat]
+  );
+
+  const dateFilterOptions = useMemo<ModernSelectOption<RecordDateFilter>[]>(
+    () =>
+      RECORD_DATE_FILTER_OPTIONS.map((opt) => ({
+        value: opt.value,
+        label: opt.label,
+        iconSrc: APP_ICONS.calendar,
+      })),
+    []
+  );
+
+  const dateSortOptions = useMemo<ModernSelectOption<DateSortDirection>[]>(
+    () => [
+      { value: 'desc', label: 'Newest First', iconSrc: APP_ICONS.hourglass },
+      { value: 'asc', label: 'Oldest First', iconSrc: APP_ICONS.hourglass },
+    ],
+    []
+  );
+
+  const currency = settings.currencySymbol;
+  const defaultRate = settings.defaultMilkRatePerLiter;
+  const volumeUnit = settings.volumeUnit;
+  const volumeShort = getVolumeUnitShortLabel(volumeUnit);
 
   const [selectedAnimalId, setSelectedAnimalId] = useState('');
   const [date, setDate] = useState(() => getTodayIsoDate());
   const [yieldText, setYieldText] = useState('');
   const [qualityNotes, setQualityNotes] = useState('');
-  const [autoRecordSale, setAutoRecordSale] = useState(true);
+  const [autoRecordSale, setAutoRecordSale] = useState(
+    settings.autoRecordMilkSaleByDefault
+  );
+  const initializedAutoRef = useRef(false);
   const [rateText, setRateText] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [errors, setErrors] = useState<ValidationErrors<NewProductRecordInput>>(
     {}
   );
@@ -76,17 +156,52 @@ export function ProductionView() {
   }, [activeAnimals, selectedAnimalId]);
 
   useEffect(() => {
-    if (settings && rateText === '') {
-      setRateText(settings.defaultMilkRatePerLiter.toFixed(2));
+    if (settingsQuery.data) {
+      if (rateText === '') {
+        setRateText(settingsQuery.data.defaultMilkRatePerLiter.toFixed(2));
+      }
+      if (!initializedAutoRef.current) {
+        setAutoRecordSale(settingsQuery.data.autoRecordMilkSaleByDefault);
+        initializedAutoRef.current = true;
+      }
     }
-  }, [settings, rateText]);
+  }, [settingsQuery.data, rateText]);
 
   const allRecords = allProductionQuery.data ?? [];
-  const visibleRecords = filteredProductionQuery.data ?? [];
+  const visibleRecords = useMemo(
+    () =>
+      filterAndSortRecordsByDate(filteredProductionQuery.data ?? [], {
+        filter: dateFilter,
+        sort: dateSort,
+      }),
+    [filteredProductionQuery.data, dateFilter, dateSort]
+  );
 
   const dailySeries = useMemo(
-    () => buildDailyYieldSeries(allRecords, 14),
-    [allRecords]
+    () =>
+      buildYieldSeriesForTimeframe(allRecords, chartWindow).map((pt) => ({
+        ...pt,
+        displayTotal: convertLitersToDisplayVolume(pt.totalLiters, volumeUnit),
+      })),
+    [allRecords, chartWindow, volumeUnit]
+  );
+
+  const milkDecimals = useMemo(
+    () =>
+      dailySeries.some((d) => d.displayTotal > 0 && d.displayTotal < 100)
+        ? 1
+        : 0,
+    [dailySeries]
+  );
+
+  const milkYAxisWidth = useMemo(
+    () =>
+      computeDesktopNumericYAxisWidth(
+        dailySeries.map((d) => d.displayTotal),
+        (v) => `${formatCompactAxisNumber(v, milkDecimals)} ${volumeShort}`,
+        { minWidth: 46, maxWidth: 92 }
+      ),
+    [dailySeries, milkDecimals, volumeShort]
   );
 
   const topProducers = useMemo(
@@ -118,14 +233,18 @@ export function ProductionView() {
   }, [allRecords]);
 
   const parsedYield = Number(yieldText);
+  const normalizedLiters =
+    Number.isFinite(parsedYield) && parsedYield > 0
+      ? convertDisplayVolumeToLiters(parsedYield, volumeUnit)
+      : NaN;
   const parsedRate = Number(rateText);
   const estimatedSale =
     autoRecordSale &&
-    Number.isFinite(parsedYield) &&
-    parsedYield > 0 &&
-    Number.isFinite(parsedRate) &&
-    parsedRate > 0
-      ? roundAmount(parsedYield * parsedRate)
+      Number.isFinite(normalizedLiters) &&
+      normalizedLiters > 0 &&
+      Number.isFinite(parsedRate) &&
+      parsedRate > 0
+      ? roundAmount(normalizedLiters * parsedRate)
       : 0;
 
   async function handleLogSubmit(event: React.FormEvent) {
@@ -135,7 +254,7 @@ export function ProductionView() {
     const check = validateNewProductRecord({
       livestockId: selectedAnimalId,
       date,
-      yieldAmount: parsedYield,
+      yieldAmount: normalizedLiters,
       qualityNotes,
     });
 
@@ -160,8 +279,8 @@ export function ProductionView() {
       setQualityNotes('');
       setFeedback(
         result.generatedIncomeLog
-          ? `Logged ${result.record.yieldAmount.toFixed(2)} L and recorded ${formatCurrency(result.generatedIncomeLog.amount, currency)} milk sale income.`
-          : `Logged ${result.record.yieldAmount.toFixed(2)} L milk yield.`
+          ? `Logged ${formatVolume(result.record.yieldAmount, volumeUnit)} and recorded ${formatCurrency(result.generatedIncomeLog.amount, currency)} milk sale income.`
+          : `Logged ${formatVolume(result.record.yieldAmount, volumeUnit)} milk yield.`
       );
     } catch (err) {
       if (err instanceof ProductionValidationError) {
@@ -174,36 +293,49 @@ export function ProductionView() {
     }
   }
 
+  async function handleDeleteRecord(id: string) {
+    if (settings.confirmBeforeDelete && confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setConfirmDeleteId(null);
+    await deleteMutation.mutateAsync(id);
+  }
+
   return (
     <>
       <div className="page-header">
         <div>
           <h1 className="page-title">Milk Production</h1>
-          <p className="page-subtitle">
-            Log daily milk yields per animal and automatically record milk sales at your standard rate.
-          </p>
         </div>
       </div>
 
       <div className="stats-grid">
         <div className="stat-card">
           <p className="stat-label">Today&apos;s Yield</p>
-          <p className="stat-value">{todayTotal.toFixed(1)} L</p>
+          <p className="stat-value">{formatVolume(todayTotal, volumeUnit)}</p>
         </div>
         <div className="stat-card">
           <p className="stat-label">14-Day Total</p>
-          <p className="stat-value">{fourteenDayTotal.toFixed(1)} L</p>
+          <p className="stat-value">{formatVolume(fourteenDayTotal, volumeUnit)}</p>
         </div>
         <div className="stat-card">
           <p className="stat-label">Avg per Log</p>
-          <p className="stat-value">{averagePerEntry.toFixed(1)} L</p>
+          <p className="stat-value">{formatVolume(averagePerEntry, volumeUnit)}</p>
         </div>
         <div className="stat-card">
           <p className="stat-label">Top Producer</p>
-          <p className="stat-value" style={{ fontSize: '1.15rem' }}>
-            {topProducers[0]
-              ? `${topProducers[0].tagNumber} (${topProducers[0].totalLiters.toFixed(1)} L)`
-              : '—'}
+          <p className="stat-value" style={{ fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {topProducers[0] ? (
+              <>
+                <span>
+                  {topProducers[0].tagNumber} ({formatVolume(topProducers[0].totalLiters, volumeUnit)})
+                </span>
+                <AnimalEyeButton livestockId={topProducers[0].livestockId} />
+              </>
+            ) : (
+              '—'
+            )}
           </p>
         </div>
       </div>
@@ -213,8 +345,7 @@ export function ProductionView() {
           <h2 className="card-section-title">Daily Yield Entry</h2>
           {activeAnimals.length === 0 ? (
             <p style={{ color: 'var(--text-muted)', marginBottom: 0 }}>
-              Add at least one active animal in <strong>Herd Registry</strong>{' '}
-              before logging milk production.
+              No active animals yet.
             </p>
           ) : (
             <form onSubmit={handleLogSubmit}>
@@ -223,19 +354,15 @@ export function ProductionView() {
                   <label className="form-label" htmlFor="prod-animal">
                     Animal *
                   </label>
-                  <select
+                  <ModernSelect
                     id="prod-animal"
-                    className="select"
+                    fullWidth
+                    searchable
+                    ariaLabel="Select animal"
                     value={selectedAnimalId}
-                    onChange={(e) => setSelectedAnimalId(e.target.value)}
-                  >
-                    {activeAnimals.map((animal) => (
-                      <option key={animal.id} value={animal.id}>
-                        {animal.tagNumber}
-                        {animal.name ? ` — ${animal.name}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    options={activeAnimalOptions}
+                    onChange={setSelectedAnimalId}
+                  />
                   {errors.livestockId && (
                     <span className="field-error">{errors.livestockId}</span>
                   )}
@@ -245,12 +372,11 @@ export function ProductionView() {
                   <label className="form-label" htmlFor="prod-date">
                     Date *
                   </label>
-                  <input
+                  <ModernDatePicker
                     id="prod-date"
-                    type="date"
-                    className="input"
+                    ariaLabel="Milking date"
                     value={date}
-                    onChange={(e) => setDate(e.target.value)}
+                    onChange={setDate}
                   />
                   {errors.date && (
                     <span className="field-error">{errors.date}</span>
@@ -259,17 +385,17 @@ export function ProductionView() {
 
                 <div className="form-field">
                   <label className="form-label" htmlFor="prod-yield">
-                    Yield (Liters) *
+                    Yield ({volumeShort}) *
                   </label>
-                  <input
+                  <NumberStepper
                     id="prod-yield"
-                    type="number"
-                    step="0.1"
-                    min="0.1"
-                    className="input"
+                    ariaLabel={`Yield in ${volumeShort}`}
+                    min={0.1}
+                    step={0.5}
+                    decimals={1}
                     placeholder="e.g. 18.5"
                     value={yieldText}
-                    onChange={(e) => setYieldText(e.target.value)}
+                    onChange={setYieldText}
                   />
                   {errors.yieldAmount && (
                     <span className="field-error">{errors.yieldAmount}</span>
@@ -308,14 +434,15 @@ export function ProductionView() {
                       Rate ({currency} / Liter)
                     </label>
                     <div className="inline-rate-row">
-                      <input
+                      <NumberStepper
                         id="prod-rate"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        className="input"
+                        ariaLabel="Milk Rate per Liter"
+                        compact
+                        min={0}
+                        step={currency === 'UGX' ? 100 : 0.05}
+                        decimals={currency === 'UGX' ? 0 : 2}
                         value={rateText}
-                        onChange={(e) => setRateText(e.target.value)}
+                        onChange={setRateText}
                       />
                       <span className="rate-preview">
                         Est. Income: <strong>{formatCurrency(estimatedSale, currency)}</strong>
@@ -337,7 +464,7 @@ export function ProductionView() {
                   className="btn btn-primary"
                   disabled={createMutation.isPending}
                 >
-                  <Plus size={16} />
+                  <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
                   {createMutation.isPending ? 'Saving...' : 'Log Milk Yield'}
                 </button>
               </div>
@@ -345,47 +472,70 @@ export function ProductionView() {
           )}
         </div>
 
-        <div className="card">
+        <div className="card chart-card">
           <div className="chart-header">
             <div>
-              <h2 className="card-section-title" style={{ marginBottom: 2 }}>
-                14-Day Milk Production Trend
+              <h2 className="card-section-title" style={{ marginBottom: 0 }}>
+                {chartWindow === '14d'
+                  ? '14-Day'
+                  : chartWindow === 'weeks'
+                    ? '12-Week'
+                    : chartWindow === 'months'
+                      ? '12-Month'
+                      : 'Yearly'}{' '}
+                Milk Production Trend ({volumeShort})
               </h2>
-              <p className="page-subtitle" style={{ fontSize: '0.82rem' }}>
-                Daily total liters across all animals
-              </p>
             </div>
-            <Droplets size={18} color="#2d6a4f" />
+            <div className="segmented-group" role="group" aria-label="Production trend window">
+              {PRODUCTION_CHART_WINDOWS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`segmented-btn ${chartWindow === opt.value ? 'active' : ''}`}
+                  onClick={() => setChartWindow(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div style={{ width: '100%', height: 245 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={dailySeries}
-                margin={{ top: 10, right: 12, left: -12, bottom: 0 }}
-              >
-                <defs>
-                  <linearGradient id="milkYieldFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2d6a4f" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#2d6a4f" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ebe6dc" />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5d675f' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#5d675f' }} unit=" L" />
-                <Tooltip
-                  formatter={(value) => [`${Number(value).toFixed(1)} L`, 'Yield']}
-                  labelFormatter={(label) => `Date: ${String(label)}`}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="totalLiters"
-                  stroke="#2d6a4f"
-                  strokeWidth={2.5}
-                  fill="url(#milkYieldFill)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="chart-fill-wrap">
+            <div className="chart-fill-inner">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={dailySeries}
+                  margin={{ top: 6, right: 12, left: 4, bottom: 0 }}
+                >
+                  <defs>
+                    <linearGradient id="milkYieldFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2d6a4f" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#2d6a4f" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#ebe6dc" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#5d675f' }} />
+                  <YAxis
+                    width={milkYAxisWidth}
+                    tick={{ fontSize: 11, fill: '#5d675f' }}
+                    tickFormatter={(v) =>
+                      `${formatCompactAxisNumber(v, milkDecimals)} ${volumeShort}`
+                    }
+                  />
+                  <Tooltip
+                    formatter={(value) => [`${Number(value).toFixed(1)} ${volumeShort}`, 'Yield']}
+                    labelFormatter={(label) => `Date: ${String(label)}`}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="displayTotal"
+                    stroke="#2d6a4f"
+                    strokeWidth={2.5}
+                    fill="url(#milkYieldFill)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
       </div>
@@ -402,20 +552,27 @@ export function ProductionView() {
             />
           </div>
 
-          <select
-            className="select"
-            aria-label="Filter by animal"
+          <ModernSelect
+            ariaLabel="Filter by animal"
+            searchable
             value={filterLivestockId}
-            onChange={(e) => setFilterLivestockId(e.target.value)}
-          >
-            <option value="">All Animals</option>
-            {animals.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.tagNumber}
-                {a.name ? ` — ${a.name}` : ''}
-              </option>
-            ))}
-          </select>
+            options={filterAnimalOptions}
+            onChange={setFilterLivestockId}
+          />
+
+          <ModernSelect
+            ariaLabel="Filter by date timeframe"
+            value={dateFilter}
+            options={dateFilterOptions}
+            onChange={setDateFilter}
+          />
+
+          <ModernSelect
+            ariaLabel="Sort milk logs by date"
+            value={dateSort}
+            options={dateSortOptions}
+            onChange={setDateSort}
+          />
         </div>
 
         {visibleRecords.length === 0 ? (
@@ -429,7 +586,7 @@ export function ProductionView() {
                 <tr>
                   <th>Date</th>
                   <th>Animal</th>
-                  <th>Yield (L)</th>
+                  <th>Yield ({volumeShort})</th>
                   <th>Quality Notes</th>
                   <th>Actions</th>
                 </tr>
@@ -439,27 +596,54 @@ export function ProductionView() {
                   const animal = animalsById.get(rec.livestockId);
                   return (
                     <tr key={rec.id}>
-                      <td>{rec.date}</td>
+                      <td>{formatDisplayDate(rec.date, settings.dateFormat)}</td>
                       <td>
-                        <span className="tag-chip">
-                          {animal?.tagNumber ?? 'UNKNOWN'}
-                        </span>{' '}
-                        {animal?.name ?? ''}
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <span className="tag-chip">
+                            {animal?.tagNumber ?? 'UNKNOWN'}
+                          </span>
+                          {animal?.name ?? ''}
+                          <AnimalEyeButton livestockId={rec.livestockId} />
+                        </div>
                       </td>
                       <td>
-                        <strong>{rec.yieldAmount.toFixed(2)} L</strong>
+                        <strong>{formatVolume(rec.yieldAmount, volumeUnit)}</strong>
                       </td>
                       <td>{rec.qualityNotes ?? '—'}</td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          onClick={() => void deleteMutation.mutateAsync(rec.id)}
-                          disabled={deleteMutation.isPending}
-                          aria-label="Delete milk record"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        <div className="row-actions">
+                          {confirmDeleteId === rec.id ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => void handleDeleteRecord(rec.id)}
+                                disabled={deleteMutation.isPending}
+                              >
+                                <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setConfirmDeleteId(null)}
+                              >
+                                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              onClick={() => void handleDeleteRecord(rec.id)}
+                              disabled={deleteMutation.isPending}
+                              aria-label="Delete milk record"
+                            >
+                              <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

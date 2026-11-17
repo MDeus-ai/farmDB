@@ -1,17 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   formatSpeciesLabel,
   formatStatusLabel,
+  getEligibleParentCandidates,
   LIVESTOCK_STATUSES,
   SPECIES_LIST,
   validateNewLivestock,
@@ -25,13 +28,31 @@ import {
 import {
   LivestockValidationError,
   useCreateLivestock,
+  useLivestockList,
   useUpdateLivestock,
 } from '@farmdb/db';
+import {
+  getStatusPngSource,
+  MOBILE_APP_ICONS,
+} from '../assets/icons';
 import {
   captureLivestockPhoto,
   deleteManagedLivestockPhoto,
   pickLivestockPhotoFromLibrary,
 } from '../services/imageStorage';
+import {
+  FARMDB_COLORS,
+  FARMDB_FONTS,
+  useUiScale,
+} from '../theme/uiScale';
+import { buildAnimalDropdownOption } from '../utils/animalOptions';
+import { AppIcon, SpeciesIcon } from './FarmIcons';
+import { FarmScrollView } from './FarmScrollView';
+import { ModernDatePicker } from './ModernDatePicker';
+import {
+  ModernDropdown,
+  type ModernDropdownOption,
+} from './ModernDropdown';
 
 interface LivestockFormModalProps {
   visible: boolean;
@@ -46,15 +67,21 @@ export function LivestockFormModal({
   existingTags,
   onClose,
 }: LivestockFormModalProps) {
+  const ui = useUiScale();
+  const iconMode = ui.settings.mobileIconMode;
+  const defaultSpecies = ui.settings.defaultSpecies;
+  const allLivestockQuery = useLivestockList({});
   const createMutation = useCreateLivestock();
   const updateMutation = useUpdateLivestock();
 
   const [tagNumber, setTagNumber] = useState('');
-  const [species, setSpecies] = useState<Species>('cow');
+  const [species, setSpecies] = useState<Species>(defaultSpecies);
   const [name, setName] = useState('');
   const [breed, setBreed] = useState('');
   const [dob, setDob] = useState('');
   const [status, setStatus] = useState<LivestockStatus>('active');
+  const [sireId, setSireId] = useState<string>('');
+  const [damId, setDamId] = useState<string>('');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [sessionImportedUris, setSessionImportedUris] = useState<string[]>([]);
   const [pickingImage, setPickingImage] = useState(false);
@@ -70,22 +97,72 @@ export function LivestockFormModal({
       setBreed(editing.breed ?? '');
       setDob(editing.dob ?? '');
       setStatus(editing.status);
+      setSireId(editing.sireId ?? '');
+      setDamId(editing.damId ?? '');
       setImageUri(editing.imageUri);
     } else {
       setTagNumber('');
-      setSpecies('cow');
+      setSpecies(defaultSpecies);
       setName('');
       setBreed('');
       setDob('');
       setStatus('active');
+      setSireId('');
+      setDamId('');
       setImageUri(null);
     }
     setSessionImportedUris([]);
     setErrors({});
     setSubmitError(null);
-  }, [visible, editing]);
+  }, [visible, editing, defaultSpecies]);
+
+  const allLivestock = allLivestockQuery.data ?? [];
+
+  const sireOptions = useMemo<ModernDropdownOption<string>[]>(() => {
+    const candidates = getEligibleParentCandidates(
+      editing?.id ?? null,
+      'sire',
+      allLivestock.filter((item) => editing || item.species === species),
+      damId || null
+    ).filter((item) => item.species === species);
+    return [
+      { value: '', label: 'Unknown / Founder', iconSource: MOBILE_APP_ICONS.tree },
+      ...candidates.map((item) =>
+        buildAnimalDropdownOption(item, {
+          label: `${item.tagNumber}${item.name ? ` · ${item.name}` : ''}`,
+        })
+      ),
+    ];
+  }, [allLivestock, editing, species, damId]);
+
+  const damOptions = useMemo<ModernDropdownOption<string>[]>(() => {
+    const candidates = getEligibleParentCandidates(
+      editing?.id ?? null,
+      'dam',
+      allLivestock.filter((item) => editing || item.species === species),
+      sireId || null
+    ).filter((item) => item.species === species);
+    return [
+      { value: '', label: 'Unknown / Founder', iconSource: MOBILE_APP_ICONS.tree },
+      ...candidates.map((item) =>
+        buildAnimalDropdownOption(item, {
+          label: `${item.tagNumber}${item.name ? ` · ${item.name}` : ''}`,
+        })
+      ),
+    ];
+  }, [allLivestock, editing, species, sireId]);
 
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
+
+  const statusOptions = useMemo<ModernDropdownOption<LivestockStatus>[]>(
+    () =>
+      LIVESTOCK_STATUSES.map((st) => ({
+        value: st,
+        label: formatStatusLabel(st),
+        iconSource: getStatusPngSource(st),
+      })),
+    []
+  );
 
   async function handleAcquirePhoto(source: 'camera' | 'library') {
     setSubmitError(null);
@@ -133,8 +210,18 @@ export function LivestockFormModal({
 
     if (editing) {
       const check = validateUpdateLivestock(
-        { tagNumber, species, name, breed, dob, status, imageUri },
-        { existingTags, currentTag: editing.tagNumber }
+        {
+          tagNumber,
+          species,
+          name,
+          breed,
+          dob,
+          status,
+          imageUri,
+          sireId: sireId || null,
+          damId: damId || null,
+        },
+        { existingTags, currentTag: editing.tagNumber, currentId: editing.id }
       );
       if (!check.ok || !check.data) {
         setErrors(check.errors);
@@ -158,7 +245,17 @@ export function LivestockFormModal({
     }
 
     const check = validateNewLivestock(
-      { tagNumber, species, name, breed, dob, status, imageUri },
+      {
+        tagNumber,
+        species,
+        name,
+        breed,
+        dob,
+        status,
+        imageUri,
+        sireId: sireId || null,
+        damId: damId || null,
+      },
       { existingTags }
     );
     if (!check.ok || !check.data) {
@@ -188,168 +285,328 @@ export function LivestockFormModal({
       presentationStyle="pageSheet"
       onRequestClose={handleCancel}
     >
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>
-            {editing ? `Edit ${editing.tagNumber}` : 'Add Livestock'}
-          </Text>
-          <Pressable onPress={handleCancel} hitSlop={10}>
-            <Text style={styles.cancelText}>Close</Text>
-          </Pressable>
-        </View>
-
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
+      <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <View style={styles.photoBox}>
-            {imageUri ? (
-              <Image source={{ uri: imageUri }} style={styles.photoPreview} />
-            ) : (
-              <View style={styles.photoEmpty}>
-                <Text style={styles.photoEmptyText}>No Photo</Text>
-              </View>
-            )}
-
-            <View style={styles.photoActions}>
-              <View style={styles.photoButtonRow}>
-                <Pressable
-                  style={styles.photoBtn}
-                  onPress={() => void handleAcquirePhoto('camera')}
-                  disabled={pickingImage || isSubmitting}
-                >
-                  <Text style={styles.photoBtnText}>
-                    {pickingImage ? 'Working...' : 'Take Photo'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={styles.photoBtn}
-                  onPress={() => void handleAcquirePhoto('library')}
-                  disabled={pickingImage || isSubmitting}
-                >
-                  <Text style={styles.photoBtnText}>Library</Text>
-                </Pressable>
-                {imageUri ? (
-                  <Pressable
-                    style={styles.photoRemoveBtn}
-                    onPress={() => setImageUri(null)}
-                    disabled={isSubmitting}
-                  >
-                    <Text style={styles.photoRemoveText}>Remove</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-              <Text style={styles.photoHint} numberOfLines={1}>
-                {imageUri
-                  ? 'Saved locally on device'
-                  : 'Stored in app documents (URI saved in SQLite)'}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.label}>Tag Number *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. COW-402"
-            value={tagNumber}
-            onChangeText={setTagNumber}
-            autoCapitalize="characters"
-            autoCorrect={false}
-          />
-          {errors.tagNumber ? (
-            <Text style={styles.errorText}>{errors.tagNumber}</Text>
-          ) : null}
-
-          <Text style={styles.label}>Species</Text>
-          <View style={styles.chipRow}>
-            {SPECIES_LIST.map((sp) => (
-              <Pressable
-                key={sp}
-                style={[styles.chip, species === sp && styles.chipActive]}
-                onPress={() => setSpecies(sp)}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    species === sp && styles.chipTextActive,
-                  ]}
-                >
-                  {formatSpeciesLabel(sp)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <Text style={styles.label}>Name</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. Bessie"
-            value={name}
-            onChangeText={setName}
-          />
-
-          <Text style={styles.label}>Breed</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. Holstein"
-            value={breed}
-            onChangeText={setBreed}
-          />
-
-          <Text style={styles.label}>Date of Birth (YYYY-MM-DD)</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="2023-04-15"
-            value={dob}
-            onChangeText={setDob}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {errors.dob ? <Text style={styles.errorText}>{errors.dob}</Text> : null}
-
-          <Text style={styles.label}>Status</Text>
-          <View style={styles.chipRow}>
-            {LIVESTOCK_STATUSES.map((st) => (
-              <Pressable
-                key={st}
-                style={[styles.chip, status === st && styles.chipActive]}
-                onPress={() => setStatus(st)}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    status === st && styles.chipTextActive,
-                  ]}
-                >
-                  {formatStatusLabel(st)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {submitError ? (
-            <Text style={[styles.errorText, { marginTop: 12 }]}>{submitError}</Text>
-          ) : null}
-
-          <Pressable
+          <View
             style={[
-              styles.saveButton,
-              (isSubmitting || pickingImage) && styles.saveButtonDisabled,
+              styles.header,
+              { paddingHorizontal: ui.contentPadding, paddingVertical: ui.space(13), gap: 10 },
             ]}
-            onPress={() => void handleSubmit()}
-            disabled={isSubmitting || pickingImage}
           >
-            <Text style={styles.saveButtonText}>
-              {isSubmitting
-                ? 'Saving...'
-                : editing
-                  ? 'Save Changes'
-                  : 'Save to SQLite'}
+            <Text style={[styles.title, { fontSize: ui.font(18), flex: 1, minWidth: 0 }]} numberOfLines={2}>
+              {editing ? `Edit ${editing.tagNumber}` : 'Add Livestock'}
             </Text>
-          </Pressable>
-        </ScrollView>
-      </View>
+            <Pressable
+              onPress={handleCancel}
+              hitSlop={12}
+              accessibilityLabel="Close form"
+            >
+              <AppIcon name="close" size={ui.font(22)} color={FARMDB_COLORS.text} />
+            </Pressable>
+          </View>
+
+          <FarmScrollView
+            style={styles.scroll}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { padding: ui.contentPadding, paddingBottom: ui.space(40) },
+            ]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View
+              style={[
+                styles.photoBox,
+                {
+                  padding: ui.space(12),
+                  borderRadius: ui.radius,
+                  gap: ui.space(12),
+                  flexWrap: 'wrap',
+                },
+              ]}
+            >
+              {imageUri ? (
+                <Image
+                  source={{ uri: imageUri }}
+                  style={[
+                    styles.photoPreview,
+                    { width: ui.thumbSize + 18, height: ui.thumbSize + 18 },
+                  ]}
+                />
+              ) : (
+                <View
+                  style={[
+                    styles.photoEmpty,
+                    { width: ui.thumbSize + 18, height: ui.thumbSize + 18 },
+                  ]}
+                >
+                  <SpeciesIcon
+                    species={species}
+                    size={ui.font(28)}
+                    color={FARMDB_COLORS.textMuted}
+                  />
+                </View>
+              )}
+
+              <View style={[styles.photoActions, { minWidth: 160 }]}>
+                <View style={styles.photoButtonRow}>
+                  <Pressable
+                    accessibilityLabel="Take photo"
+                    style={[
+                      styles.photoBtn,
+                      {
+                        minHeight: ui.chipHeight,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 5,
+                      },
+                    ]}
+                    onPress={() => void handleAcquirePhoto('camera')}
+                    disabled={pickingImage || isSubmitting}
+                  >
+                    <AppIcon
+                      name="camera"
+                      size={ui.font(16)}
+                      color={FARMDB_COLORS.accent}
+                    />
+                    {!iconMode ? (
+                      <Text style={[styles.photoBtnText, { fontSize: ui.font(12) }]}>
+                        {pickingImage ? 'Working...' : 'Take Photo'}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel="Choose from library"
+                    style={[
+                      styles.photoBtn,
+                      {
+                        minHeight: ui.chipHeight,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 5,
+                      },
+                    ]}
+                    onPress={() => void handleAcquirePhoto('library')}
+                    disabled={pickingImage || isSubmitting}
+                  >
+                    <AppIcon
+                      name="library"
+                      size={ui.font(16)}
+                      color={FARMDB_COLORS.accent}
+                    />
+                    {!iconMode ? (
+                      <Text style={[styles.photoBtnText, { fontSize: ui.font(12) }]}>
+                        Library
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                  {imageUri ? (
+                    <Pressable
+                      accessibilityLabel="Remove photo"
+                      style={[
+                        styles.photoRemoveBtn,
+                        {
+                          minHeight: ui.chipHeight,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 5,
+                        },
+                      ]}
+                      onPress={() => setImageUri(null)}
+                      disabled={isSubmitting}
+                    >
+                      <AppIcon
+                        name="trash"
+                        size={ui.font(15)}
+                        color={FARMDB_COLORS.danger}
+                      />
+                      {!iconMode ? (
+                        <Text style={[styles.photoRemoveText, { fontSize: ui.font(12) }]}>
+                          Remove
+                        </Text>
+                      ) : null}
+                    </Pressable>
+                  ) : null}
+                </View>
+                <Text style={[styles.photoHint, { fontSize: ui.font(11) }]}>
+                  {imageUri
+                    ? 'Saved locally on device'
+                    : 'Stored in app documents (URI saved in SQLite)'}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+              Tag Number *
+            </Text>
+            <TextInput
+              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(15) }]}
+              placeholder="e.g. COW-402"
+              value={tagNumber}
+              onChangeText={setTagNumber}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
+            {errors.tagNumber ? (
+              <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
+                {errors.tagNumber}
+              </Text>
+            ) : null}
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>Species</Text>
+            <View style={styles.chipRow}>
+              {SPECIES_LIST.map((sp) => {
+                const active = species === sp;
+                return (
+                  <Pressable
+                    key={sp}
+                    accessibilityLabel={formatSpeciesLabel(sp)}
+                    style={[
+                      styles.chip,
+                      active && styles.chipActive,
+                      {
+                        minHeight: ui.chipHeight,
+                        paddingHorizontal: ui.space(iconMode ? 14 : 12),
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      },
+                    ]}
+                    onPress={() => {
+                      setSpecies(sp);
+                      setSireId('');
+                      setDamId('');
+                    }}
+                  >
+                    <SpeciesIcon
+                      species={sp}
+                      size={ui.font(18)}
+                      color={active ? FARMDB_COLORS.accentHover : FARMDB_COLORS.text}
+                    />
+                    {!iconMode ? (
+                      <Text
+                        style={[
+                          styles.chipText,
+                          active && styles.chipTextActive,
+                          { fontSize: ui.font(13) },
+                        ]}
+                      >
+                        {formatSpeciesLabel(sp)}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>Name</Text>
+            <TextInput
+              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(15) }]}
+              placeholder="e.g. Bessie"
+              value={name}
+              onChangeText={setName}
+            />
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>Breed</Text>
+            <TextInput
+              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(15) }]}
+              placeholder="e.g. Holstein"
+              value={breed}
+              onChangeText={setBreed}
+            />
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+              Date of Birth
+            </Text>
+            <ModernDatePicker
+              title="Date of Birth"
+              placeholder="Optional birth date"
+              allowClear
+              accessibilityLabel="Date of Birth"
+              value={dob}
+              onChange={setDob}
+            />
+            {errors.dob ? (
+              <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
+                {errors.dob}
+              </Text>
+            ) : null}
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>Status</Text>
+            <ModernDropdown
+              value={status}
+              options={statusOptions}
+              title="Select Status"
+              accessibilityLabel="Status"
+              onChange={setStatus}
+            />
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+              Sire (Father)
+            </Text>
+            <ModernDropdown
+              searchable
+              value={sireId}
+              options={sireOptions}
+              title="Select Sire (Father)"
+              accessibilityLabel="Sire (Father)"
+              onChange={setSireId}
+            />
+            {errors.sireId ? (
+              <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
+                {errors.sireId}
+              </Text>
+            ) : null}
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+              Dam (Mother)
+            </Text>
+            <ModernDropdown
+              searchable
+              value={damId}
+              options={damOptions}
+              title="Select Dam (Mother)"
+              accessibilityLabel="Dam (Mother)"
+              onChange={setDamId}
+            />
+            {errors.damId ? (
+              <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
+                {errors.damId}
+              </Text>
+            ) : null}
+
+            {submitError ? (
+              <Text style={[styles.errorText, { marginTop: 12, fontSize: ui.font(12) }]}>
+                {submitError}
+              </Text>
+            ) : null}
+
+            <Pressable
+              style={[
+                styles.saveButton,
+                (isSubmitting || pickingImage) && styles.saveButtonDisabled,
+                { minHeight: ui.controlHeight + 4, justifyContent: 'center' },
+              ]}
+              onPress={() => void handleSubmit()}
+              disabled={isSubmitting || pickingImage}
+            >
+              <Text style={[styles.saveButtonText, { fontSize: ui.font(15) }]}>
+                {isSubmitting
+                  ? 'Saving...'
+                  : editing
+                    ? 'Save Changes'
+                    : 'Save to SQLite'}
+              </Text>
+            </Pressable>
+          </FarmScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -371,12 +628,12 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 18,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     color: '#1c241e',
   },
   cancelText: {
     fontSize: 15,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#2d6a4f',
   },
   scroll: {
@@ -407,13 +664,13 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 10,
-    backgroundColor: '#f0ece3',
+    backgroundColor: '#e6f2ec',
     alignItems: 'center',
     justifyContent: 'center',
   },
   photoEmptyText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#5d675f',
   },
   photoActions: {
@@ -433,7 +690,7 @@ const styles = StyleSheet.create({
   },
   photoBtnText: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     color: '#2d6a4f',
   },
   photoRemoveBtn: {
@@ -444,16 +701,17 @@ const styles = StyleSheet.create({
   },
   photoRemoveText: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
     color: '#b42318',
   },
   photoHint: {
     fontSize: 11,
+    fontFamily: FARMDB_FONTS.regular,
     color: '#5d675f',
   },
   label: {
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#1c241e',
     marginTop: 12,
     marginBottom: 6,
@@ -466,6 +724,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
+    fontFamily: FARMDB_FONTS.regular,
     color: '#1c241e',
   },
   chipRow: {
@@ -482,20 +741,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   chipActive: {
-    backgroundColor: '#2d6a4f',
+    backgroundColor: '#e6f2ec',
+    borderWidth: 1.5,
     borderColor: '#2d6a4f',
   },
   chipText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: FARMDB_FONTS.semibold,
     color: '#1c241e',
   },
   chipTextActive: {
-    color: '#ffffff',
+    color: '#214e3a',
+    fontFamily: FARMDB_FONTS.bold,
   },
   errorText: {
     color: '#b42318',
     fontSize: 12,
+    fontFamily: FARMDB_FONTS.medium,
     marginTop: 4,
   },
   saveButton: {
@@ -511,6 +773,6 @@ const styles = StyleSheet.create({
   saveButtonText: {
     color: '#ffffff',
     fontSize: 15,
-    fontWeight: '700',
+    fontFamily: FARMDB_FONTS.bold,
   },
 });

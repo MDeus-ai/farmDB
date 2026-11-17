@@ -32,11 +32,22 @@ export interface ExpoSqlController {
  * interface, serializing write operations cleanly and exposing `.db` backup
  * and restore helpers.
  */
+async function configureNativeDatabase(database: SQLite.SQLiteDatabase) {
+  if (Platform.OS !== 'web') {
+    try {
+      await database.execAsync('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
+    } catch {
+      // Non-fatal if pragmas are unsupported on the current runtime.
+    }
+  }
+}
+
 export async function createExpoSqliteController(
   databaseName = 'farmdb.db'
 ): Promise<ExpoSqlController> {
   let db = await SQLite.openDatabaseAsync(databaseName);
-  let activeExecutor: SQLite.SQLiteDatabase = db;
+  await configureNativeDatabase(db);
+  let inTransaction = false;
   let queue: Promise<void> = Promise.resolve();
 
   function enqueue<T>(task: () => Promise<T>): Promise<T> {
@@ -48,11 +59,15 @@ export async function createExpoSqliteController(
     return run;
   }
 
+  function runLocked<T>(task: () => Promise<T>): Promise<T> {
+    return inTransaction ? task() : enqueue(task);
+  }
+
   const driver: SqlDriver = {
     kind: 'expo-sqlite',
     execute(sql: string, params: unknown[] = []): Promise<SqlRunResult> {
-      return enqueue(async () => {
-        const result = await activeExecutor.runAsync(
+      return runLocked(async () => {
+        const result = await db.runAsync(
           sql,
           params as SQLite.SQLiteBindParams
         );
@@ -66,36 +81,35 @@ export async function createExpoSqliteController(
       sql: string,
       params: unknown[] = []
     ): Promise<T[]> {
-      return enqueue(async () => {
-        return activeExecutor.getAllAsync<T>(
+      return runLocked(async () => {
+        return db.getAllAsync<T>(
           sql,
           params as SQLite.SQLiteBindParams
         );
       });
     },
     transaction<T>(fn: () => Promise<T>): Promise<T> {
-      if (Platform.OS === 'web') {
-        return enqueue(async () => {
-          let result!: T;
-          await db.withTransactionAsync(async () => {
-            result = await fn();
-          });
-          return result;
-        });
+      if (inTransaction) {
+        return fn();
       }
-
-      let result!: T;
-      return db
-        .withExclusiveTransactionAsync(async (txn) => {
-          const prev = activeExecutor;
-          activeExecutor = txn;
+      return enqueue(async () => {
+        inTransaction = true;
+        try {
+          await db.execAsync('BEGIN');
+          const result = await fn();
+          await db.execAsync('COMMIT');
+          return result;
+        } catch (err) {
           try {
-            result = await fn();
-          } finally {
-            activeExecutor = prev;
+            await db.execAsync('ROLLBACK');
+          } catch {
+            // Preserve the original failure if SQLite already rolled back.
           }
-        })
-        .then(() => result);
+          throw err;
+        } finally {
+          inTransaction = false;
+        }
+      });
     },
   };
 
@@ -134,7 +148,7 @@ export async function createExpoSqliteController(
           await targetFile.write(bytes);
         } finally {
           db = await SQLite.openDatabaseAsync(databaseName);
-          activeExecutor = db;
+          await configureNativeDatabase(db);
         }
       });
 

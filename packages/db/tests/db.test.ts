@@ -49,6 +49,9 @@ describe('@farmdb/db migrations and repositories', () => {
       '0001_initial_schema',
       '0002_production_financial_links',
       '0003_alerts_notification_tracking',
+      '0004_livestock_lineage',
+      '0005_human_resources',
+      '0006_ownerships_network_cloud',
     ]);
 
     const second = await runMigrations(driver);
@@ -63,12 +66,18 @@ describe('@farmdb/db migrations and repositories', () => {
     expect(tables.map((t) => t.name)).toEqual(
       expect.arrayContaining([
         'alerts',
+        'animal_ownerships',
+        'cloud_sync_logs',
+        'farm_accounts',
         'farm_settings',
         'financial_logs',
         'livestock',
         'medical_records',
         'product_records',
         'schema_migrations',
+        'worker_payments',
+        'worker_tasks',
+        'workers',
       ])
     );
 
@@ -96,8 +105,18 @@ describe('@farmdb/db migrations and repositories', () => {
     expect(cow.species).toBe('cow');
     expect(cow.tagNumber).toBe('COW-402');
     expect(cow.status).toBe('active');
+    expect(cow.sireId).toBeNull();
+    expect(cow.damId).toBeNull();
     expect(cow.imageUri).toBe('file:///local/farmdb-images/cow-402.jpg');
     expect(emittedEvents).toEqual([['livestock']]);
+
+    const calf = await session.livestock.create({
+      species: 'cow',
+      tagNumber: 'COW-502',
+      name: 'Clover Calf',
+      damId: cow.id,
+    });
+    expect(calf.damId).toBe(cow.id);
 
     await session.livestock.create({
       species: 'goat',
@@ -128,11 +147,11 @@ describe('@farmdb/db migrations and repositories', () => {
 
     const summary = await session.livestock.getSummary();
     expect(summary).toEqual({
-      totalLivestock: 2,
-      activeLivestock: 1,
+      totalLivestock: 3,
+      activeLivestock: 2,
       soldLivestock: 1,
       deceasedLivestock: 0,
-      cowCount: 1,
+      cowCount: 2,
       productRecordCount: 0,
       medicalRecordCount: 0,
       financialLogCount: 0,
@@ -142,6 +161,8 @@ describe('@farmdb/db migrations and repositories', () => {
     const deleted = await session.livestock.remove(cow.id);
     expect(deleted).toBe(true);
     expect(await session.livestock.getById(cow.id)).toBeNull();
+    const unlinkedCalf = await session.livestock.getById(calf.id);
+    expect(unlinkedCalf?.damId).toBeNull();
 
     raw.close();
   });
@@ -160,7 +181,7 @@ describe('@farmdb/db migrations and repositories', () => {
       defaultMilkRatePerLiter: 0.8,
       currencySymbol: '$',
     });
-    expect(settings).toEqual({
+    expect(settings).toMatchObject({
       defaultMilkRatePerLiter: 0.8,
       currencySymbol: '$',
     });
@@ -288,10 +309,16 @@ describe('@farmdb/db migrations and repositories', () => {
     await runMigrations(source.driver);
     const sourceSession = createFarmDbSession(source.driver);
 
+    const sire = await sourceSession.livestock.create({
+      tagNumber: 'BULL-101',
+      name: 'Titan',
+      breed: 'Jersey',
+    });
     const cow = await sourceSession.livestock.create({
       tagNumber: 'COW-901',
       name: 'Buttercup',
       breed: 'Jersey',
+      sireId: sire.id,
     });
     await sourceSession.production.create(
       { livestockId: cow.id, date: '2026-11-16', yieldAmount: 14.5 },
@@ -312,7 +339,7 @@ describe('@farmdb/db migrations and repositories', () => {
     });
 
     const snapshot = await sourceSession.backup.exportSnapshot();
-    expect(snapshot.livestock).toHaveLength(1);
+    expect(snapshot.livestock).toHaveLength(2);
     expect(snapshot.productRecords).toHaveLength(1);
     expect(snapshot.medicalRecords).toHaveLength(1);
     expect(snapshot.financialLogs).toHaveLength(1);
@@ -324,7 +351,7 @@ describe('@farmdb/db migrations and repositories', () => {
 
     const restoredCounts = await targetSession.backup.restoreSnapshot(snapshot);
     expect(restoredCounts).toEqual({
-      livestockCount: 1,
+      livestockCount: 2,
       productCount: 1,
       medicalCount: 1,
       financialCount: 1,
@@ -333,12 +360,275 @@ describe('@farmdb/db migrations and repositories', () => {
 
     const restoredCow = await targetSession.livestock.getByTagNumber('COW-901');
     expect(restoredCow?.name).toBe('Buttercup');
+    expect(restoredCow?.sireId).toBe(sire.id);
     expect(await targetSession.production.list()).toHaveLength(1);
     expect(await targetSession.medical.list()).toHaveLength(1);
     expect(await targetSession.financial.list()).toHaveLength(1);
     expect(await targetSession.alerts.list()).toHaveLength(1);
 
+    // Extended farm settings persist cleanly and reset back to defaults
+    const updatedSettings = await targetSession.settings.update({
+      farmName: 'Highland Dairy',
+      fontScale: 'large',
+      uiDensity: 'spacious',
+      dateFormat: 'dmy',
+      volumeUnit: 'gallons',
+      defaultSpecies: 'goat',
+      autoRecordMilkSaleByDefault: false,
+      autoRecordMedicalExpenseByDefault: false,
+      alertCheckIntervalSeconds: 180,
+      enableNotifications: false,
+      confirmBeforeDelete: false,
+    });
+    expect(updatedSettings.farmName).toBe('Highland Dairy');
+    expect(updatedSettings.fontScale).toBe('large');
+    expect(updatedSettings.uiDensity).toBe('spacious');
+    expect(updatedSettings.alertCheckIntervalSeconds).toBe(180);
+
+    const reloadedSettings = await targetSession.settings.get();
+    expect(reloadedSettings).toEqual(updatedSettings);
+
+    const resetSettings = await targetSession.settings.reset();
+    expect(resetSettings.fontScale).toBe('medium');
+    expect(resetSettings.uiDensity).toBe('comfortable');
+    expect(resetSettings.farmName).toBe('farmDB Homestead');
+
     source.raw.close();
     target.raw.close();
+  });
+
+  it('manages farm workers, salaries, pending payments with financial links, allocated tasks, and payment-due lead alerts', async () => {
+    const { driver, raw } = createNodeSqliteDriver(':memory:');
+    await runMigrations(driver);
+    const session = createFarmDbSession(driver);
+
+    await session.settings.update({ paymentAlertLeadDays: 4 });
+
+    const worker = await session.hr.createWorker({
+      name: 'David Okello',
+      role: 'Senior Herdsman',
+      phone: '+256 772 555111',
+      responsibilities: 'Morning milking, silage distribution, calving watch',
+      salaryAmount: 320,
+      payFrequency: 'monthly',
+      nextPaymentDueDate: '2026-11-20',
+    });
+
+    const cow = await session.livestock.create({
+      tagNumber: 'COW-777',
+      name: 'Ruby',
+    });
+
+    const task = await session.hr.createTask({
+      workerId: worker.id,
+      livestockId: cow.id,
+      title: 'Assist calving pen setup',
+      priority: 'high',
+      dueDate: '2026-11-18',
+    });
+    expect(task.status).toBe('pending');
+    expect(task.livestockId).toBe(cow.id);
+
+    const updatedTask = await session.hr.updateTask(task.id, {
+      status: 'completed',
+    });
+    expect(updatedTask.completedAt).not.toBeNull();
+
+    // Almost-due check: 2026-11-17 is 3 days before 2026-11-20 <= leadDays(4)
+    const dueNotifs = await session.hr.listDuePaymentNotifications('2026-11-17', 4);
+    expect(dueNotifs).toHaveLength(1);
+    expect(dueNotifs[0]?.urgency).toBe('almost_due');
+
+    await session.hr.markPaymentNotificationsDelivered(dueNotifs, 999000);
+    expect(await session.hr.listDuePaymentNotifications('2026-11-17', 4)).toEqual([]);
+
+    // Create pending payment and mark it paid -> logs payroll expense & advances worker due date
+    const pendingRes = await session.hr.createPayment({
+      workerId: worker.id,
+      amount: 320,
+      dueDate: '2026-11-20',
+      status: 'pending',
+      periodLabel: 'Nov 2026 Salary',
+    });
+    expect(pendingRes.payment.status).toBe('pending');
+
+    const paidRes = await session.hr.markPaymentPaid(pendingRes.payment.id, {
+      paidDate: '2026-11-18',
+      autoRecordExpense: true,
+      advanceWorkerDueDate: true,
+    });
+    expect(paidRes.payment.status).toBe('paid');
+    expect(paidRes.generatedExpenseLog?.category).toBe('payroll');
+    expect(paidRes.generatedExpenseLog?.amount).toBe(320);
+
+    const refreshedWorker = await session.hr.getWorkerById(worker.id);
+    expect(refreshedWorker?.nextPaymentDueDate).toBe('2026-12-20');
+    expect(refreshedWorker?.paymentNotifiedForDueDate).toBeNull();
+
+    raw.close();
+  });
+
+  it('tracks animal ownerships, RBAC Farm Network accounts, and Supabase bidirectional cloud sync', async () => {
+    const { driver, raw } = createNodeSqliteDriver(':memory:');
+    await runMigrations(driver);
+    const session = createFarmDbSession(driver);
+
+    const bull = await session.livestock.create({
+      tagNumber: 'BULL-801',
+      name: 'Samson',
+      breed: 'Friesian',
+    });
+
+    const partnerAccount = await session.network.createAccount({
+      displayName: 'Samuel Kato (Partner)',
+      email: 'samuel@partner.ug',
+      role: 'external_owner',
+      relationship: 'Neighboring Farm Stud Owner',
+      accessCode: '4321',
+      permissions: {
+        livestock: 'view',
+        ownerships: 'view',
+        medical: 'edit',
+        financial: 'none',
+      },
+    });
+    expect(partnerAccount.permissions.financial).toBe('none');
+    expect(partnerAccount.permissions.medical).toBe('edit');
+
+    // Join key rotation + sign-up -> pending -> admin approval workflow
+    const rotatedCode = await session.network.rotateNetworkJoinKey();
+    expect(rotatedCode).toMatch(/^FARM-[A-Z0-9]{4}$/);
+
+    await expect(
+      session.network.joinNetworkWithKey({
+        joinKey: 'FARM-0000',
+        newAccount: { displayName: 'Invalid User' },
+      })
+    ).rejects.toThrow(/Join Key/i);
+
+    const joinRes = await session.network.joinNetworkWithKey({
+      joinKey: rotatedCode,
+      newAccount: {
+        displayName: 'New Family Member',
+        email: 'family@farm.ug',
+        role: 'family_member',
+      },
+    });
+    expect(joinRes.account.status).toBe('pending');
+    expect((await session.network.getActiveAccount()).id).toBe(joinRes.account.id);
+
+    const approved = await session.network.acceptPendingAccount(joinRes.account.id, {
+      role: 'manager',
+      permissions: { livestock: 'full', financial: 'view' },
+    });
+    expect(approved.status).toBe('active');
+    expect(approved.role).toBe('manager');
+    expect(approved.permissions.livestock).toBe('full');
+
+    // Wrong PIN should be rejected
+    await expect(
+      session.network.switchActiveAccount(partnerAccount.id, '0000')
+    ).rejects.toThrow(/PIN/i);
+
+    const switched = await session.network.switchActiveAccount(
+      partnerAccount.id,
+      '4321'
+    );
+    expect(switched.id).toBe(partnerAccount.id);
+
+    const ownership = await session.ownerships.create({
+      livestockId: bull.id,
+      ownerName: partnerAccount.displayName,
+      ownerContact: '+256 770 900100',
+      accountId: partnerAccount.id,
+      ownershipCategory: 'breeding_loan_in',
+      sharePercentage: 100,
+      purpose: 'Seasonal AI & natural service breeding bull',
+      startDate: '2026-11-01',
+      expectedEndDate: '2027-02-01',
+      boardingFee: 85,
+      status: 'active',
+    });
+    expect(ownership.ownershipCategory).toBe('breeding_loan_in');
+    expect(await session.ownerships.list({ category: 'breeding_loan_in' })).toHaveLength(1);
+
+    // Deleting animal cascades to ownership records
+    await session.livestock.remove(bull.id);
+    expect(await session.ownerships.list()).toHaveLength(0);
+
+    // Mock globalThis.fetch for Supabase sync test (including /rest/v1 suffix and sb_publishable_ key)
+    await session.settings.update({
+      cloudSyncEnabled: true,
+      supabaseUrl: 'https://farmdb-test.supabase.co/rest/v1/',
+      supabaseAnonKey: 'sb_publishable_test_key',
+      cloudWorkspaceId: 'ws-test-1',
+    });
+
+    const remoteSnapshot = await session.backup.exportSnapshot();
+    remoteSnapshot.livestock.push({
+      id: 'duck-remote-1',
+      species: 'duck',
+      tagNumber: 'DUCK-01',
+      name: 'Mallory',
+      breed: 'Pekin',
+      dob: null,
+      imageUri: null,
+      sireId: null,
+      damId: null,
+      status: 'active',
+      createdAt: 5000,
+      updatedAt: 5000,
+    });
+
+    const seenUrls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (
+      url: unknown,
+      init?: { method?: string }
+    ) => {
+      seenUrls.push(String(url));
+      if ((init?.method ?? 'GET') === 'GET') {
+        return new Response(
+          JSON.stringify([
+            {
+              workspace_id: 'ws-test-1',
+              farm_name: 'farmDB Homestead',
+              snapshot: remoteSnapshot,
+              updated_at: '2026-11-17T12:00:00Z',
+            },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response('', { status: 201 });
+    }) as typeof fetch;
+
+    try {
+      // Standalone non-network User Account cannot access cloud sync
+      const blockedSync = await session.network.syncWithSupabase('bidirectional');
+      expect(blockedSync.ok).toBe(false);
+      expect(blockedSync.message).toMatch(/Join Key/i);
+
+      // Admin Account syncs normally
+      await session.network.switchActiveAccount('owner-admin');
+      const syncRes = await session.network.syncWithSupabase('bidirectional');
+      expect(syncRes.ok).toBe(true);
+      expect(
+        seenUrls.every(
+          (u) =>
+            u.startsWith('https://farmdb-test.supabase.co/rest/v1/') &&
+            !u.includes('/rest/v1/rest/v1')
+        )
+      ).toBe(true);
+      expect(syncRes.recordsPulled).toBeGreaterThanOrEqual(1);
+      const pulledDuck = await session.livestock.getByTagNumber('DUCK-01');
+      expect(pulledDuck?.species).toBe('duck');
+      const logs = await session.network.listSyncLogs(10);
+      expect(logs[0]?.status).toBe('success');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    raw.close();
   });
 });

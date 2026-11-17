@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLivestockImageStem,
+  DEFAULT_FARM_SETTINGS,
   extractSafeImageExtension,
   formatAnimalAge,
+  formatDisplayDate,
+  formatVolume,
   generateId,
   normalizeTagNumber,
+  validateFarmSettings,
   validateNewLivestock,
   validateUpdateLivestock,
 } from '../src/index';
@@ -34,6 +38,8 @@ describe('@farmdb/core validation', () => {
       breed: 'Holstein',
       dob: '2022-04-15',
       imageUri: null,
+      sireId: null,
+      damId: null,
       status: 'active',
     });
   });
@@ -97,5 +103,60 @@ describe('@farmdb/core validation', () => {
     );
     expect(extractSafeImageExtension('file:///tmp/photo.PNG?v=1')).toBe('png');
     expect(extractSafeImageExtension('C:\\temp\\weird.exe')).toBe('jpg');
+  });
+
+  it('validates extended farm settings and formats dates and volumes', () => {
+    const ok = validateFarmSettings({
+      farmName: '  Green Pastures  ',
+      defaultMilkRatePerLiter: 0.855,
+      currencySymbol: ' KES ',
+      fontScale: 'large',
+      uiDensity: 'spacious',
+      dateFormat: 'dmy',
+      volumeUnit: 'gallons',
+      defaultSpecies: 'goat',
+      autoRecordMilkSaleByDefault: false,
+      autoRecordMedicalExpenseByDefault: true,
+      alertCheckIntervalSeconds: 120,
+      enableNotifications: false,
+      confirmBeforeDelete: true,
+      mobileIconMode: false,
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.data).toEqual({
+      ...DEFAULT_FARM_SETTINGS,
+      farmName: 'Green Pastures',
+      defaultMilkRatePerLiter: 0.86,
+      currencySymbol: 'KES',
+      fontScale: 'large',
+      uiDensity: 'spacious',
+      dateFormat: 'dmy',
+      volumeUnit: 'gallons',
+      defaultSpecies: 'goat',
+      autoRecordMilkSaleByDefault: false,
+      autoRecordMedicalExpenseByDefault: true,
+      alertCheckIntervalSeconds: 120,
+      enableNotifications: false,
+      confirmBeforeDelete: true,
+      mobileIconMode: false,
+    });
+
+    const invalid = validateFarmSettings({
+      farmName: '   ',
+      defaultMilkRatePerLiter: -2,
+      currencySymbol: 'TOO_LONG_CUR',
+      alertCheckIntervalSeconds: 5,
+    });
+    expect(invalid.ok).toBe(false);
+    expect(invalid.errors.farmName).toBeDefined();
+    expect(invalid.errors.defaultMilkRatePerLiter).toBeDefined();
+    expect(invalid.errors.currencySymbol).toBeDefined();
+    expect(invalid.errors.alertCheckIntervalSeconds).toBeDefined();
+
+    expect(formatDisplayDate('2026-11-17', 'iso')).toBe('2026-11-17');
+    expect(formatDisplayDate('2026-11-17', 'dmy')).toBe('17/11/2026');
+    expect(formatDisplayDate('2026-11-17', 'mdy')).toBe('11/17/2026');
+    expect(formatVolume(10, 'liters')).toBe('10.0 L');
+    expect(formatVolume(3.785411784, 'gallons')).toBe('1.0 gal');
   });
 });

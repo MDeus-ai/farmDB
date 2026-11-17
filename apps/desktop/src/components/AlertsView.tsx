@@ -1,15 +1,8 @@
 import React, { useMemo, useState } from 'react';
+import { Search } from 'lucide-react';
 import {
-  Bell,
-  BellRing,
-  CheckCircle2,
-  Plus,
-  RotateCcw,
-  Search,
-  StickyNote,
-  Trash2,
-} from 'lucide-react';
-import {
+  DEFAULT_FARM_SETTINGS,
+  formatDisplayDate,
   getAlertUrgency,
   getTodayIsoDate,
   validateNewAlert,
@@ -23,9 +16,15 @@ import {
   useAlertList,
   useCreateAlert,
   useDeleteAlert,
+  useFarmSettings,
   useLivestockList,
   useToggleAlertResolved,
 } from '@farmdb/db';
+import { APP_ICONS } from '../assets/icons';
+import { buildAnimalSelectOption } from '../utils/animalOptions';
+import { AnimalEyeButton } from './AnimalQuickPreviewModal';
+import { ModernDatePicker } from './ModernDatePicker';
+import { ModernSelect, type ModernSelectOption } from './ModernSelect';
 
 interface AlertsViewProps {
   onCheckDueNow: () => Promise<number>;
@@ -33,6 +32,8 @@ interface AlertsViewProps {
 
 export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
   const livestockQuery = useLivestockList({});
+  const settingsQuery = useFarmSettings();
+  const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
   const allAlertsQuery = useAlertList({});
 
   const [kindFilter, setKindFilter] = useState<AlertEntryKind | 'all'>('all');
@@ -57,6 +58,37 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
     [animals]
   );
 
+  const linkedAnimalOptions = useMemo<ModernSelectOption<string>[]>(
+    () => [
+      { value: '', label: 'General Farm', iconSrc: APP_ICONS.barnAlt },
+      ...animals.map((a) =>
+        buildAnimalSelectOption(a, {
+          dateFormat: settings.dateFormat,
+          label: `${a.tagNumber}${a.name ? ` — ${a.name}` : ''}`,
+        })
+      ),
+    ],
+    [animals, settings.dateFormat]
+  );
+
+  const kindOptions = useMemo<ModernSelectOption<AlertEntryKind | 'all'>[]>(
+    () => [
+      { value: 'all', label: 'Alerts & Notes', iconSrc: APP_ICONS.pin },
+      { value: 'alert', label: 'Alerts Only', iconSrc: APP_ICONS.notification },
+      { value: 'note', label: 'Notes Only', iconSrc: APP_ICONS.stickyNote },
+    ],
+    []
+  );
+
+  const statusOptions = useMemo<ModernSelectOption<'all' | 'open' | 'resolved'>[]>(
+    () => [
+      { value: 'open', label: 'Open', iconSrc: APP_ICONS.notification },
+      { value: 'resolved', label: 'Resolved', iconSrc: APP_ICONS.checkmark },
+      { value: 'all', label: 'All Statuses', iconSrc: APP_ICONS.calendar },
+    ],
+    []
+  );
+
   const [entryKind, setEntryKind] = useState<AlertEntryKind>('alert');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -65,6 +97,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
   const [errors, setErrors] = useState<ValidationErrors<NewAlertInput>>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [checkingDue, setCheckingDue] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const allItems = allAlertsQuery.data ?? [];
   const visibleItems = filteredAlertsQuery.data ?? [];
@@ -171,9 +204,6 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
       <div className="page-header">
         <div>
           <h1 className="page-title">Alerts &amp; Notes</h1>
-          <p className="page-subtitle">
-            Schedule reminders monitored every 60 seconds by the background worker, or save farm &amp; animal notes.
-          </p>
         </div>
 
         <button
@@ -182,7 +212,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
           onClick={() => void handleRunDueCheck()}
           disabled={checkingDue}
         >
-          <BellRing size={16} />
+          <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
           {checkingDue ? 'Checking...' : 'Check Due Alerts Now'}
         </button>
       </div>
@@ -224,7 +254,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
               onClick={() => setEntryKind('alert')}
               style={{ padding: '8px 14px', display: 'inline-flex', gap: 6, alignItems: 'center' }}
             >
-              <Bell size={15} />
+              <img src={APP_ICONS.notification} alt="" className="app-icon-sm" />
               <span>Alert</span>
             </button>
             <button
@@ -233,7 +263,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
               onClick={() => setEntryKind('note')}
               style={{ padding: '8px 14px', display: 'inline-flex', gap: 6, alignItems: 'center' }}
             >
-              <StickyNote size={15} />
+              <img src={APP_ICONS.stickyNote} alt="" className="app-icon-sm" />
               <span>Note</span>
             </button>
           </div>
@@ -264,20 +294,15 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                 <label className="form-label" htmlFor="alert-animal">
                   Animal (Optional)
                 </label>
-                <select
+                <ModernSelect
                   id="alert-animal"
-                  className="select"
+                  fullWidth
+                  searchable
+                  ariaLabel="Linked animal"
                   value={livestockId}
-                  onChange={(e) => setLivestockId(e.target.value)}
-                >
-                  <option value="">General Farm</option>
-                  {animals.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.tagNumber}
-                      {a.name ? ` — ${a.name}` : ''}
-                    </option>
-                  ))}
-                </select>
+                  options={linkedAnimalOptions}
+                  onChange={setLivestockId}
+                />
               </div>
 
               {entryKind === 'alert' && (
@@ -285,12 +310,11 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                   <label className="form-label" htmlFor="alert-trigger-date">
                     Trigger Date *
                   </label>
-                  <input
+                  <ModernDatePicker
                     id="alert-trigger-date"
-                    type="date"
-                    className="input"
+                    ariaLabel="Alert trigger date"
                     value={triggerDate}
-                    onChange={(e) => setTriggerDate(e.target.value)}
+                    onChange={setTriggerDate}
                   />
                   {errors.triggerDate && (
                     <span className="field-error">{errors.triggerDate}</span>
@@ -324,7 +348,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                 className="btn btn-primary"
                 disabled={createMutation.isPending}
               >
-                <Plus size={16} />
+                <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
                 {createMutation.isPending
                   ? 'Saving...'
                   : entryKind === 'alert'
@@ -347,31 +371,19 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
               />
             </div>
 
-            <select
-              className="select"
-              aria-label="Filter by entry kind"
+            <ModernSelect
+              ariaLabel="Filter by entry kind"
               value={kindFilter}
-              onChange={(e) =>
-                setKindFilter(e.target.value as AlertEntryKind | 'all')
-              }
-            >
-              <option value="all">Alerts &amp; Notes</option>
-              <option value="alert">Alerts Only</option>
-              <option value="note">Notes Only</option>
-            </select>
+              options={kindOptions}
+              onChange={setKindFilter}
+            />
 
-            <select
-              className="select"
-              aria-label="Filter by resolved status"
+            <ModernSelect
+              ariaLabel="Filter by resolved status"
               value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(e.target.value as 'all' | 'open' | 'resolved')
-              }
-            >
-              <option value="open">Open</option>
-              <option value="resolved">Resolved</option>
-              <option value="all">All</option>
-            </select>
+              options={statusOptions}
+              onChange={setStatusFilter}
+            />
           </div>
 
           {visibleItems.length === 0 ? (
@@ -390,7 +402,10 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                         {renderUrgencyBadge(item)}
                         {animal && (
-                          <span className="tag-chip">{animal.tagNumber}</span>
+                          <>
+                            <span className="tag-chip">{animal.tagNumber}</span>
+                            <AnimalEyeButton livestockId={animal.id} />
+                          </>
                         )}
                         <strong>{item.title}</strong>
                       </div>
@@ -401,8 +416,8 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                       )}
                       <p style={{ margin: '5px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                         {item.entryKind === 'alert'
-                          ? `Trigger: ${item.triggerDate}${item.notifiedAt ? ' · Notified' : ''}`
-                          : `Logged: ${item.triggerDate}`}
+                          ? `Trigger: ${formatDisplayDate(item.triggerDate, settings.dateFormat)}${item.notifiedAt ? ' · Notified' : ''}`
+                          : `Logged: ${formatDisplayDate(item.triggerDate, settings.dateFormat)}`}
                       </p>
                     </div>
 
@@ -419,20 +434,51 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                         title={item.isResolved ? 'Reopen' : 'Mark Resolved'}
                       >
                         {item.isResolved ? (
-                          <RotateCcw size={14} />
+                          <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
                         ) : (
-                          <CheckCircle2 size={14} />
+                          <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
                         )}
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn-danger btn-sm"
-                        onClick={() => void deleteMutation.mutateAsync(item.id)}
-                        disabled={deleteMutation.isPending}
-                        aria-label="Delete alert or note"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {confirmDeleteId === item.id ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            onClick={() => {
+                              setConfirmDeleteId(null);
+                              void deleteMutation.mutateAsync(item.id);
+                            }}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setConfirmDeleteId(null)}
+                          >
+                            <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          onClick={() => {
+                            if (settings.confirmBeforeDelete) {
+                              setConfirmDeleteId(item.id);
+                            } else {
+                              void deleteMutation.mutateAsync(item.id);
+                            }
+                          }}
+                          disabled={deleteMutation.isPending}
+                          aria-label="Delete alert or note"
+                        >
+                          <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

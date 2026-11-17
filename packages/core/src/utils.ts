@@ -1,3 +1,7 @@
+import type { DateFormatPreference, VolumeUnit } from './types';
+
+const LITERS_PER_US_GALLON = 3.785411784;
+
 /**
  * Generates a UUID v4 string without requiring Node-only modules,
  * supporting both modern Web Crypto and React Native environments.
@@ -35,6 +39,65 @@ export function formatIsoDate(isoDate?: string | null): string {
     return '—';
   }
   return isoDate;
+}
+
+export function formatDisplayDate(
+  isoDate?: string | null,
+  format: DateFormatPreference = 'iso'
+): string {
+  if (!isoDate) {
+    return '—';
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate.trim());
+  if (!match) {
+    return isoDate;
+  }
+  const [, year, month, day] = match;
+  if (format === 'mdy') {
+    return `${month}/${day}/${year}`;
+  }
+  if (format === 'dmy') {
+    return `${day}/${month}/${year}`;
+  }
+  return `${year}-${month}-${day}`;
+}
+
+export function getVolumeUnitShortLabel(unit: VolumeUnit = 'liters'): string {
+  return unit === 'gallons' ? 'gal' : 'L';
+}
+
+export function convertLitersToDisplayVolume(
+  liters: number,
+  unit: VolumeUnit = 'liters'
+): number {
+  if (!Number.isFinite(liters)) {
+    return 0;
+  }
+  if (unit === 'gallons') {
+    return Math.round((liters / LITERS_PER_US_GALLON) * 100) / 100;
+  }
+  return Math.round(liters * 100) / 100;
+}
+
+export function convertDisplayVolumeToLiters(
+  value: number,
+  unit: VolumeUnit = 'liters'
+): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  if (unit === 'gallons') {
+    return Math.round(value * LITERS_PER_US_GALLON * 100) / 100;
+  }
+  return Math.round(value * 100) / 100;
+}
+
+export function formatVolume(
+  liters: number,
+  unit: VolumeUnit = 'liters'
+): string {
+  const value = convertLitersToDisplayVolume(liters, unit);
+  return `${value.toFixed(1)} ${getVolumeUnitShortLabel(unit)}`;
 }
 
 export function formatSpeciesLabel(species: string): string {

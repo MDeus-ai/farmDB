@@ -1,0 +1,1196 @@
+import React, { useMemo, useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  encodeFarmNetworkJoinKey,
+  FARM_ACCOUNT_AVATARS,
+  FARM_ACCOUNT_ROLES,
+  FARM_ACCOUNT_STATUSES,
+  FARM_MODULE_ACCESS_LEVELS,
+  FARM_PERMISSION_MODULES,
+  formatAccountRoleLabel,
+  formatAccountStatusLabel,
+  formatPermissionModuleLabel,
+  getDefaultPermissionsForRole,
+  type FarmAccount,
+  type FarmAccountAvatar,
+  type FarmAccountPermissions,
+  type FarmAccountRole,
+  type FarmAccountStatus,
+} from '@farmdb/core';
+import {
+  useAcceptPendingAccount,
+  useActiveFarmAccount,
+  useCreateFarmAccount,
+  useDeleteFarmAccount,
+  useFarmAccountList,
+  useRotateNetworkJoinKey,
+  useSwitchFarmAccount,
+  useUpdateFarmAccount,
+} from '@farmdb/db';
+import { MOBILE_APP_ICONS } from '../assets/icons';
+import { FARMDB_COLORS, FARMDB_FONTS, useUiScale } from '../theme/uiScale';
+import { AppIcon, getAvatarIconName } from './FarmIcons';
+import { FarmScrollView } from './FarmScrollView';
+import { ModernDropdown } from './ModernDropdown';
+
+interface FarmNetworkViewProps {
+  onOpenAuthPortal?: () => void;
+}
+
+export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
+  const ui = useUiScale();
+  const { settings } = ui;
+
+  const accountsQuery = useFarmAccountList({});
+  const activeAccountQuery = useActiveFarmAccount();
+
+  const switchMut = useSwitchFarmAccount();
+  const createMut = useCreateFarmAccount();
+  const updateMut = useUpdateFarmAccount();
+  const deleteMut = useDeleteFarmAccount();
+  const rotateKeyMut = useRotateNetworkJoinKey();
+  const acceptPendingMut = useAcceptPendingAccount();
+
+  const accounts = accountsQuery.data ?? [];
+  const activeAccount = activeAccountQuery.data;
+  const isAdminOrManager = Boolean(
+    activeAccount?.isPrimaryAdmin || activeAccount?.role === 'admin'
+  );
+
+  const pendingAccounts = useMemo(
+    () => accounts.filter((a) => a.status === 'pending'),
+    [accounts]
+  );
+  const memberAccounts = useMemo(
+    () => accounts.filter((a) => a.status !== 'pending'),
+    [accounts]
+  );
+
+  const hasCloudKey =
+    settings.supabaseUrl.trim().length > 0 &&
+    settings.supabaseAnonKey.trim().length > 0;
+
+  const fullJoinKey = useMemo(
+    () =>
+      encodeFarmNetworkJoinKey({
+        joinCode: settings.networkJoinKey,
+        workspaceId: settings.cloudWorkspaceId,
+        farmName: settings.farmName,
+        supabaseUrl: settings.supabaseUrl,
+        supabaseAnonKey: settings.supabaseAnonKey,
+      }),
+    [
+      settings.networkJoinKey,
+      settings.cloudWorkspaceId,
+      settings.farmName,
+      settings.supabaseUrl,
+      settings.supabaseAnonKey,
+    ]
+  );
+
+  const [notice, setNotice] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isSeeding, setIsSeeding] = useState(false);
+
+  // PIN prompt
+  const [pinTarget, setPinTarget] = useState<FarmAccount | null>(null);
+  const [pinText, setPinText] = useState('');
+  const [pinErr, setPinErr] = useState<string | null>(null);
+
+  // Account / Privilege / Approval modal
+  const [accModalOpen, setAccModalOpen] = useState(false);
+  const [editingAcc, setEditingAcc] = useState<FarmAccount | null>(null);
+  const [approvingMode, setApprovingMode] = useState(false);
+  const [aName, setAName] = useState('');
+  const [aRole, setARole] = useState<FarmAccountRole>('family_member');
+  const [aRel, setARel] = useState('');
+  const [aEmail, setAEmail] = useState('');
+  const [aPhone, setAPhone] = useState('');
+  const [aAvatar, setAAvatar] = useState<FarmAccountAvatar>('farmerFemale');
+  const [aPin, setAPin] = useState('');
+  const [aStatus, setAStatus] = useState<FarmAccountStatus>('active');
+  const [aCanSync, setACanSync] = useState(true);
+  const [aPerms, setAPerms] = useState<FarmAccountPermissions>(() =>
+    getDefaultPermissionsForRole('family_member')
+  );
+  const [aError, setAError] = useState<string | null>(null);
+
+  function openAddAccount() {
+    setEditingAcc(null);
+    setApprovingMode(false);
+    setAName('');
+    setARole('family_member');
+    setARel('');
+    setAEmail('');
+    setAPhone('');
+    setAAvatar('farmerFemale');
+    setAPin('');
+    setAStatus('active');
+    setACanSync(true);
+    setAPerms(getDefaultPermissionsForRole('family_member'));
+    setAError(null);
+    setAccModalOpen(true);
+  }
+
+  function openEditAccount(acc: FarmAccount, approvePending = false) {
+    setEditingAcc(acc);
+    setApprovingMode(approvePending);
+    setAName(acc.displayName);
+    setARole(acc.role);
+    setARel(acc.relationship ?? '');
+    setAEmail(acc.email ?? '');
+    setAPhone(acc.phone ?? '');
+    setAAvatar(acc.avatarKey);
+    setAPin(acc.accessCode ?? '');
+    setAStatus(approvePending ? 'active' : acc.status);
+    setACanSync(acc.canSyncCloud);
+    setAPerms({ ...acc.permissions });
+    setAError(null);
+    setAccModalOpen(true);
+  }
+
+  async function handleSaveAccount() {
+    setAError(null);
+    const enforcedPerms: FarmAccountPermissions = aPerms;
+    try {
+      if (editingAcc && approvingMode) {
+        await acceptPendingMut.mutateAsync({
+          accountId: editingAcc.id,
+          options: {
+            role: aRole,
+            permissions: enforcedPerms,
+            canManageNetwork: false,
+            canSyncCloud: aCanSync,
+          },
+        });
+        setNotice(
+          `Assigned privileges and accepted ${editingAcc.displayName} into ${settings.farmName}.`
+        );
+      } else {
+        const payload = {
+          displayName: aName,
+          role: aRole,
+          relationship: aRel || null,
+          email: aEmail || null,
+          phone: aPhone || null,
+          avatarKey: aAvatar,
+          accessCode: aPin || null,
+          status: aStatus,
+          canManageNetwork: Boolean(editingAcc?.isPrimaryAdmin),
+          canSyncCloud: aCanSync,
+          permissions: enforcedPerms,
+        };
+        if (editingAcc) {
+          await updateMut.mutateAsync({ id: editingAcc.id, input: payload });
+          setNotice(`Updated account & privileges for ${aName}.`);
+        } else {
+          await createMut.mutateAsync(payload);
+          setNotice(`Added ${aName} to Farm Network.`);
+        }
+      }
+      setAccModalOpen(false);
+    } catch (err) {
+      setAError(err instanceof Error ? err.message : 'Invalid account input.');
+    }
+  }
+
+  async function handleQuickAcceptPending(acc: FarmAccount) {
+    try {
+      await acceptPendingMut.mutateAsync({
+        accountId: acc.id,
+        options: {
+          role: acc.role,
+          permissions: acc.permissions,
+        },
+      });
+      setNotice(
+        `Accepted ${acc.displayName} into Farm Network with ${formatAccountRoleLabel(acc.role)} privileges.`
+      );
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to accept account.');
+    }
+  }
+
+  async function handleTrySwitch(acc: FarmAccount) {
+    if (acc.accessCode && acc.accessCode.trim().length > 0) {
+      setPinTarget(acc);
+      setPinText('');
+      setPinErr(null);
+      return;
+    }
+    try {
+      await switchMut.mutateAsync({ accountId: acc.id });
+      setNotice(`Signed in as ${acc.displayName}.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to switch account.');
+    }
+  }
+
+  async function handlePinSubmit() {
+    if (!pinTarget) return;
+    setPinErr(null);
+    try {
+      await switchMut.mutateAsync({
+        accountId: pinTarget.id,
+        accessCode: pinText,
+      });
+      setNotice(`Signed in as ${pinTarget.displayName}.`);
+      setPinTarget(null);
+    } catch (err) {
+      setPinErr(err instanceof Error ? err.message : 'Incorrect PIN.');
+    }
+  }
+
+  async function handleDelete(acc: FarmAccount) {
+    if (settings.confirmBeforeDelete && confirmDeleteId !== acc.id) {
+      setConfirmDeleteId(acc.id);
+      return;
+    }
+    setConfirmDeleteId(null);
+    try {
+      await deleteMut.mutateAsync(acc.id);
+      setNotice(`Removed ${acc.displayName}.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Cannot delete account.');
+    }
+  }
+
+  async function handleRotateJoinKey() {
+    try {
+      const next = await rotateKeyMut.mutateAsync();
+      setNotice(`Generated new Admin Join Key: ${next}`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to rotate key.');
+    }
+  }
+
+  async function copyKeyIfPossible(text: string, label: string) {
+    try {
+      const nav = (globalThis as { navigator?: { clipboard?: { writeText?: (v: string) => Promise<void> } } }).navigator;
+      if (nav?.clipboard?.writeText) {
+        await nav.clipboard.writeText(text);
+        setNotice(`Copied ${label} to clipboard.`);
+        return;
+      }
+      setNotice(`Long-press and select the ${label} box to copy.`);
+    } catch {
+      setNotice(`Long-press the ${label} box to select & copy.`);
+    }
+  }
+
+  async function handleSeedNetwork() {
+    if (isSeeding) return;
+    setIsSeeding(true);
+    try {
+      const names = new Set(accounts.map((a) => a.displayName.toLowerCase()));
+      if (!names.has('martha mukasa (family)')) {
+        await createMut.mutateAsync({
+          displayName: 'Martha Mukasa (Family)',
+          role: 'family_member',
+          relationship: 'Spouse / Co-Manager',
+          avatarKey: 'farmerFemale',
+          canSyncCloud: true,
+        });
+      }
+      if (!names.has('mr. kato (greenvalley partner)')) {
+        await createMut.mutateAsync({
+          displayName: 'Mr. Kato (GreenValley Partner)',
+          role: 'external_owner',
+          relationship: 'External Bull Owner',
+          avatarKey: 'peasant',
+          accessCode: '1234',
+        });
+      }
+      if (!names.has('david okello (pending join)')) {
+        await createMut.mutateAsync({
+          displayName: 'David Okello (Pending Join)',
+          role: 'family_member',
+          relationship: 'Joined via Farm Join Key',
+          avatarKey: 'farmer',
+          status: 'pending',
+        });
+      }
+      setNotice('Loaded sample Farm Network accounts & pending join request.');
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Seed failed.');
+    } finally {
+      setIsSeeding(false);
+    }
+  }
+
+  return (
+    <FarmScrollView
+      dockAware
+      style={styles.container}
+      contentContainerStyle={{
+        padding: ui.contentPadding,
+        paddingBottom: ui.bottomDockReserve,
+        gap: ui.space(12),
+      }}
+    >
+      {/* Hero Card */}
+      <View
+        style={[
+          styles.card,
+          { padding: ui.space(12), borderRadius: ui.radius, gap: ui.space(10) },
+        ]}
+      >
+        <View style={styles.heroRow}>
+          <View style={styles.heroIconWrap}>
+            <AppIcon name="network" size={ui.font(24)} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[styles.heroTitle, { fontSize: ui.font(17) }]}>
+              Farm Network &amp; Privileges
+            </Text>
+            <Text
+              style={[styles.heroSub, { fontSize: ui.font(12) }]}
+              numberOfLines={2}
+            >
+              Active: {activeAccount?.displayName ?? 'Farm Owner (Admin)'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={[styles.actionRow, { gap: ui.space(8) }]}>
+          {onOpenAuthPortal ? (
+            <Pressable
+              style={[styles.primaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
+              onPress={onOpenAuthPortal}
+            >
+              <AppIcon name="farmer" size={ui.font(14)} />
+              <Text style={[styles.primaryBtnText, { fontSize: ui.font(12) }]}>
+                Login / Sign Up
+              </Text>
+            </Pressable>
+          ) : null}
+          {isAdminOrManager ? (
+            <Pressable
+              style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
+              onPress={openAddAccount}
+            >
+              <AppIcon name="plus" size={ui.font(14)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                Add Account
+              </Text>
+            </Pressable>
+          ) : null}
+          {isAdminOrManager && accounts.length < 3 ? (
+            <Pressable
+              style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
+              disabled={isSeeding}
+              onPress={() => void handleSeedNetwork()}
+            >
+              <AppIcon name="staff" size={ui.font(14)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                Sample
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
+      {notice ? (
+        <View
+          style={[
+            styles.noticeBanner,
+            { padding: ui.space(10), borderRadius: ui.radius },
+          ]}
+        >
+          <Text style={[styles.noticeText, { fontSize: ui.font(12) }]}>
+            {notice}
+          </Text>
+          <Pressable onPress={() => setNotice(null)} hitSlop={8}>
+            <AppIcon name="close" size={ui.font(14)} />
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Admin Network Join Key Card */}
+      <View
+        style={[
+          styles.card,
+          { padding: ui.space(12), borderRadius: ui.radius, gap: ui.space(10) },
+        ]}
+      >
+        <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
+          <View style={{ flex: 1, minWidth: 140 }}>
+            <Text style={[styles.cardTitle, { fontSize: ui.font(14) }]}>
+              Admin Network Join Key
+            </Text>
+          </View>
+          {isAdminOrManager ? (
+            <Pressable
+              style={[styles.secondaryBtn, { minHeight: Math.max(34, ui.chipHeight - 2), paddingVertical: ui.space(4) }]}
+              disabled={rotateKeyMut.isPending}
+              onPress={() => void handleRotateJoinKey()}
+            >
+              <AppIcon name="refresh" size={ui.font(13)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(11) }]}>
+                New Key
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        <View style={styles.joinCodeBox}>
+          <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
+            <Text style={[styles.label, { fontSize: ui.font(11) }]}>
+              Local Join Code
+            </Text>
+            <Pressable
+              onPress={() =>
+                void copyKeyIfPossible(settings.networkJoinKey, 'Join Code')
+              }
+            >
+              <Text style={[styles.copyLinkText, { fontSize: ui.font(11) }]}>
+                Copy
+              </Text>
+            </Pressable>
+          </View>
+          <Text style={[styles.joinCodeValue, { fontSize: ui.font(16) }]} selectable>
+            {settings.networkJoinKey}
+          </Text>
+        </View>
+
+        {hasCloudKey ? (
+          <View style={styles.joinCodeBox}>
+            <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
+              <Text style={[styles.label, { fontSize: ui.font(11) }]}>
+                Cloud Invite Key (Remote Devices)
+              </Text>
+              <Pressable
+                onPress={() =>
+                  void copyKeyIfPossible(fullJoinKey, 'Cloud Invite Key')
+                }
+              >
+                <Text style={[styles.copyLinkText, { fontSize: ui.font(11) }]}>
+                  Copy
+                </Text>
+              </Pressable>
+            </View>
+            <Text
+              style={[styles.cloudKeyValue, { fontSize: ui.font(10) }]}
+              selectable
+            >
+              {fullJoinKey}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Pending Join Requests Card */}
+      {pendingAccounts.length > 0 ? (
+        <View
+          style={[
+            styles.pendingCard,
+            { padding: ui.space(12), borderRadius: ui.radius, gap: ui.space(10) },
+          ]}
+        >
+          <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+              <AppIcon name="hourglass" size={ui.font(18)} />
+              <Text style={[styles.pendingHeading, { fontSize: ui.font(14), flexShrink: 1 }]}>
+                Pending Join Requests ({pendingAccounts.length})
+              </Text>
+            </View>
+          </View>
+
+          {pendingAccounts.map((acc) => (
+            <View key={acc.id} style={styles.pendingRowCard}>
+              <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    flex: 1,
+                    minWidth: 160,
+                  }}
+                >
+                  <AppIcon
+                    name={getAvatarIconName(acc.avatarKey)}
+                    size={ui.font(22)}
+                  />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[styles.cardTitle, { fontSize: ui.font(13) }]}>
+                      {acc.displayName}
+                    </Text>
+                    <Text style={[styles.subText, { fontSize: ui.font(11) }]}>
+                      Requested: {formatAccountRoleLabel(acc.role)}
+                      {acc.relationship ? ` · ${acc.relationship}` : ''}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={[styles.pendingBadge, { fontSize: ui.font(10) }]}>
+                  Pending
+                </Text>
+              </View>
+
+              {isAdminOrManager ? (
+                <View style={[styles.cardFooterBtns, { gap: ui.space(6), marginTop: 6 }]}>
+                  <Pressable
+                    style={styles.switchBtn}
+                    onPress={() => openEditAccount(acc, true)}
+                  >
+                    <Text style={[styles.switchBtnText, { fontSize: ui.font(11) }]}>
+                      Assign &amp; Accept
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.smallEditBtn}
+                    disabled={acceptPendingMut.isPending}
+                    onPress={() => void handleQuickAcceptPending(acc)}
+                  >
+                    <AppIcon name="check" size={ui.font(12)} />
+                    <Text style={[styles.smallEditBtnText, { fontSize: ui.font(11) }]}>
+                      Quick Accept
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.smallDeleteBtn}
+                    onPress={() => void handleDelete(acc)}
+                  >
+                    <AppIcon name="trash" size={ui.font(12)} />
+                    <Text style={[styles.smallDeleteText, { fontSize: ui.font(11) }]}>
+                      Decline
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {/* Active & Connected Accounts List */}
+      <View style={{ gap: ui.space(10) }}>
+        {memberAccounts.map((acc) => {
+          const isCurrent = activeAccount?.id === acc.id;
+          return (
+            <View
+              key={acc.id}
+              style={[
+                styles.card,
+                isCurrent && styles.activeAccCard,
+                { padding: ui.space(12), borderRadius: ui.radius, gap: 6 },
+              ]}
+            >
+              <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    flex: 1,
+                    minWidth: 160,
+                  }}
+                >
+                  <AppIcon
+                    name={getAvatarIconName(acc.avatarKey)}
+                    size={ui.font(24)}
+                  />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[styles.cardTitle, { fontSize: ui.font(14) }]}>
+                      {acc.displayName}
+                    </Text>
+                    <Text style={[styles.subText, { fontSize: ui.font(11) }]}>
+                      {formatAccountRoleLabel(acc.role)}
+                      {acc.relationship ? ` · ${acc.relationship}` : ''}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={[styles.statusBadge, { fontSize: ui.font(10) }]}>
+                  {isCurrent ? 'Signed In' : formatAccountStatusLabel(acc.status)}
+                </Text>
+              </View>
+
+              <Text style={[styles.subText, { fontSize: ui.font(11) }]}>
+                {acc.isPrimaryAdmin
+                  ? 'Full Admin Privileges across all modules'
+                  : `View/Edit: ${FARM_PERMISSION_MODULES.filter((m) => acc.permissions[m] !== 'none').length}/${FARM_PERMISSION_MODULES.length} modules${acc.accessCode ? ' · PIN protected' : ''}`}
+              </Text>
+
+              <View style={[styles.cardFooterBtns, { gap: ui.space(8), marginTop: 4 }]}>
+                {!isCurrent ? (
+                  <Pressable
+                    style={styles.switchBtn}
+                    onPress={() => void handleTrySwitch(acc)}
+                  >
+                    <Text style={[styles.switchBtnText, { fontSize: ui.font(11) }]}>
+                      Switch Account
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {isAdminOrManager ? (
+                  <Pressable
+                    style={styles.smallEditBtn}
+                    onPress={() => openEditAccount(acc, false)}
+                  >
+                    <AppIcon name="edit" size={ui.font(13)} />
+                    <Text
+                      style={[styles.smallEditBtnText, { fontSize: ui.font(11) }]}
+                    >
+                      Privileges
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {isAdminOrManager && !acc.isPrimaryAdmin ? (
+                  <Pressable
+                    style={styles.smallDeleteBtn}
+                    onPress={() => void handleDelete(acc)}
+                  >
+                    <AppIcon name="trash" size={ui.font(13)} />
+                    {confirmDeleteId === acc.id ? (
+                      <Text
+                        style={[styles.smallDeleteText, { fontSize: ui.font(11) }]}
+                      >
+                        Confirm
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
+      {/* Account, Privilege & Approval Modal */}
+      <Modal
+        visible={accModalOpen}
+        animationType="slide"
+        onRequestClose={() => setAccModalOpen(false)}
+      >
+        <SafeAreaView
+          style={styles.modalSafe}
+          edges={['top', 'left', 'right', 'bottom']}
+        >
+          <View style={[styles.modalHeader, { gap: 10 }]}>
+            <Text
+              style={[styles.modalTitle, { fontSize: ui.font(17), flex: 1, minWidth: 0 }]}
+              numberOfLines={2}
+            >
+              {approvingMode
+                ? 'Assign Privileges & Accept Request'
+                : editingAcc
+                  ? 'Edit Account & Privileges'
+                  : 'Add Network Account'}
+            </Text>
+            <Pressable onPress={() => setAccModalOpen(false)} hitSlop={8} style={{ flexShrink: 0 }}>
+              <AppIcon name="close" size={ui.font(20)} />
+            </Pressable>
+          </View>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <FarmScrollView
+              contentContainerStyle={{
+                padding: ui.contentPadding,
+                gap: ui.space(12),
+              }}
+            >
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                  Display Name *
+                </Text>
+                <TextInput
+                  style={[styles.input, { fontSize: ui.font(14) }]}
+                  value={aName}
+                  onChangeText={setAName}
+                  editable={!approvingMode}
+                  placeholder="e.g. Martha Mukasa"
+                />
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                  Relationship
+                </Text>
+                <TextInput
+                  style={[styles.input, { fontSize: ui.font(14) }]}
+                  value={aRel}
+                  onChangeText={setARel}
+                  editable={!approvingMode}
+                  placeholder="e.g. Family / External Owner"
+                />
+              </View>
+
+              {!editingAcc?.isPrimaryAdmin ? (
+                <View style={styles.fieldGroup}>
+                  <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                    Role
+                  </Text>
+                  <ModernDropdown
+                    value={aRole}
+                    options={FARM_ACCOUNT_ROLES.map((r) => ({
+                      value: r,
+                      label: formatAccountRoleLabel(r),
+                      iconSource: MOBILE_APP_ICONS.networking,
+                    }))}
+                    title="Select Role"
+                    onChange={(r) => {
+                      setARole(r);
+                      if (!editingAcc || approvingMode) {
+                        setAPerms(getDefaultPermissionsForRole(r));
+                      }
+                    }}
+                  />
+                </View>
+              ) : null}
+
+              {!approvingMode ? (
+                <>
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                      Avatar
+                    </Text>
+                    <ModernDropdown
+                      value={aAvatar}
+                      options={FARM_ACCOUNT_AVATARS.map((av) => ({
+                        value: av,
+                        label:
+                          av === 'farmerFemale'
+                            ? 'Farmer Female'
+                            : av === 'peasant'
+                              ? 'Partner / Owner'
+                              : av === 'staff'
+                                ? 'Team'
+                                : 'Farmer Classic',
+                        iconSource:
+                          av === 'farmerFemale'
+                            ? MOBILE_APP_ICONS.farmerFemale
+                            : av === 'peasant'
+                              ? MOBILE_APP_ICONS.peasant
+                              : av === 'staff'
+                                ? MOBILE_APP_ICONS.staff
+                                : MOBILE_APP_ICONS.farmer,
+                      }))}
+                      title="Avatar Icon"
+                      onChange={setAAvatar}
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                      Phone
+                    </Text>
+                    <TextInput
+                      style={[styles.input, { fontSize: ui.font(14) }]}
+                      value={aPhone}
+                      onChangeText={setAPhone}
+                      placeholder="Optional phone"
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                      Email
+                    </Text>
+                    <TextInput
+                      style={[styles.input, { fontSize: ui.font(14) }]}
+                      value={aEmail}
+                      onChangeText={setAEmail}
+                      placeholder="Optional email"
+                      autoCapitalize="none"
+                    />
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                      Optional Switch PIN
+                    </Text>
+                    <TextInput
+                      style={[styles.input, { fontSize: ui.font(14) }]}
+                      value={aPin}
+                      onChangeText={setAPin}
+                      placeholder="Leave blank for no PIN"
+                    />
+                  </View>
+                </>
+              ) : null}
+
+              {!editingAcc?.isPrimaryAdmin ? (
+                <>
+                  {!approvingMode ? (
+                    <View style={styles.fieldGroup}>
+                      <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                        Status
+                      </Text>
+                      <ModernDropdown
+                        value={aStatus}
+                        options={FARM_ACCOUNT_STATUSES.map((s) => ({
+                          value: s,
+                          label: formatAccountStatusLabel(s),
+                          iconSource: MOBILE_APP_ICONS.checkmark,
+                        }))}
+                        title="Account Status"
+                        onChange={setAStatus}
+                      />
+                    </View>
+                  ) : null}
+
+                  <View style={styles.switchRow}>
+                    <Text style={[styles.switchLabel, { fontSize: ui.font(13) }]}>
+                      Allow syncing Admin cloud database (Network DB)
+                    </Text>
+                    <Switch value={aCanSync} onValueChange={setACanSync} />
+                  </View>
+
+                  <Text
+                    style={[
+                      styles.label,
+                      { fontSize: ui.font(12), marginTop: 4 },
+                    ]}
+                  >
+                    Module Privileges (tap to cycle level):
+                  </Text>
+                  <View style={{ gap: 6 }}>
+                    {FARM_PERMISSION_MODULES.map((mod) => {
+                      const level = aPerms[mod];
+                      const nextIdx =
+                        (FARM_MODULE_ACCESS_LEVELS.indexOf(level) + 1) %
+                        FARM_MODULE_ACCESS_LEVELS.length;
+                      const nextLevel = FARM_MODULE_ACCESS_LEVELS[nextIdx]!;
+                      return (
+                        <Pressable
+                          key={mod}
+                          style={[styles.rbacMobRow, { flexWrap: 'wrap', gap: 8 }]}
+                          onPress={() =>
+                            setAPerms((prev) => ({
+                              ...prev,
+                              [mod]: nextLevel,
+                            }))
+                          }
+                        >
+                          <Text
+                            style={[styles.switchLabel, { fontSize: ui.font(13), minWidth: 120 }]}
+                          >
+                            {formatPermissionModuleLabel(mod)}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.permMobBadge,
+                              { fontSize: ui.font(11) },
+                            ]}
+                          >
+                            {level.toUpperCase()}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : null}
+
+              {aError ? <Text style={styles.errorText}>{aError}</Text> : null}
+
+              <Pressable
+                style={[styles.submitBtn, { minHeight: ui.controlHeight, paddingHorizontal: ui.space(14), paddingVertical: ui.space(8) }]}
+                onPress={() => void handleSaveAccount()}
+                disabled={
+                  createMut.isPending ||
+                  updateMut.isPending ||
+                  acceptPendingMut.isPending
+                }
+              >
+                <Text style={[styles.submitBtnText, { fontSize: ui.font(14), textAlign: 'center' }]}>
+                  {approvingMode
+                    ? 'Accept User & Grant Privileges'
+                    : 'Save Account'}
+                </Text>
+              </Pressable>
+            </FarmScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* PIN Modal */}
+      <Modal
+        visible={Boolean(pinTarget)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPinTarget(null)}
+      >
+        <View style={styles.pinOverlay}>
+          <View style={styles.pinDialog}>
+            <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+              Enter Access PIN
+            </Text>
+            <Text style={[styles.subText, { fontSize: ui.font(12) }]}>
+              Passcode for {pinTarget?.displayName}
+            </Text>
+            <TextInput
+              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(15) }]}
+              secureTextEntry
+              value={pinText}
+              onChangeText={setPinText}
+              placeholder="PIN..."
+            />
+            {pinErr ? <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>{pinErr}</Text> : null}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+              <Pressable
+                style={[styles.secondaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight }]}
+                onPress={() => setPinTarget(null)}
+              >
+                <Text style={[styles.secondaryBtnText, { fontSize: ui.font(13) }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.primaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight }]}
+                onPress={() => void handlePinSubmit()}
+              >
+                <Text style={[styles.primaryBtnText, { fontSize: ui.font(13) }]}>Unlock</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </FarmScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: FARMDB_COLORS.bg },
+  card: {
+    backgroundColor: FARMDB_COLORS.surface,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+  },
+  activeAccCard: {
+    borderColor: FARMDB_COLORS.accent,
+    borderWidth: 1.5,
+  },
+  heroRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  heroIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 11,
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroTitle: { fontFamily: FARMDB_FONTS.bold, color: FARMDB_COLORS.text },
+  heroSub: { fontFamily: FARMDB_FONTS.regular, color: FARMDB_COLORS.textMuted },
+  actionRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
+  primaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: FARMDB_COLORS.accent,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+  },
+  primaryBtnText: { fontFamily: FARMDB_FONTS.semibold, color: '#ffffff' },
+  secondaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: FARMDB_COLORS.surfaceMuted,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+  },
+  secondaryBtnText: {
+    fontFamily: FARMDB_FONTS.semibold,
+    color: FARMDB_COLORS.text,
+  },
+  noticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    borderWidth: 1,
+    borderColor: 'rgba(45, 106, 79, 0.25)',
+  },
+  noticeText: { flex: 1, fontFamily: FARMDB_FONTS.medium, color: '#173e2b' },
+  joinCodeBox: {
+    backgroundColor: '#faf8f4',
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+    borderRadius: 10,
+    padding: 10,
+    gap: 4,
+  },
+  joinCodeValue: {
+    fontFamily: FARMDB_FONTS.monoBold,
+    color: FARMDB_COLORS.accent,
+    letterSpacing: 1,
+  },
+  cloudKeyValue: {
+    fontFamily: FARMDB_FONTS.mono,
+    color: FARMDB_COLORS.text,
+  },
+  copyLinkText: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.accent,
+  },
+  pendingCard: {
+    backgroundColor: FARMDB_COLORS.warnBg,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.warnBorder,
+  },
+  pendingHeading: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.warnText,
+  },
+  pendingRowCard: {
+    backgroundColor: FARMDB_COLORS.surface,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.warnBorder,
+    borderRadius: 10,
+    padding: 10,
+    gap: 4,
+  },
+  pendingBadge: {
+    fontFamily: FARMDB_FONTS.bold,
+    backgroundColor: FARMDB_COLORS.warnBg,
+    color: FARMDB_COLORS.warnText,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  cardTitle: { fontFamily: FARMDB_FONTS.bold, color: FARMDB_COLORS.text },
+  subText: { fontFamily: FARMDB_FONTS.regular, color: FARMDB_COLORS.textMuted },
+  statusBadge: {
+    fontFamily: FARMDB_FONTS.bold,
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    color: FARMDB_COLORS.accent,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  cardFooterBtns: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
+  switchBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    minHeight: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 999,
+    backgroundColor: FARMDB_COLORS.accent,
+  },
+  switchBtnText: { fontFamily: FARMDB_FONTS.bold, color: '#ffffff' },
+  smallEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: FARMDB_COLORS.surfaceMuted,
+  },
+  smallEditBtnText: { fontFamily: FARMDB_FONTS.semibold, color: FARMDB_COLORS.text },
+  smallDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 32,
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: FARMDB_COLORS.dangerSoft,
+  },
+  smallDeleteText: { fontFamily: FARMDB_FONTS.bold, color: FARMDB_COLORS.danger },
+  modalSafe: { flex: 1, backgroundColor: FARMDB_COLORS.bg },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: FARMDB_COLORS.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: FARMDB_COLORS.border,
+  },
+  modalTitle: { fontFamily: FARMDB_FONTS.bold, color: FARMDB_COLORS.text },
+  fieldGroup: { gap: 5 },
+  label: { fontFamily: FARMDB_FONTS.semibold, color: FARMDB_COLORS.textMuted },
+  input: {
+    backgroundColor: FARMDB_COLORS.surface,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontFamily: FARMDB_FONTS.regular,
+    color: FARMDB_COLORS.text,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  switchLabel: {
+    flex: 1,
+    fontFamily: FARMDB_FONTS.semibold,
+    color: FARMDB_COLORS.text,
+  },
+  rbacMobRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: '#faf8f4',
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+  },
+  permMobBadge: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.accent,
+  },
+  errorText: { fontFamily: FARMDB_FONTS.semibold, color: FARMDB_COLORS.danger },
+  submitBtn: {
+    backgroundColor: FARMDB_COLORS.accent,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+  },
+  submitBtnText: { fontFamily: FARMDB_FONTS.bold, color: '#ffffff' },
+  pinOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(23, 39, 29, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  pinDialog: {
+    backgroundColor: FARMDB_COLORS.surface,
+    width: '100%',
+    maxWidth: 360,
+    padding: 18,
+    borderRadius: 16,
+    gap: 12,
+  },
+});

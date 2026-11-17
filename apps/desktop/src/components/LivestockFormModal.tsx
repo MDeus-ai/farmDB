@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Camera, ImagePlus, Trash2, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  DEFAULT_FARM_SETTINGS,
   formatSpeciesLabel,
   formatStatusLabel,
+  getEligibleParentCandidates,
   LIVESTOCK_STATUSES,
   SPECIES_LIST,
   validateNewLivestock,
@@ -16,8 +17,11 @@ import {
 import {
   LivestockValidationError,
   useCreateLivestock,
+  useFarmSettings,
+  useLivestockList,
   useUpdateLivestock,
 } from '@farmdb/db';
+import { APP_ICONS, getSpeciesPngIcon, getStatusPngIcon } from '../assets/icons';
 import {
   deleteManagedDesktopImage,
   isTauriEnvironment,
@@ -25,6 +29,9 @@ import {
   readBrowserPreviewImageFile,
   resolveDesktopImageSrc,
 } from '../services/imageStorage';
+import { buildAnimalSelectOption } from '../utils/animalOptions';
+import { ModernDatePicker } from './ModernDatePicker';
+import { ModernSelect, type ModernSelectOption } from './ModernSelect';
 
 interface LivestockFormModalProps {
   open: boolean;
@@ -39,16 +46,22 @@ export function LivestockFormModal({
   existingTags,
   onClose,
 }: LivestockFormModalProps) {
+  const settingsQuery = useFarmSettings();
+  const defaultSpecies =
+    settingsQuery.data?.defaultSpecies ?? DEFAULT_FARM_SETTINGS.defaultSpecies;
+  const allLivestockQuery = useLivestockList({});
   const createMutation = useCreateLivestock();
   const updateMutation = useUpdateLivestock();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [tagNumber, setTagNumber] = useState('');
-  const [species, setSpecies] = useState<Species>('cow');
+  const [species, setSpecies] = useState<Species>(defaultSpecies);
   const [name, setName] = useState('');
   const [breed, setBreed] = useState('');
   const [dob, setDob] = useState('');
   const [status, setStatus] = useState<LivestockStatus>('active');
+  const [sireId, setSireId] = useState<string>('');
+  const [damId, setDamId] = useState<string>('');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [sessionImportedUris, setSessionImportedUris] = useState<string[]>([]);
   const [pickingImage, setPickingImage] = useState(false);
@@ -64,20 +77,80 @@ export function LivestockFormModal({
       setBreed(editing.breed ?? '');
       setDob(editing.dob ?? '');
       setStatus(editing.status);
+      setSireId(editing.sireId ?? '');
+      setDamId(editing.damId ?? '');
       setImageUri(editing.imageUri);
     } else {
       setTagNumber('');
-      setSpecies('cow');
+      setSpecies(defaultSpecies);
       setName('');
       setBreed('');
       setDob('');
       setStatus('active');
+      setSireId('');
+      setDamId('');
       setImageUri(null);
     }
     setSessionImportedUris([]);
     setErrors({});
     setSubmitError(null);
-  }, [open, editing]);
+  }, [open, editing, defaultSpecies]);
+
+  const allLivestock = allLivestockQuery.data ?? [];
+
+  const sireOptions = useMemo<ModernSelectOption<string>[]>(() => {
+    const candidates = getEligibleParentCandidates(
+      editing?.id ?? null,
+      'sire',
+      allLivestock.filter((item) => editing || item.species === species),
+      damId || null
+    ).filter((item) => item.species === species);
+    return [
+      { value: '', label: 'Unknown / Founder', iconSrc: APP_ICONS.tree },
+      ...candidates.map((item) =>
+        buildAnimalSelectOption(item, {
+          label: `${item.tagNumber}${item.name ? ` · ${item.name}` : ''}`,
+        })
+      ),
+    ];
+  }, [allLivestock, editing, species, damId]);
+
+  const damOptions = useMemo<ModernSelectOption<string>[]>(() => {
+    const candidates = getEligibleParentCandidates(
+      editing?.id ?? null,
+      'dam',
+      allLivestock.filter((item) => editing || item.species === species),
+      sireId || null
+    ).filter((item) => item.species === species);
+    return [
+      { value: '', label: 'Unknown / Founder', iconSrc: APP_ICONS.tree },
+      ...candidates.map((item) =>
+        buildAnimalSelectOption(item, {
+          label: `${item.tagNumber}${item.name ? ` · ${item.name}` : ''}`,
+        })
+      ),
+    ];
+  }, [allLivestock, editing, species, sireId]);
+
+  const speciesOptions = useMemo<ModernSelectOption<Species>[]>(
+    () =>
+      SPECIES_LIST.map((sp) => ({
+        value: sp,
+        label: formatSpeciesLabel(sp),
+        iconSrc: getSpeciesPngIcon(sp),
+      })),
+    []
+  );
+
+  const statusOptions = useMemo<ModernSelectOption<LivestockStatus>[]>(
+    () =>
+      LIVESTOCK_STATUSES.map((st) => ({
+        value: st,
+        label: formatStatusLabel(st),
+        iconSrc: getStatusPngIcon(st),
+      })),
+    []
+  );
 
   if (!open) {
     return null;
@@ -154,8 +227,18 @@ export function LivestockFormModal({
 
     if (editing) {
       const check = validateUpdateLivestock(
-        { tagNumber, species, name, breed, dob, status, imageUri },
-        { existingTags, currentTag: editing.tagNumber }
+        {
+          tagNumber,
+          species,
+          name,
+          breed,
+          dob,
+          status,
+          imageUri,
+          sireId: sireId || null,
+          damId: damId || null,
+        },
+        { existingTags, currentTag: editing.tagNumber, currentId: editing.id }
       );
       if (!check.ok || !check.data) {
         setErrors(check.errors);
@@ -179,7 +262,17 @@ export function LivestockFormModal({
     }
 
     const check = validateNewLivestock(
-      { tagNumber, species, name, breed, dob, status, imageUri },
+      {
+        tagNumber,
+        species,
+        name,
+        breed,
+        dob,
+        status,
+        imageUri,
+        sireId: sireId || null,
+        damId: damId || null,
+      },
       { existingTags }
     );
     if (!check.ok || !check.data) {
@@ -215,17 +308,17 @@ export function LivestockFormModal({
             onClick={() => void handleCancel()}
             aria-label="Close form"
           >
-            <X size={16} />
+            <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit}>
           <div className="photo-picker-box">
-            <div className="photo-preview-frame">
+            <div className={`photo-preview-frame ${previewSrc ? '' : 'is-empty'}`}>
               {previewSrc ? (
                 <img src={previewSrc} alt={tagNumber || 'Animal preview'} />
               ) : (
-                <Camera size={24} />
+                <img src={APP_ICONS.image} alt="No photo" />
               )}
             </div>
 
@@ -237,7 +330,7 @@ export function LivestockFormModal({
                   onClick={() => void handlePickPhoto()}
                   disabled={pickingImage || isSubmitting}
                 >
-                  <ImagePlus size={15} />
+                  <img src={APP_ICONS.image} alt="" className="app-icon-sm" />
                   {pickingImage
                     ? 'Importing...'
                     : previewSrc
@@ -251,7 +344,7 @@ export function LivestockFormModal({
                     onClick={() => setImageUri(null)}
                     disabled={isSubmitting}
                   >
-                    <Trash2 size={14} />
+                    <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
                     Remove
                   </button>
                 )}
@@ -295,18 +388,18 @@ export function LivestockFormModal({
               <label className="form-label" htmlFor="species">
                 Species
               </label>
-              <select
+              <ModernSelect
                 id="species"
-                className="select"
+                fullWidth
+                ariaLabel="Species"
                 value={species}
-                onChange={(e) => setSpecies(e.target.value as Species)}
-              >
-                {SPECIES_LIST.map((sp) => (
-                  <option key={sp} value={sp}>
-                    {formatSpeciesLabel(sp)}
-                  </option>
-                ))}
-              </select>
+                options={speciesOptions}
+                onChange={(nextSpecies) => {
+                  setSpecies(nextSpecies);
+                  setSireId('');
+                  setDamId('');
+                }}
+              />
             </div>
 
             <div className="form-field">
@@ -339,12 +432,13 @@ export function LivestockFormModal({
               <label className="form-label" htmlFor="dob">
                 Date of Birth
               </label>
-              <input
+              <ModernDatePicker
                 id="dob"
-                type="date"
-                className="input"
+                ariaLabel="Date of Birth"
+                placeholder="Optional birth date"
+                allowClear
                 value={dob}
-                onChange={(e) => setDob(e.target.value)}
+                onChange={setDob}
               />
               {errors.dob && <span className="field-error">{errors.dob}</span>}
             </div>
@@ -353,18 +447,50 @@ export function LivestockFormModal({
               <label className="form-label" htmlFor="status">
                 Status
               </label>
-              <select
+              <ModernSelect
                 id="status"
-                className="select"
+                fullWidth
+                ariaLabel="Status"
                 value={status}
-                onChange={(e) => setStatus(e.target.value as LivestockStatus)}
-              >
-                {LIVESTOCK_STATUSES.map((st) => (
-                  <option key={st} value={st}>
-                    {formatStatusLabel(st)}
-                  </option>
-                ))}
-              </select>
+                options={statusOptions}
+                onChange={setStatus}
+              />
+            </div>
+
+            <div className="form-field">
+              <label className="form-label" htmlFor="sire-select">
+                Sire (Father)
+              </label>
+              <ModernSelect
+                id="sire-select"
+                fullWidth
+                searchable
+                ariaLabel="Sire (Father)"
+                value={sireId}
+                options={sireOptions}
+                onChange={setSireId}
+              />
+              {errors.sireId && (
+                <span className="field-error">{errors.sireId}</span>
+              )}
+            </div>
+
+            <div className="form-field">
+              <label className="form-label" htmlFor="dam-select">
+                Dam (Mother)
+              </label>
+              <ModernSelect
+                id="dam-select"
+                fullWidth
+                searchable
+                ariaLabel="Dam (Mother)"
+                value={damId}
+                options={damOptions}
+                onChange={setDamId}
+              />
+              {errors.damId && (
+                <span className="field-error">{errors.damId}</span>
+              )}
             </div>
           </div>
 
