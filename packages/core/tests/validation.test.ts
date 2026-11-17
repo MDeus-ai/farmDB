@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildLivestockImageStem,
+  extractSafeImageExtension,
+  formatAnimalAge,
   generateId,
   normalizeTagNumber,
   validateNewLivestock,
@@ -78,5 +81,21 @@ describe('@farmdb/core validation', () => {
     expect(a).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     );
+  });
+
+  it('formats animal age accurately from YYYY-MM-DD', () => {
+    const ref = new Date(Date.UTC(2026, 10, 17));
+    expect(formatAnimalAge('2024-09-17', ref)).toBe('2 yrs 2 mos');
+    expect(formatAnimalAge('2026-08-17', ref)).toBe('3 mos');
+    expect(formatAnimalAge('2026-11-10', ref)).toBe('7 days');
+    expect(formatAnimalAge(null, ref)).toBe('Unknown');
+  });
+
+  it('builds safe image stems and extracts allowed image extensions', () => {
+    expect(buildLivestockImageStem('COW 402/A', 'ab-1234-5678')).toBe(
+      'cow-402-a-ab12345678'
+    );
+    expect(extractSafeImageExtension('file:///tmp/photo.PNG?v=1')).toBe('png');
+    expect(extractSafeImageExtension('C:\\temp\\weird.exe')).toBe('jpg');
   });
 });

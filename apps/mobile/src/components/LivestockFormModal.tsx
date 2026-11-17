@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -26,6 +27,11 @@ import {
   useCreateLivestock,
   useUpdateLivestock,
 } from '@farmdb/db';
+import {
+  captureLivestockPhoto,
+  deleteManagedLivestockPhoto,
+  pickLivestockPhotoFromLibrary,
+} from '../services/imageStorage';
 
 interface LivestockFormModalProps {
   visible: boolean;
@@ -49,6 +55,9 @@ export function LivestockFormModal({
   const [breed, setBreed] = useState('');
   const [dob, setDob] = useState('');
   const [status, setStatus] = useState<LivestockStatus>('active');
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [sessionImportedUris, setSessionImportedUris] = useState<string[]>([]);
+  const [pickingImage, setPickingImage] = useState(false);
   const [errors, setErrors] = useState<ValidationErrors<NewLivestockInput>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -61,6 +70,7 @@ export function LivestockFormModal({
       setBreed(editing.breed ?? '');
       setDob(editing.dob ?? '');
       setStatus(editing.status);
+      setImageUri(editing.imageUri);
     } else {
       setTagNumber('');
       setSpecies('cow');
@@ -68,19 +78,62 @@ export function LivestockFormModal({
       setBreed('');
       setDob('');
       setStatus('active');
+      setImageUri(null);
     }
+    setSessionImportedUris([]);
     setErrors({});
     setSubmitError(null);
   }, [visible, editing]);
 
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
 
+  async function handleAcquirePhoto(source: 'camera' | 'library') {
+    setSubmitError(null);
+    setPickingImage(true);
+    try {
+      const savedUri =
+        source === 'camera'
+          ? await captureLivestockPhoto(tagNumber || 'animal')
+          : await pickLivestockPhotoFromLibrary(tagNumber || 'animal');
+
+      if (savedUri) {
+        setSessionImportedUris((prev) => [...prev, savedUri]);
+        setImageUri(savedUri);
+      }
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error ? err.message : 'Unable to capture or select photo.'
+      );
+    } finally {
+      setPickingImage(false);
+    }
+  }
+
+  function handleCancel() {
+    for (const uri of sessionImportedUris) {
+      deleteManagedLivestockPhoto(uri);
+    }
+    onClose();
+  }
+
+  function cleanupAfterSave(finalUri: string | null | undefined) {
+    const originalUri = editing?.imageUri ?? null;
+    if (originalUri && originalUri !== finalUri) {
+      deleteManagedLivestockPhoto(originalUri);
+    }
+    for (const uri of sessionImportedUris) {
+      if (uri !== finalUri) {
+        deleteManagedLivestockPhoto(uri);
+      }
+    }
+  }
+
   async function handleSubmit() {
     setSubmitError(null);
 
     if (editing) {
       const check = validateUpdateLivestock(
-        { tagNumber, species, name, breed, dob, status },
+        { tagNumber, species, name, breed, dob, status, imageUri },
         { existingTags, currentTag: editing.tagNumber }
       );
       if (!check.ok || !check.data) {
@@ -90,19 +143,22 @@ export function LivestockFormModal({
       setErrors({});
       try {
         await updateMutation.mutateAsync({ id: editing.id, input: check.data });
+        cleanupAfterSave(check.data.imageUri);
         onClose();
       } catch (err) {
         if (err instanceof LivestockValidationError) {
           setErrors(err.errors);
         } else {
-          setSubmitError(err instanceof Error ? err.message : 'Failed to update record.');
+          setSubmitError(
+            err instanceof Error ? err.message : 'Failed to update record.'
+          );
         }
       }
       return;
     }
 
     const check = validateNewLivestock(
-      { tagNumber, species, name, breed, dob, status },
+      { tagNumber, species, name, breed, dob, status, imageUri },
       { existingTags }
     );
     if (!check.ok || !check.data) {
@@ -112,12 +168,15 @@ export function LivestockFormModal({
     setErrors({});
     try {
       await createMutation.mutateAsync(check.data);
+      cleanupAfterSave(check.data.imageUri);
       onClose();
     } catch (err) {
       if (err instanceof LivestockValidationError) {
         setErrors(err.errors);
       } else {
-        setSubmitError(err instanceof Error ? err.message : 'Failed to save animal.');
+        setSubmitError(
+          err instanceof Error ? err.message : 'Failed to save animal.'
+        );
       }
     }
   }
@@ -127,14 +186,14 @@ export function LivestockFormModal({
       visible={visible}
       animationType="slide"
       presentationStyle="pageSheet"
-      onRequestClose={onClose}
+      onRequestClose={handleCancel}
     >
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.title}>
             {editing ? `Edit ${editing.tagNumber}` : 'Add Livestock'}
           </Text>
-          <Pressable onPress={onClose} hitSlop={10}>
+          <Pressable onPress={handleCancel} hitSlop={10}>
             <Text style={styles.cancelText}>Close</Text>
           </Pressable>
         </View>
@@ -144,6 +203,51 @@ export function LivestockFormModal({
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
+          <View style={styles.photoBox}>
+            {imageUri ? (
+              <Image source={{ uri: imageUri }} style={styles.photoPreview} />
+            ) : (
+              <View style={styles.photoEmpty}>
+                <Text style={styles.photoEmptyText}>No Photo</Text>
+              </View>
+            )}
+
+            <View style={styles.photoActions}>
+              <View style={styles.photoButtonRow}>
+                <Pressable
+                  style={styles.photoBtn}
+                  onPress={() => void handleAcquirePhoto('camera')}
+                  disabled={pickingImage || isSubmitting}
+                >
+                  <Text style={styles.photoBtnText}>
+                    {pickingImage ? 'Working...' : 'Take Photo'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={styles.photoBtn}
+                  onPress={() => void handleAcquirePhoto('library')}
+                  disabled={pickingImage || isSubmitting}
+                >
+                  <Text style={styles.photoBtnText}>Library</Text>
+                </Pressable>
+                {imageUri ? (
+                  <Pressable
+                    style={styles.photoRemoveBtn}
+                    onPress={() => setImageUri(null)}
+                    disabled={isSubmitting}
+                  >
+                    <Text style={styles.photoRemoveText}>Remove</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              <Text style={styles.photoHint} numberOfLines={1}>
+                {imageUri
+                  ? 'Saved locally on device'
+                  : 'Stored in app documents (URI saved in SQLite)'}
+              </Text>
+            </View>
+          </View>
+
           <Text style={styles.label}>Tag Number *</Text>
           <TextInput
             style={styles.input}
@@ -229,9 +333,12 @@ export function LivestockFormModal({
           ) : null}
 
           <Pressable
-            style={[styles.saveButton, isSubmitting && styles.saveButtonDisabled]}
-            onPress={handleSubmit}
-            disabled={isSubmitting}
+            style={[
+              styles.saveButton,
+              (isSubmitting || pickingImage) && styles.saveButtonDisabled,
+            ]}
+            onPress={() => void handleSubmit()}
+            disabled={isSubmitting || pickingImage}
           >
             <Text style={styles.saveButtonText}>
               {isSubmitting
@@ -278,6 +385,71 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 18,
     paddingBottom: 40,
+  },
+  photoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#ddd6c8',
+    marginBottom: 8,
+  },
+  photoPreview: {
+    width: 72,
+    height: 72,
+    borderRadius: 10,
+    backgroundColor: '#f0ece3',
+  },
+  photoEmpty: {
+    width: 72,
+    height: 72,
+    borderRadius: 10,
+    backgroundColor: '#f0ece3',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoEmptyText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#5d675f',
+  },
+  photoActions: {
+    flex: 1,
+    gap: 6,
+  },
+  photoButtonRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  photoBtn: {
+    backgroundColor: '#e6f2ec',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  photoBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2d6a4f',
+  },
+  photoRemoveBtn: {
+    backgroundColor: '#fdeceb',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  photoRemoveText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#b42318',
+  },
+  photoHint: {
+    fontSize: 11,
+    color: '#5d675f',
   },
   label: {
     fontSize: 13,

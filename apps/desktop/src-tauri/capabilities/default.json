@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "opener:default",
+    "dialog:default",
+    "notification:default",
     "sql:default",
     "sql:allow-load",
     "sql:allow-select",

@@ -6,6 +6,7 @@ export type DbChangeScope =
   | 'medical'
   | 'financial'
   | 'alerts'
+  | 'settings'
   | '*';
 
 export interface DbChangeEvent {
@@ -23,9 +24,15 @@ export const FARMDB_QUERY_KEYS = {
   livestockList: (filter?: unknown) => ['farmdb', 'livestock', 'list', filter ?? {}] as const,
   livestockDetail: (id: string) => ['farmdb', 'livestock', 'detail', id] as const,
   productionAll: () => ['farmdb', 'production'] as const,
+  productionList: (filter?: unknown) => ['farmdb', 'production', 'list', filter ?? {}] as const,
   medicalAll: () => ['farmdb', 'medical'] as const,
+  medicalList: (filter?: unknown) => ['farmdb', 'medical', 'list', filter ?? {}] as const,
   financialAll: () => ['farmdb', 'financial'] as const,
+  financialList: (filter?: unknown) => ['farmdb', 'financial', 'list', filter ?? {}] as const,
   alertsAll: () => ['farmdb', 'alerts'] as const,
+  alertsList: (filter?: unknown) => ['farmdb', 'alerts', 'list', filter ?? {}] as const,
+  alertsDue: () => ['farmdb', 'alerts', 'due'] as const,
+  settings: () => ['farmdb', 'settings'] as const,
 };
 
 export class DatabaseEventBus {
@@ -91,6 +98,11 @@ export function attachQueryInvalidation(
         case 'alerts':
           void queryClient.invalidateQueries({
             queryKey: FARMDB_QUERY_KEYS.alertsAll(),
+          });
+          break;
+        case 'settings':
+          void queryClient.invalidateQueries({
+            queryKey: FARMDB_QUERY_KEYS.settings(),
           });
           break;
       }

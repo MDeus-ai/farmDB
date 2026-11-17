@@ -22,7 +22,16 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow farmDB to use the camera to photograph livestock for local offline records.",
+          "photosPermission": "Allow farmDB to select livestock photos from your photo library."
+        }
+      ],
+      "expo-sharing"
     ]
   }
 }

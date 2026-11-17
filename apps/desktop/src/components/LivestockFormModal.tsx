@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Camera, ImagePlus, Trash2, X } from 'lucide-react';
 import {
   formatSpeciesLabel,
   formatStatusLabel,
@@ -18,6 +18,13 @@ import {
   useCreateLivestock,
   useUpdateLivestock,
 } from '@farmdb/db';
+import {
+  deleteManagedDesktopImage,
+  isTauriEnvironment,
+  pickAndSaveDesktopImage,
+  readBrowserPreviewImageFile,
+  resolveDesktopImageSrc,
+} from '../services/imageStorage';
 
 interface LivestockFormModalProps {
   open: boolean;
@@ -34,6 +41,7 @@ export function LivestockFormModal({
 }: LivestockFormModalProps) {
   const createMutation = useCreateLivestock();
   const updateMutation = useUpdateLivestock();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [tagNumber, setTagNumber] = useState('');
   const [species, setSpecies] = useState<Species>('cow');
@@ -41,6 +49,9 @@ export function LivestockFormModal({
   const [breed, setBreed] = useState('');
   const [dob, setDob] = useState('');
   const [status, setStatus] = useState<LivestockStatus>('active');
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [sessionImportedUris, setSessionImportedUris] = useState<string[]>([]);
+  const [pickingImage, setPickingImage] = useState(false);
   const [errors, setErrors] = useState<ValidationErrors<NewLivestockInput>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -53,6 +64,7 @@ export function LivestockFormModal({
       setBreed(editing.breed ?? '');
       setDob(editing.dob ?? '');
       setStatus(editing.status);
+      setImageUri(editing.imageUri);
     } else {
       setTagNumber('');
       setSpecies('cow');
@@ -60,7 +72,9 @@ export function LivestockFormModal({
       setBreed('');
       setDob('');
       setStatus('active');
+      setImageUri(null);
     }
+    setSessionImportedUris([]);
     setErrors({});
     setSubmitError(null);
   }, [open, editing]);
@@ -70,6 +84,69 @@ export function LivestockFormModal({
   }
 
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
+  const previewSrc = resolveDesktopImageSrc(imageUri);
+
+  async function handlePickPhoto() {
+    setSubmitError(null);
+    if (!isTauriEnvironment()) {
+      fileInputRef.current?.click();
+      return;
+    }
+
+    setPickingImage(true);
+    try {
+      const savedPath = await pickAndSaveDesktopImage(tagNumber || 'animal');
+      if (savedPath) {
+        setSessionImportedUris((prev) => [...prev, savedPath]);
+        setImageUri(savedPath);
+      }
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error ? err.message : 'Failed to import selected image.'
+      );
+    } finally {
+      setPickingImage(false);
+    }
+  }
+
+  async function handleBrowserFileChange(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setPickingImage(true);
+    try {
+      const dataUrl = await readBrowserPreviewImageFile(file);
+      setImageUri(dataUrl);
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error ? err.message : 'Failed to read selected image.'
+      );
+    } finally {
+      setPickingImage(false);
+    }
+  }
+
+  async function handleCancel() {
+    for (const uri of sessionImportedUris) {
+      await deleteManagedDesktopImage(uri);
+    }
+    onClose();
+  }
+
+  async function cleanupAfterSave(finalUri: string | null | undefined) {
+    const originalUri = editing?.imageUri ?? null;
+    if (originalUri && originalUri !== finalUri) {
+      await deleteManagedDesktopImage(originalUri);
+    }
+    for (const uri of sessionImportedUris) {
+      if (uri !== finalUri) {
+        await deleteManagedDesktopImage(uri);
+      }
+    }
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -77,7 +154,7 @@ export function LivestockFormModal({
 
     if (editing) {
       const check = validateUpdateLivestock(
-        { tagNumber, species, name, breed, dob, status },
+        { tagNumber, species, name, breed, dob, status, imageUri },
         { existingTags, currentTag: editing.tagNumber }
       );
       if (!check.ok || !check.data) {
@@ -87,19 +164,22 @@ export function LivestockFormModal({
       setErrors({});
       try {
         await updateMutation.mutateAsync({ id: editing.id, input: check.data });
+        await cleanupAfterSave(check.data.imageUri);
         onClose();
       } catch (err) {
         if (err instanceof LivestockValidationError) {
           setErrors(err.errors);
         } else {
-          setSubmitError(err instanceof Error ? err.message : 'Failed to update record.');
+          setSubmitError(
+            err instanceof Error ? err.message : 'Failed to update record.'
+          );
         }
       }
       return;
     }
 
     const check = validateNewLivestock(
-      { tagNumber, species, name, breed, dob, status },
+      { tagNumber, species, name, breed, dob, status, imageUri },
       { existingTags }
     );
     if (!check.ok || !check.data) {
@@ -109,12 +189,15 @@ export function LivestockFormModal({
     setErrors({});
     try {
       await createMutation.mutateAsync(check.data);
+      await cleanupAfterSave(check.data.imageUri);
       onClose();
     } catch (err) {
       if (err instanceof LivestockValidationError) {
         setErrors(err.errors);
       } else {
-        setSubmitError(err instanceof Error ? err.message : 'Failed to save animal.');
+        setSubmitError(
+          err instanceof Error ? err.message : 'Failed to save animal.'
+        );
       }
     }
   }
@@ -128,8 +211,8 @@ export function LivestockFormModal({
           </h2>
           <button
             type="button"
-            className="btn btn-secondary"
-            onClick={onClose}
+            className="btn btn-secondary btn-sm"
+            onClick={() => void handleCancel()}
             aria-label="Close form"
           >
             <X size={16} />
@@ -137,6 +220,59 @@ export function LivestockFormModal({
         </div>
 
         <form onSubmit={handleSubmit}>
+          <div className="photo-picker-box">
+            <div className="photo-preview-frame">
+              {previewSrc ? (
+                <img src={previewSrc} alt={tagNumber || 'Animal preview'} />
+              ) : (
+                <Camera size={24} />
+              )}
+            </div>
+
+            <div className="photo-picker-actions">
+              <div className="photo-picker-buttons">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void handlePickPhoto()}
+                  disabled={pickingImage || isSubmitting}
+                >
+                  <ImagePlus size={15} />
+                  {pickingImage
+                    ? 'Importing...'
+                    : previewSrc
+                      ? 'Replace Photo'
+                      : 'Choose Photo'}
+                </button>
+                {imageUri && (
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={() => setImageUri(null)}
+                    disabled={isSubmitting}
+                  >
+                    <Trash2 size={14} />
+                    Remove
+                  </button>
+                )}
+              </div>
+              <span className="photo-uri-hint">
+                {imageUri
+                  ? imageUri.startsWith('data:')
+                    ? 'Browser preview image selected'
+                    : imageUri
+                  : 'Stored as local file path (no SQLite blob).'}
+              </span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => void handleBrowserFileChange(e)}
+              />
+            </div>
+          </div>
+
           <div className="form-grid">
             <div className="form-field">
               <label className="form-label" htmlFor="tag-number">
@@ -242,7 +378,7 @@ export function LivestockFormModal({
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={onClose}
+              onClick={() => void handleCancel()}
               disabled={isSubmitting}
             >
               Cancel
@@ -250,7 +386,7 @@ export function LivestockFormModal({
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={isSubmitting}
+              disabled={isSubmitting || pickingImage}
             >
               {isSubmitting
                 ? 'Saving...'

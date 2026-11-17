@@ -1,6 +1,16 @@
 import { useMemo, useState } from 'react';
-import { Pencil, Plus, Search, Sparkles, Trash2 } from 'lucide-react';
 import {
+  Camera,
+  LayoutGrid,
+  List,
+  Pencil,
+  Plus,
+  Search,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
+import {
+  formatAnimalAge,
   formatIsoDate,
   formatSpeciesLabel,
   formatStatusLabel,
@@ -17,7 +27,14 @@ import {
   useFarmSummary,
   useLivestockList,
 } from '@farmdb/db';
+import {
+  deleteManagedDesktopImage,
+  resolveDesktopImageSrc,
+} from '../services/imageStorage';
+import { LivestockDetailModal } from './LivestockDetailModal';
 import { LivestockFormModal } from './LivestockFormModal';
+
+type SortOption = 'updated' | 'tag' | 'name';
 
 const SAMPLE_HERD = [
   {
@@ -50,8 +67,11 @@ export function LivestockView() {
   const [search, setSearch] = useState('');
   const [species, setSpecies] = useState<Species | 'all'>('all');
   const [status, setStatus] = useState<LivestockStatus | 'all'>('active');
+  const [sortBy, setSortBy] = useState<SortOption>('updated');
+  const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Livestock | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const filter: LivestockFilter = useMemo(
     () => ({ search, species, status }),
@@ -69,7 +89,16 @@ export function LivestockView() {
     [allForTagsQuery.data]
   );
 
-  const items = listQuery.data ?? [];
+  const items = useMemo(() => {
+    const raw = [...(listQuery.data ?? [])];
+    if (sortBy === 'tag') {
+      raw.sort((a, b) => a.tagNumber.localeCompare(b.tagNumber));
+    } else if (sortBy === 'name') {
+      raw.sort((a, b) => (a.name ?? a.tagNumber).localeCompare(b.name ?? b.tagNumber));
+    }
+    return raw;
+  }, [listQuery.data, sortBy]);
+
   const summary = summaryQuery.data;
 
   async function handleSeedSample() {
@@ -82,7 +111,13 @@ export function LivestockView() {
   }
 
   async function handleDelete(item: Livestock) {
-    await deleteMutation.mutateAsync(item.id);
+    const removed = await deleteMutation.mutateAsync(item.id);
+    if (removed) {
+      await deleteManagedDesktopImage(item.imageUri);
+      if (selectedId === item.id) {
+        setSelectedId(null);
+      }
+    }
   }
 
   return (
@@ -91,7 +126,7 @@ export function LivestockView() {
         <div>
           <h1 className="page-title">Herd Registry</h1>
           <p className="page-subtitle">
-            Unified offline-first livestock table (cows by default; ready for goats and sheep).
+            Active livestock dashboard with unique tag validation and local photo storage.
           </p>
         </div>
 
@@ -168,6 +203,36 @@ export function LivestockView() {
               </option>
             ))}
           </select>
+
+          <select
+            className="select"
+            aria-label="Sort livestock"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortOption)}
+          >
+            <option value="updated">Recently Updated</option>
+            <option value="tag">Tag # (A-Z)</option>
+            <option value="name">Name (A-Z)</option>
+          </select>
+
+          <div className="view-toggle" role="group" aria-label="View layout">
+            <button
+              type="button"
+              className={viewMode === 'table' ? 'active' : ''}
+              onClick={() => setViewMode('table')}
+              aria-label="Table view"
+            >
+              <List size={16} />
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'grid' ? 'active' : ''}
+              onClick={() => setViewMode('grid')}
+              aria-label="Card grid view"
+            >
+              <LayoutGrid size={16} />
+            </button>
+          </div>
         </div>
 
         {listQuery.isLoading ? (
@@ -178,7 +243,7 @@ export function LivestockView() {
               No livestock records match the current filter.
             </p>
             <p style={{ margin: '6px 0 0', fontSize: '0.88rem' }}>
-              Add your first cow to local SQLite or load 3 sample cows to verify reactive updates.
+              Add your first cow to local SQLite or load 3 sample cows to explore the herd registry.
             </p>
             <div className="empty-actions">
               <button
@@ -205,66 +270,138 @@ export function LivestockView() {
               )}
             </div>
           </div>
+        ) : viewMode === 'grid' ? (
+          <div className="herd-grid">
+            {items.map((item) => {
+              const imageSrc = resolveDesktopImageSrc(item.imageUri);
+              return (
+                <div
+                  key={item.id}
+                  className="herd-card"
+                  onClick={() => setSelectedId(item.id)}
+                >
+                  <div className="herd-card-media">
+                    {imageSrc ? (
+                      <img src={imageSrc} alt={item.name ?? item.tagNumber} />
+                    ) : (
+                      <Camera size={28} color="#8a968c" />
+                    )}
+                  </div>
+                  <div className="herd-card-body">
+                    <div className="herd-card-top">
+                      <span className="tag-chip">{item.tagNumber}</span>
+                      <span className={`status-pill status-${item.status}`}>
+                        {formatStatusLabel(item.status)}
+                      </span>
+                    </div>
+                    <strong style={{ fontSize: '1.02rem' }}>
+                      {item.name ?? 'Unnamed Animal'}
+                    </strong>
+                    <span style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+                      {formatSpeciesLabel(item.species)}
+                      {item.breed ? ` · ${item.breed}` : ''} · Age: {formatAnimalAge(item.dob)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Tag #</th>
-                  <th>Name</th>
+                  <th>Animal</th>
                   <th>Species</th>
                   <th>Breed</th>
-                  <th>Date of Birth</th>
+                  <th>DOB / Age</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <span className="tag-chip">{item.tagNumber}</span>
-                    </td>
-                    <td>{item.name ?? '—'}</td>
-                    <td>{formatSpeciesLabel(item.species)}</td>
-                    <td>{item.breed ?? '—'}</td>
-                    <td>{formatIsoDate(item.dob)}</td>
-                    <td>
-                      <span className={`status-pill status-${item.status}`}>
-                        {formatStatusLabel(item.status)}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() => {
-                            setEditing(item);
-                            setModalOpen(true);
-                          }}
-                          aria-label={`Edit ${item.tagNumber}`}
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-danger"
-                          onClick={() => handleDelete(item)}
-                          disabled={deleteMutation.isPending}
-                          aria-label={`Delete ${item.tagNumber}`}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {items.map((item) => {
+                  const thumbSrc = resolveDesktopImageSrc(item.imageUri);
+                  return (
+                    <tr
+                      key={item.id}
+                      className="table-row-clickable"
+                      onClick={() => setSelectedId(item.id)}
+                    >
+                      <td>
+                        <div className="animal-cell">
+                          {thumbSrc ? (
+                            <img
+                              src={thumbSrc}
+                              alt={item.name ?? item.tagNumber}
+                              className="animal-thumb"
+                            />
+                          ) : (
+                            <div className="animal-thumb-placeholder">
+                              {item.tagNumber.slice(0, 3)}
+                            </div>
+                          )}
+                          <div>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                              <span className="tag-chip">{item.tagNumber}</span>
+                              <strong>{item.name ?? 'Unnamed'}</strong>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>{formatSpeciesLabel(item.species)}</td>
+                      <td>{item.breed ?? '—'}</td>
+                      <td>
+                        {formatIsoDate(item.dob)}
+                        {item.dob ? ` (${formatAnimalAge(item.dob)})` : ''}
+                      </td>
+                      <td>
+                        <span className={`status-pill status-${item.status}`}>
+                          {formatStatusLabel(item.status)}
+                        </span>
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => {
+                              setEditing(item);
+                              setModalOpen(true);
+                            }}
+                            aria-label={`Edit ${item.tagNumber}`}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            onClick={() => void handleDelete(item)}
+                            disabled={deleteMutation.isPending}
+                            aria-label={`Delete ${item.tagNumber}`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
+
+      <LivestockDetailModal
+        livestockId={selectedId}
+        onClose={() => setSelectedId(null)}
+        onEdit={(animal) => {
+          setSelectedId(null);
+          setEditing(animal);
+          setModalOpen(true);
+        }}
+      />
 
       <LivestockFormModal
         open={modalOpen}

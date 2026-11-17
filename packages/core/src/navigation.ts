@@ -3,7 +3,8 @@ export type AppSectionId =
   | 'production'
   | 'medical'
   | 'financial'
-  | 'alerts';
+  | 'alerts'
+  | 'backup';
 
 export interface AppSectionMeta {
   id: AppSectionId;
@@ -48,5 +49,12 @@ export const APP_SECTIONS: readonly AppSectionMeta[] = [
     shortLabel: 'Alerts',
     phase: 4,
     description: 'Scheduled reminders, breeding checks, and farm notes.',
+  },
+  {
+    id: 'backup',
+    label: 'Export & Backup',
+    shortLabel: 'Backup',
+    phase: 5,
+    description: 'Download CSV/JSON exports and backup or restore the local SQLite database.',
   },
 ] as const;

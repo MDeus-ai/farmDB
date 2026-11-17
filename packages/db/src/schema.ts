@@ -69,6 +69,10 @@ export const financialLogs = sqliteTable(
     livestockId: text('livestock_id').references(() => livestock.id, {
       onDelete: 'set null',
     }),
+    productRecordId: text('product_record_id').references(
+      () => productRecords.id,
+      { onDelete: 'set null' }
+    ),
     transactionType: text('transaction_type').notNull(),
     amount: real('amount').notNull(),
     date: text('date').notNull(),
@@ -79,10 +83,17 @@ export const financialLogs = sqliteTable(
   },
   (table) => [
     index('idx_financial_logs_livestock_id').on(table.livestockId),
+    index('idx_financial_logs_product_record_id').on(table.productRecordId),
     index('idx_financial_logs_date').on(table.date),
     index('idx_financial_logs_type').on(table.transactionType),
   ]
 );
+
+export const farmSettings = sqliteTable('farm_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
+});
 
 export const alerts = sqliteTable(
   'alerts',
@@ -91,15 +102,18 @@ export const alerts = sqliteTable(
     livestockId: text('livestock_id').references(() => livestock.id, {
       onDelete: 'cascade',
     }),
+    entryKind: text('entry_kind').notNull().default('alert'),
     title: text('title').notNull(),
     description: text('description'),
     triggerDate: text('trigger_date').notNull(),
     isResolved: integer('is_resolved', { mode: 'boolean' }).notNull().default(false),
+    notifiedAt: integer('notified_at', { mode: 'number' }),
     createdAt: integer('created_at', { mode: 'number' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'number' }).notNull(),
   },
   (table) => [
     index('idx_alerts_livestock_id').on(table.livestockId),
+    index('idx_alerts_entry_kind').on(table.entryKind),
     index('idx_alerts_trigger_date').on(table.triggerDate),
     index('idx_alerts_is_resolved').on(table.isResolved),
   ]
@@ -146,6 +160,7 @@ export const schema = {
   medicalRecords,
   financialLogs,
   alerts,
+  farmSettings,
   livestockRelations,
   productRecordsRelations,
   medicalRecordsRelations,

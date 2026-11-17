@@ -1,20 +1,25 @@
 import React, { useMemo, useState } from 'react';
 import {
   FlatList,
+  Image,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import {
+  formatAnimalAge,
   formatIsoDate,
   formatSpeciesLabel,
   formatStatusLabel,
   LIVESTOCK_STATUSES,
+  SPECIES_LIST,
   type Livestock,
   type LivestockFilter,
   type LivestockStatus,
+  type Species,
 } from '@farmdb/core';
 import {
   useCreateLivestock,
@@ -22,6 +27,8 @@ import {
   useFarmSummary,
   useLivestockList,
 } from '@farmdb/db';
+import { deleteManagedLivestockPhoto } from '../services/imageStorage';
+import { LivestockDetailModal } from './LivestockDetailModal';
 import { LivestockFormModal } from './LivestockFormModal';
 
 const SAMPLE_HERD = [
@@ -53,13 +60,15 @@ const SAMPLE_HERD = [
 
 export function LivestockListView() {
   const [search, setSearch] = useState('');
+  const [species, setSpecies] = useState<Species | 'all'>('all');
   const [status, setStatus] = useState<LivestockStatus | 'all'>('active');
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<Livestock | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const filter: LivestockFilter = useMemo(
-    () => ({ search, status }),
-    [search, status]
+    () => ({ search, species, status }),
+    [search, species, status]
   );
 
   const listQuery = useLivestockList(filter);
@@ -81,6 +90,16 @@ export function LivestockListView() {
     for (const animal of SAMPLE_HERD) {
       if (!existing.has(animal.tagNumber)) {
         await createMutation.mutateAsync(animal);
+      }
+    }
+  }
+
+  async function handleDelete(item: Livestock) {
+    const removed = await deleteMutation.mutateAsync(item.id);
+    if (removed) {
+      deleteManagedLivestockPhoto(item.imageUri);
+      if (selectedId === item.id) {
+        setSelectedId(null);
       }
     }
   }
@@ -114,10 +133,15 @@ export function LivestockListView() {
         onChangeText={setSearch}
       />
 
-      <View style={styles.filterRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipScroll}
+        contentContainerStyle={styles.filterRow}
+      >
         {(['all', ...LIVESTOCK_STATUSES] as const).map((st) => (
           <Pressable
-            key={st}
+            key={`st-${st}`}
             style={[styles.filterChip, status === st && styles.filterChipActive]}
             onPress={() => setStatus(st)}
           >
@@ -127,11 +151,31 @@ export function LivestockListView() {
                 status === st && styles.filterChipTextActive,
               ]}
             >
-              {st === 'all' ? 'All' : formatStatusLabel(st)}
+              {st === 'all' ? 'All Status' : formatStatusLabel(st)}
             </Text>
           </Pressable>
         ))}
-      </View>
+
+        {(['all', ...SPECIES_LIST] as const).map((sp) => (
+          <Pressable
+            key={`sp-${sp}`}
+            style={[
+              styles.filterChip,
+              species === sp && styles.filterChipSpeciesActive,
+            ]}
+            onPress={() => setSpecies(sp)}
+          >
+            <Text
+              style={[
+                styles.filterChipText,
+                species === sp && styles.filterChipTextActive,
+              ]}
+            >
+              {sp === 'all' ? 'All Species' : formatSpeciesLabel(sp)}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
 
       <FlatList
         data={items}
@@ -143,12 +187,12 @@ export function LivestockListView() {
             <Text style={styles.emptySub}>
               {listQuery.isLoading
                 ? 'Reading local SQLite database...'
-                : 'Add an animal or load sample cows into local SQLite.'}
+                : 'Add an animal with camera photo or load sample cows into local SQLite.'}
             </Text>
             {!listQuery.isLoading && (summary?.totalLivestock ?? 0) === 0 ? (
               <Pressable
                 style={styles.sampleBtn}
-                onPress={handleLoadSample}
+                onPress={() => void handleLoadSample()}
                 disabled={createMutation.isPending}
               >
                 <Text style={styles.sampleBtnText}>Load Sample Herd (3 Cows)</Text>
@@ -157,40 +201,70 @@ export function LivestockListView() {
           </View>
         }
         renderItem={({ item }) => (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={styles.tagPill}>
-                <Text style={styles.tagText}>{item.tagNumber}</Text>
+          <Pressable
+            style={styles.card}
+            onPress={() => setSelectedId(item.id)}
+          >
+            <View style={styles.cardRow}>
+              {item.imageUri ? (
+                <Image source={{ uri: item.imageUri }} style={styles.thumb} />
+              ) : (
+                <View style={styles.thumbPlaceholder}>
+                  <Text style={styles.thumbPlaceholderText}>
+                    {item.tagNumber.slice(0, 3)}
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.cardMain}>
+                <View style={styles.cardHeader}>
+                  <View style={styles.tagPill}>
+                    <Text style={styles.tagText}>{item.tagNumber}</Text>
+                  </View>
+                  <Text style={styles.speciesMeta}>
+                    {formatSpeciesLabel(item.species)} · {formatStatusLabel(item.status)}
+                  </Text>
+                </View>
+
+                <Text style={styles.animalName}>
+                  {item.name ?? 'Unnamed Animal'}
+                </Text>
+                <Text style={styles.animalMeta}>
+                  {item.breed ?? '—'} · {formatIsoDate(item.dob)}
+                  {item.dob ? ` (${formatAnimalAge(item.dob)})` : ''}
+                </Text>
+
+                <View style={styles.cardActions}>
+                  <Pressable
+                    style={styles.secondaryAction}
+                    onPress={() => {
+                      setEditing(item);
+                      setModalVisible(true);
+                    }}
+                  >
+                    <Text style={styles.secondaryActionText}>Edit</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.dangerAction}
+                    onPress={() => void handleDelete(item)}
+                  >
+                    <Text style={styles.dangerActionText}>Delete</Text>
+                  </Pressable>
+                </View>
               </View>
-              <Text style={styles.speciesMeta}>
-                {formatSpeciesLabel(item.species)} · {formatStatusLabel(item.status)}
-              </Text>
             </View>
-
-            <Text style={styles.animalName}>{item.name ?? 'Unnamed Animal'}</Text>
-            <Text style={styles.animalMeta}>
-              Breed: {item.breed ?? '—'} · DOB: {formatIsoDate(item.dob)}
-            </Text>
-
-            <View style={styles.cardActions}>
-              <Pressable
-                style={styles.secondaryAction}
-                onPress={() => {
-                  setEditing(item);
-                  setModalVisible(true);
-                }}
-              >
-                <Text style={styles.secondaryActionText}>Edit</Text>
-              </Pressable>
-              <Pressable
-                style={styles.dangerAction}
-                onPress={() => deleteMutation.mutate(item.id)}
-              >
-                <Text style={styles.dangerActionText}>Delete</Text>
-              </Pressable>
-            </View>
-          </View>
+          </Pressable>
         )}
+      />
+
+      <LivestockDetailModal
+        livestockId={selectedId}
+        onClose={() => setSelectedId(null)}
+        onEdit={(animal) => {
+          setSelectedId(null);
+          setEditing(animal);
+          setModalVisible(true);
+        }}
       />
 
       <LivestockFormModal
@@ -254,10 +328,14 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     color: '#1c241e',
   },
+  chipScroll: {
+    flexGrow: 0,
+    marginBottom: 12,
+  },
   filterRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
+    paddingRight: 8,
   },
   filterChip: {
     paddingHorizontal: 11,
@@ -270,6 +348,10 @@ const styles = StyleSheet.create({
   filterChipActive: {
     backgroundColor: '#17271d',
     borderColor: '#17271d',
+  },
+  filterChipSpeciesActive: {
+    backgroundColor: '#2d6a4f',
+    borderColor: '#2d6a4f',
   },
   filterChipText: {
     fontSize: 12,
@@ -288,13 +370,40 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ddd6c8',
     borderRadius: 12,
-    padding: 14,
+    padding: 12,
+  },
+  cardRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+  },
+  thumb: {
+    width: 60,
+    height: 60,
+    borderRadius: 10,
+    backgroundColor: '#f0ece3',
+  },
+  thumbPlaceholder: {
+    width: 60,
+    height: 60,
+    borderRadius: 10,
+    backgroundColor: '#e6f2ec',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbPlaceholderText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#2d6a4f',
+  },
+  cardMain: {
+    flex: 1,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   tagPill: {
     backgroundColor: '#f0ece3',
@@ -318,14 +427,14 @@ const styles = StyleSheet.create({
     color: '#1c241e',
   },
   animalMeta: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#5d675f',
-    marginTop: 3,
+    marginTop: 2,
   },
   cardActions: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 10,
+    marginTop: 9,
   },
   secondaryAction: {
     paddingHorizontal: 12,

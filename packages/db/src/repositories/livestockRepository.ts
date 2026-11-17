@@ -267,7 +267,7 @@ export function createLivestockRepository(
         db
           .select({ value: count() })
           .from(alerts)
-          .where(eq(alerts.isResolved, false)),
+          .where(and(eq(alerts.isResolved, false), eq(alerts.entryKind, 'alert'))),
       ]);
 
       let activeLivestock = 0;

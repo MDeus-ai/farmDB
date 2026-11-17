@@ -79,4 +79,24 @@ export const FARMDB_MIGRATIONS: readonly SqlMigration[] = [
       `CREATE INDEX IF NOT EXISTS idx_alerts_is_resolved ON alerts (is_resolved);`,
     ],
   },
+  {
+    id: '0002_production_financial_links',
+    statements: [
+      `ALTER TABLE financial_logs ADD COLUMN product_record_id TEXT REFERENCES product_records(id) ON DELETE SET NULL;`,
+      `CREATE INDEX IF NOT EXISTS idx_financial_logs_product_record_id ON financial_logs (product_record_id);`,
+      `CREATE TABLE IF NOT EXISTS farm_settings (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );`,
+    ],
+  },
+  {
+    id: '0003_alerts_notification_tracking',
+    statements: [
+      `ALTER TABLE alerts ADD COLUMN entry_kind TEXT NOT NULL DEFAULT 'alert';`,
+      `ALTER TABLE alerts ADD COLUMN notified_at INTEGER;`,
+      `CREATE INDEX IF NOT EXISTS idx_alerts_entry_kind ON alerts (entry_kind);`,
+    ],
+  },
 ];

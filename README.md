@@ -16,8 +16,9 @@ The primary registry uses a generalized `livestock` table (`species` defaults to
 - `livestock`: `id`, `species`, `tag_number` (unique), `name`, `breed`, `dob`, `image_uri`, `status` (`active` / `sold` / `deceased`), `created_at`, `updated_at`
 - `product_records`: `id`, `livestock_id`, `date`, `yield_amount`, `quality_notes`, timestamps
 - `medical_records`: `id`, `livestock_id`, `date`, `condition`, `treatment`, `cost`, `veterinarian`, timestamps
-- `financial_logs`: `id`, `livestock_id` (nullable), `transaction_type`, `amount`, `date`, `category`, `notes`, timestamps
-- `alerts`: `id`, `livestock_id` (nullable), `title`, `description`, `trigger_date`, `is_resolved`, timestamps
+- `farm_settings`: `key`, `value`, `updated_at` (stores configurable `defaultMilkRatePerLiter` and `currencySymbol`)
+- `financial_logs`: `id`, `livestock_id` (nullable), `product_record_id` (nullable link for auto-generated milk sales), `transaction_type`, `amount`, `date`, `category`, `notes`, timestamps
+- `alerts`: `id`, `livestock_id` (nullable), `entry_kind` (`alert` / `note`), `title`, `description`, `trigger_date`, `is_resolved`, `notified_at`, timestamps
 
 ## Commands
 
@@ -47,7 +48,7 @@ npm run dev:mobile
 ## Implementation Phases
 
 - **Phase 1 (Complete)**: Monorepo setup, Expo SDK 58 mobile app, React + Tauri v2 desktop app, SQLite schema + migrations + Drizzle reactive query layer, navigation, livestock list/search/filter, and add/edit livestock forms.
-- **Phase 2**: Local animal image capture/upload (`image_uri` on disk) and dedicated herd dashboard polish.
-- **Phase 3**: Daily milk yield logging, automated/manual financial ledger, and charts (`recharts` / mobile charts).
-- **Phase 4**: Medical history timeline, notes, and local OS/mobile scheduled alert notifications.
-- **Phase 5**: CSV/JSON export and full `.db` file backup/restore.
+- **Phase 2 (Complete)**: Local animal image capture (`expo-image-picker` + `expo-file-system`) and desktop file import (`tauri-plugin-dialog` + Tauri asset protocol into `$APPLOCALDATA/images`), animal profile detail modals with age calculation and quick status actions, table/grid views, and safe local photo cleanup.
+- **Phase 3 (Complete)**: Daily milk yield logging per animal (`product_records`), automated `milk_sale` income creation at configurable standard rate (`farm_settings`), manual income/expense ledger (`financial_logs`), and Recharts / React Native Chart Kit analytics dashboards.
+- **Phase 4 (Complete)**: Per-animal and herd medical history timeline (`medical_records` with optional auto-expense logging), farm & animal notes (`alerts` with `entry_kind`), background 60s due-alert checker with deduplication (`notified_at`), and native desktop (`@tauri-apps/plugin-notification`) + mobile (`expo-notifications`) alerts.
+- **Phase 5 (Complete)**: Portable RFC-4180 CSV & full JSON snapshot export/restore across Desktop and Mobile, plus single-file `farmdb.db` SQLite backup & restore with header validation and automatic re-migration.

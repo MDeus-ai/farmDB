@@ -44,3 +44,88 @@ export function formatSpeciesLabel(species: string): string {
 export function formatStatusLabel(status: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
+
+/**
+ * Formats an animal's age from an ISO `YYYY-MM-DD` date of birth.
+ */
+export function formatAnimalAge(
+  dob?: string | null,
+  referenceDate: Date = new Date()
+): string {
+  if (!dob || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+    return 'Unknown';
+  }
+
+  const [yStr, mStr, dStr] = dob.split('-');
+  const birthYear = Number(yStr);
+  const birthMonth = Number(mStr);
+  const birthDay = Number(dStr);
+
+  const refYear = referenceDate.getUTCFullYear();
+  const refMonth = referenceDate.getUTCMonth() + 1;
+  const refDay = referenceDate.getUTCDate();
+
+  let totalMonths = (refYear - birthYear) * 12 + (refMonth - birthMonth);
+  if (refDay < birthDay) {
+    totalMonths -= 1;
+  }
+
+  if (totalMonths < 0) {
+    return '0 days';
+  }
+
+  if (totalMonths === 0) {
+    const birthMs = Date.UTC(birthYear, birthMonth - 1, birthDay);
+    const refMs = Date.UTC(refYear, refMonth - 1, refDay);
+    const days = Math.max(0, Math.floor((refMs - birthMs) / 86_400_000));
+    return `${days} ${days === 1 ? 'day' : 'days'}`;
+  }
+
+  const years = Math.floor(totalMonths / 12);
+  const months = totalMonths % 12;
+
+  if (years === 0) {
+    return `${months} ${months === 1 ? 'mo' : 'mos'}`;
+  }
+  if (months === 0) {
+    return `${years} ${years === 1 ? 'yr' : 'yrs'}`;
+  }
+  return `${years} ${years === 1 ? 'yr' : 'yrs'} ${months} ${months === 1 ? 'mo' : 'mos'}`;
+}
+
+const ALLOWED_IMAGE_EXTENSIONS = new Set([
+  'jpg',
+  'jpeg',
+  'png',
+  'webp',
+  'gif',
+  'bmp',
+  'heic',
+]);
+
+export function extractSafeImageExtension(
+  pathOrFilename?: string | null,
+  fallback = 'jpg'
+): string {
+  if (!pathOrFilename) {
+    return fallback;
+  }
+  const clean = pathOrFilename.split('?')[0]?.split('#')[0] ?? '';
+  const dotIdx = clean.lastIndexOf('.');
+  if (dotIdx === -1) {
+    return fallback;
+  }
+  const ext = clean.slice(dotIdx + 1).toLowerCase();
+  return ALLOWED_IMAGE_EXTENSIONS.has(ext) ? ext : fallback;
+}
+
+export function buildLivestockImageStem(tagNumber: string, uniqueId: string): string {
+  const safeTag = tagNumber
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const prefix = safeTag || 'animal';
+  const suffix = uniqueId.replace(/[^a-z0-9]/gi, '').slice(0, 12) || 'img';
+  return `${prefix}-${suffix}`;
+}
