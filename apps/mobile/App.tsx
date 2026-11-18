@@ -60,6 +60,7 @@ import { AuthPortalView } from './src/components/AuthPortalView';
 import { FarmNetworkView } from './src/components/FarmNetworkView';
 import { FarmStatisticsView } from './src/components/FarmStatisticsView';
 import { FinancialView } from './src/components/FinancialView';
+import { FirstTimeSetupView } from './src/components/FirstTimeSetupView';
 import { installWebScrollbarStyles } from './src/components/FarmScrollView';
 import { HumanResourcesView } from './src/components/HumanResourcesView';
 import { LivestockListView } from './src/components/LivestockListView';
@@ -116,8 +117,8 @@ function getTabIconName(id: AppSectionId): AppIconName {
 
 function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
   const [activeSection, setActiveSection] = useState<AppSectionId>('livestock');
-  const [authPortalOpen, setAuthPortalOpen] = useState(false);
-  const [isSignedOut, setIsSignedOut] = useState(false);
+  const [authPortalOpen, setAuthPortalOpen] = useState(true);
+  const [isSignedOut, setIsSignedOut] = useState(true);
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
   const handleSignOut = useCallback(() => {
@@ -177,8 +178,20 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
     []
   );
 
+  const isPendingGate = activeAccount?.status === 'pending';
+  const showAuthPortal = authPortalOpen || isSignedOut || isPendingGate;
+  const showOnboarding =
+    !showAuthPortal &&
+    !isSignedOut &&
+    !isPendingGate &&
+    activeAccount?.onboardingCompleted === false;
+
   const { checkNow } = useAlertBackgroundWorker(dispatcher, {
-    enabled: ui.settings.enableNotifications,
+    enabled:
+      !isSignedOut &&
+      !showAuthPortal &&
+      !showOnboarding &&
+      ui.settings.enableNotifications,
     intervalMs: ui.settings.alertCheckIntervalSeconds * 1000,
     onDelivered: (items) => {
       setDueBanners((prev) => [...items, ...prev].slice(0, 3));
@@ -187,7 +200,10 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
 
   useCloudAutoSyncWorker(ui.settings, {
     canSyncAccount:
-      isAdminAccount(activeAccount) || Boolean(activeAccount?.canSyncCloud),
+      !isSignedOut &&
+      !showAuthPortal &&
+      !showOnboarding &&
+      (isAdminAccount(activeAccount) || Boolean(activeAccount?.canSyncCloud)),
   });
 
   const visibleSections = useMemo(
@@ -252,16 +268,31 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
     [activeSection]
   );
 
-  if (authPortalOpen || activeAccount?.status === 'pending') {
+  if (showAuthPortal) {
     return (
       <>
         <StatusBar style="dark" />
         <AuthPortalView
-          canCancel={!isSignedOut && activeAccount?.status !== 'pending'}
+          canCancel={!isSignedOut && !isPendingGate}
           onCancelToApp={() => setAuthPortalOpen(false)}
           onSuccessEnterApp={() => {
             setIsSignedOut(false);
             setAuthPortalOpen(false);
+          }}
+        />
+      </>
+    );
+  }
+
+  if (showOnboarding && activeAccount) {
+    return (
+      <>
+        <StatusBar style="dark" />
+        <FirstTimeSetupView
+          activeAccount={activeAccount}
+          sqlController={sqlController}
+          onComplete={() => {
+            setActiveSection('livestock');
           }}
         />
       </>

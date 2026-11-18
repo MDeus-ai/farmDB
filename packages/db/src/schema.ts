@@ -233,6 +233,9 @@ export const farmAccounts = sqliteTable(
       .default(true),
     permissionsJson: text('permissions_json').notNull(),
     status: text('status').notNull().default('active'),
+    onboardingCompleted: integer('onboarding_completed', { mode: 'boolean' })
+      .notNull()
+      .default(false),
     lastSyncedAt: integer('last_synced_at', { mode: 'number' }),
     createdAt: integer('created_at', { mode: 'number' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'number' }).notNull(),

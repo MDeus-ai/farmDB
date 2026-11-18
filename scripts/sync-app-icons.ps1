@@ -1,5 +1,6 @@
 param(
-  [string]$SourceIcon = "assets/icons/barn.png"
+  [string]$SourceIcon = "assets/icons/field.png",
+  [string]$InstallerIcon = "assets/icons/open-box.png"
 )
 
 Set-StrictMode -Version Latest
@@ -146,8 +147,18 @@ try {
   Save-ResizedPng -Image $srcBitmap -OutPath "$tauriDir/StoreLogo.png" -Size 50
   Save-MultiSizeIco -Image $srcBitmap -OutPath "$tauriDir/icon.ico"
 
+  if (Test-Path $InstallerIcon) {
+    $resolvedInstaller = Resolve-Path $InstallerIcon
+    $instBitmap = [System.Drawing.Bitmap]::FromFile($resolvedInstaller.Path)
+    try {
+      Save-MultiSizeIco -Image $instBitmap -OutPath "$tauriDir/installer.ico"
+    } finally {
+      $instBitmap.Dispose()
+    }
+  }
+
   # Desktop web favicon
-  Save-ResizedPng -Image $srcBitmap -OutPath "apps/desktop/public/barn.png" -Size 128
+  Save-ResizedPng -Image $srcBitmap -OutPath "apps/desktop/public/field.png" -Size 128
 
   # Mobile Expo icons
   $mobDir = "apps/mobile/assets"

@@ -630,6 +630,7 @@ export interface FarmAccount {
   canSyncCloud: boolean;
   permissions: FarmAccountPermissions;
   status: FarmAccountStatus;
+  onboardingCompleted?: boolean;
   lastSyncedAt: number | null;
   createdAt: number;
   updatedAt: number;
@@ -652,6 +653,7 @@ export interface NewFarmAccountInput {
   canSyncCloud?: boolean;
   permissions?: Partial<FarmAccountPermissions>;
   status?: FarmAccountStatus;
+  onboardingCompleted?: boolean;
 }
 
 export interface UpdateFarmAccountInput {
@@ -669,6 +671,7 @@ export interface UpdateFarmAccountInput {
   canSyncCloud?: boolean;
   permissions?: Partial<FarmAccountPermissions>;
   status?: FarmAccountStatus;
+  onboardingCompleted?: boolean;
   lastSyncedAt?: number | null;
 }
 

@@ -47,6 +47,7 @@ import { FarmHoverHintOverlay } from './components/FarmHoverHint';
 import { FarmNetworkView } from './components/FarmNetworkView';
 import { FarmStatisticsView } from './components/FarmStatisticsView';
 import { FinancialView } from './components/FinancialView';
+import { FirstTimeSetupView } from './components/FirstTimeSetupView';
 import { HumanResourcesView } from './components/HumanResourcesView';
 import { LivestockView } from './components/LivestockView';
 import { MedicalView } from './components/MedicalView';
@@ -79,8 +80,8 @@ function DesktopShell({
 }) {
   const [activeSection, setActiveSection] = useState<AppSectionId>('livestock');
   const [familyFocusAnimalId, setFamilyFocusAnimalId] = useState<string | null>(null);
-  const [authPortalOpen, setAuthPortalOpen] = useState(false);
-  const [isSignedOut, setIsSignedOut] = useState(false);
+  const [authPortalOpen, setAuthPortalOpen] = useState(true);
+  const [isSignedOut, setIsSignedOut] = useState(true);
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
   function handleSignOut() {
@@ -160,8 +161,20 @@ function DesktopShell({
     []
   );
 
+  const isPendingGate = activeAccount?.status === 'pending';
+  const showAuthPortal = authPortalOpen || isSignedOut || isPendingGate;
+  const showOnboarding =
+    !showAuthPortal &&
+    !isSignedOut &&
+    !isPendingGate &&
+    activeAccount?.onboardingCompleted === false;
+
   const { checkNow } = useAlertBackgroundWorker(dispatcher, {
-    enabled: settings.enableNotifications,
+    enabled:
+      !isSignedOut &&
+      !showAuthPortal &&
+      !showOnboarding &&
+      settings.enableNotifications,
     intervalMs: settings.alertCheckIntervalSeconds * 1000,
     onDelivered: (items) => {
       setDueBanners((prev) => [...items, ...prev].slice(0, 4));
@@ -170,7 +183,10 @@ function DesktopShell({
 
   useCloudAutoSyncWorker(settings, {
     canSyncAccount:
-      isAdminAccount(activeAccount) || Boolean(activeAccount?.canSyncCloud),
+      !isSignedOut &&
+      !showAuthPortal &&
+      !showOnboarding &&
+      (isAdminAccount(activeAccount) || Boolean(activeAccount?.canSyncCloud)),
     onSynced: (result) => {
       if (result.ok) {
         const moved = result.recordsPushed + result.recordsPulled;
@@ -245,10 +261,17 @@ function DesktopShell({
     }
   }
 
-  const isPendingGate = activeAccount?.status === 'pending';
-  const showAuthPortal = authPortalOpen || isPendingGate;
+  const isLockedShell = isSignedOut || showAuthPortal || showOnboarding;
 
   const titlebarProps: DesktopTitlebarProps = {
+    minimal: isLockedShell,
+    statusLabel: isPendingGate
+      ? 'Pending Admin Approval'
+      : showAuthPortal
+        ? 'Sign In or Create Account'
+        : showOnboarding
+          ? 'First-Time Setup'
+          : undefined,
     activeSection,
     sectionCount: getCountForSection(activeSection),
     authPortalOpen: showAuthPortal,
@@ -258,29 +281,28 @@ function DesktopShell({
     openAlertCount: summary?.openAlertCount ?? 0,
     isSyncing: cloudSyncMut.isPending,
     syncFeedback,
-    onTriggerCloudSync: isPendingGate
+    onTriggerCloudSync: isLockedShell
       ? undefined
       : () => {
           void handleTitlebarCloudSync();
         },
     onOpenAlerts:
-      !isPendingGate && canAccountViewModule(activeAccount, 'alerts')
+      !isLockedShell && canAccountViewModule(activeAccount, 'alerts')
         ? () => {
             setAuthPortalOpen(false);
             setActiveSection('alerts');
           }
         : undefined,
     onOpenSettings:
-      !isPendingGate && canAccountViewModule(activeAccount, 'settings')
+      !isLockedShell && canAccountViewModule(activeAccount, 'settings')
         ? () => {
             setAuthPortalOpen(false);
             setActiveSection('settings');
           }
         : undefined,
-    onOpenAccountPortal:
-      !isPendingGate && !showAuthPortal
-        ? () => setActiveSection('network')
-        : undefined,
+    onOpenAccountPortal: !isLockedShell
+      ? () => setActiveSection('network')
+      : undefined,
   };
 
   if (showAuthPortal) {
@@ -298,6 +320,25 @@ function DesktopShell({
             setAuthPortalOpen(false);
           }}
           onCancelToApp={() => setAuthPortalOpen(false)}
+        />
+      </div>
+    );
+  }
+
+  if (showOnboarding && activeAccount) {
+    return (
+      <div
+        className="desktop-window-frame"
+        data-font-scale={settings.fontScale}
+        data-ui-density={settings.uiDensity}
+      >
+        <DesktopTitlebar {...titlebarProps} />
+        <FirstTimeSetupView
+          activeAccount={activeAccount}
+          sqlController={sqlController}
+          onComplete={() => {
+            setActiveSection('livestock');
+          }}
         />
       </div>
     );

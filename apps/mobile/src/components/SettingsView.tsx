@@ -56,6 +56,7 @@ import {
   FARMDB_FONTS,
   useUiScale,
 } from '../theme/uiScale';
+import { checkAndApplyMobileOtaUpdate } from '../services/updates';
 import { AppIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { MobileFileTabs } from './MobileFileTabs';
@@ -287,6 +288,33 @@ export function SettingsView({
     kind: 'ok' | 'err';
     text: string;
   } | null>(null);
+  const [otaBusy, setOtaBusy] = useState(false);
+  const [otaFeedback, setOtaFeedback] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+
+  async function handleCheckOtaUpdate() {
+    setOtaBusy(true);
+    setOtaFeedback(null);
+    try {
+      const res = await checkAndApplyMobileOtaUpdate();
+      setOtaFeedback({
+        kind: res.status === 'unavailable' ? 'err' : 'ok',
+        text: res.message,
+      });
+    } catch (err) {
+      setOtaFeedback({
+        kind: 'err',
+        text:
+          err instanceof Error
+            ? `Update check failed: ${err.message}`
+            : 'Unable to check for mobile updates.',
+      });
+    } finally {
+      setOtaBusy(false);
+    }
+  }
 
   // Cloud Sync & Supabase DB form state (database settings)
   const [cloudEnabled, setCloudEnabled] = useState(settings.cloudSyncEnabled);
@@ -1672,6 +1700,51 @@ export function SettingsView({
           </Text>
         </View>
         )}
+
+        {/* Mobile OTA App Updates Card */}
+        <View style={cardStyle}>
+          <View style={styles.sectionTitleRow}>
+            <AppIcon name="download" size={ui.font(18)} />
+            <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+              App Updates (Over-the-Air)
+            </Text>
+          </View>
+          <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+            Check for published Expo EAS over-the-air updates so UI and bug fixes apply without reinstalling an APK.
+          </Text>
+          <Pressable
+            style={[
+              styles.secondaryBtn,
+              { minHeight: ui.chipHeight, borderRadius: 999, alignSelf: 'flex-start' },
+            ]}
+            disabled={otaBusy}
+            onPress={() => void handleCheckOtaUpdate()}
+          >
+            <AppIcon name="dataSync" size={ui.font(14)} />
+            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+              {otaBusy ? 'Checking Updates...' : 'Check for OTA Update'}
+            </Text>
+          </Pressable>
+          {otaFeedback ? (
+            <View
+              style={[
+                styles.feedbackBanner,
+                otaFeedback.kind === 'err' && styles.feedbackBannerErr,
+                { padding: ui.space(10), borderRadius: ui.radius },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.feedbackText,
+                  otaFeedback.kind === 'err' && styles.feedbackTextErr,
+                  { fontSize: ui.font(12) },
+                ]}
+              >
+                {otaFeedback.text}
+              </Text>
+            </View>
+          ) : null}
+        </View>
           </>
         )}
       </FarmScrollView>

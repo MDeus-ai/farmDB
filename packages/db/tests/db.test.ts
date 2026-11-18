@@ -54,6 +54,7 @@ describe('@farmdb/db migrations and repositories', () => {
       '0006_ownerships_network_cloud',
       '0007_livestock_sex',
       '0008_admin_cloud_credentials',
+      '0009_account_onboarding',
     ]);
 
     const second = await runMigrations(driver);
@@ -640,11 +641,14 @@ describe('@farmdb/db migrations and repositories', () => {
     await expect(
       session.network.updateAccount(registryEditorAccount.id, { role: 'admin' })
     ).rejects.toThrow(/privileges/i);
-    // Self-service password / profile change still permitted
+    // Self-service password / profile change still permitted (including first-time onboarding completion)
+    expect(registryEditorAccount.onboardingCompleted).toBe(false);
     const selfUpdated = await session.network.updateAccount(registryEditorAccount.id, {
       accessCode: '9999',
+      onboardingCompleted: true,
     });
     expect(selfUpdated.accessCode).toBe('9999');
+    expect(selfUpdated.onboardingCompleted).toBe(true);
 
     // Account with livestock=view, family_tree=edit CAN link lineage via Family Tree, CANNOT alter Herd Registry fields
     await session.network.switchActiveAccount(lineageEditorAccount.id, '6789');

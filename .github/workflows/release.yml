@@ -1,0 +1,95 @@
+name: farmDB Release
+
+on:
+  push:
+    tags:
+      - 'farmDB-v*'
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Test & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build:desktop
+
+  release-desktop-windows:
+    name: Build & Publish Windows Installer + Updater
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - run: npm ci
+
+      - name: Build Tauri Windows release & upload updater artifacts
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: 'farmDB (${{ github.ref_name }})'
+          releaseBody: 'Offline-first farmDB Desktop Windows installers and signed auto-updater packages.'
+          releaseDraft: false
+          prerelease: false
+
+  publish-mobile-ota:
+    name: Publish Expo Mobile OTA Update
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check EXPO_TOKEN secret
+        id: check_token
+        shell: bash
+        run: |
+          if [ -n "$EXPO_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check_token.outputs.configured == 'true'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - if: steps.check_token.outputs.configured == 'true'
+        run: npm ci
+
+      - name: Publish OTA update to EAS production channel
+        if: steps.check_token.outputs.configured == 'true'
+        working-directory: apps/mobile
+        run: npx --yes eas-cli update --branch production --non-interactive --message "Release ${{ github.ref_name }}"

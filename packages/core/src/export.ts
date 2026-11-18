@@ -537,6 +537,7 @@ export function parseFarmSnapshotJson(raw: string): FarmDbSnapshot {
             canSyncCloud: acc.canSyncCloud ?? true,
             permissions: normalizeAccountPermissions(acc.permissions, acc.role),
             status: acc.status ?? 'active',
+            onboardingCompleted: Boolean(acc.onboardingCompleted),
           })),
         }
       : {}),

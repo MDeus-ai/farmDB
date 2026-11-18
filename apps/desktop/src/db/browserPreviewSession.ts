@@ -1753,6 +1753,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         canSyncCloud: validation.data.canSyncCloud,
         permissions: validation.data.permissions,
         status: validation.data.status,
+        onboardingCompleted: Boolean(validation.data.onboardingCompleted ?? false),
         lastSyncedAt: null,
         createdAt: now,
         updatedAt: now,
@@ -2515,7 +2516,13 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       writeJson(WORKER_PAYMENTS_KEY, snapshot.workerPayments ?? []);
       writeJson(WORKER_TASKS_KEY, snapshot.workerTasks ?? []);
       writeJson(OWNERSHIPS_KEY, snapshot.animalOwnerships ?? []);
-      writeJson(ACCOUNTS_KEY, incomingAccounts);
+      writeJson(
+        ACCOUNTS_KEY,
+        incomingAccounts.map((acc) => ({
+          ...acc,
+          onboardingCompleted: Boolean(acc.onboardingCompleted),
+        }))
+      );
       const existingLogs = readJson<CloudSyncLog[]>(SYNC_LOGS_KEY, []);
       const logMap = new Map(existingLogs.map((l) => [l.id, l]));
       for (const incoming of snapshot.cloudSyncLogs ?? []) {

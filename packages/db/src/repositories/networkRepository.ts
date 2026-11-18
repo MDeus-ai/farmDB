@@ -98,6 +98,7 @@ function mapAccountRow(row: FarmAccountRow): FarmAccount {
     canSyncCloud: Boolean(row.canSyncCloud),
     permissions: parsePermissionsJson(row.permissionsJson, role),
     status: row.status as FarmAccountStatus,
+    onboardingCompleted: Boolean(row.onboardingCompleted),
     lastSyncedAt: row.lastSyncedAt ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -374,6 +375,7 @@ export function createNetworkRepository(
         canSyncCloud: true,
         permissionsJson: JSON.stringify(DEFAULT_ADMIN_ACCOUNT.permissions),
         status: 'active',
+        onboardingCompleted: Boolean(DEFAULT_ADMIN_ACCOUNT.onboardingCompleted),
         lastSyncedAt: null,
         createdAt: 1,
         updatedAt: 1,
@@ -478,6 +480,7 @@ export function createNetworkRepository(
         canSyncCloud: validation.data.canSyncCloud,
         permissionsJson: JSON.stringify(validation.data.permissions),
         status: validation.data.status,
+        onboardingCompleted: Boolean(validation.data.onboardingCompleted ?? false),
         lastSyncedAt: null,
         createdAt: now,
         updatedAt: now,
@@ -583,6 +586,10 @@ export function createNetworkRepository(
           canSyncCloud: nextCanSyncCloud,
           permissionsJson: JSON.stringify(nextPermissions),
           status: nextStatus,
+          onboardingCompleted:
+            validation.data.onboardingCompleted !== undefined
+              ? validation.data.onboardingCompleted
+              : existing.onboardingCompleted,
           lastSyncedAt:
             validation.data.lastSyncedAt !== undefined
               ? validation.data.lastSyncedAt

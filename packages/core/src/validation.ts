@@ -1895,6 +1895,7 @@ export function validateNewFarmAccount(
       ),
       permissions: normalizeAccountPermissions(input.permissions, effectiveRole),
       status: isPrimaryAdmin ? 'active' : status,
+      onboardingCompleted: Boolean(input.onboardingCompleted ?? false),
     },
   };
 }
@@ -1995,6 +1996,9 @@ export function validateUpdateFarmAccount(
   }
   if (input.canSyncCloud !== undefined) {
     sanitized.canSyncCloud = Boolean(input.canSyncCloud);
+  }
+  if (input.onboardingCompleted !== undefined) {
+    sanitized.onboardingCompleted = Boolean(input.onboardingCompleted);
   }
   if (input.lastSyncedAt !== undefined) {
     sanitized.lastSyncedAt = input.lastSyncedAt;

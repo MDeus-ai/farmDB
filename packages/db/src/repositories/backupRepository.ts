@@ -417,6 +417,7 @@ export function createBackupRepository(
             canSyncCloud: Boolean(row.canSyncCloud),
             permissionsJson: JSON.stringify(row.permissions),
             status: row.status ?? 'active',
+            onboardingCompleted: Boolean(row.onboardingCompleted),
             lastSyncedAt: row.lastSyncedAt ?? null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,

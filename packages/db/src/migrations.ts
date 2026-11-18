@@ -245,4 +245,10 @@ export const FARMDB_MIGRATIONS: readonly SqlMigration[] = [
       `ALTER TABLE farm_accounts ADD COLUMN cloud_workspace_id TEXT;`,
     ],
   },
+  {
+    id: '0009_account_onboarding',
+    statements: [
+      `ALTER TABLE farm_accounts ADD COLUMN onboarding_completed INTEGER NOT NULL DEFAULT 0;`,
+    ],
+  },
 ];

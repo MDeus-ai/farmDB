@@ -46,6 +46,7 @@ import {
   type SqliteStorageInfo,
 } from '../services/exportBackup';
 import { isTauriEnvironment } from '../services/imageStorage';
+import { checkAndInstallDesktopUpdate } from '../services/updater';
 import { FileTabs } from './FileTabs';
 import { ModernSelect, type ModernSelectOption } from './ModernSelect';
 import { NumberStepper } from './NumberStepper';
@@ -169,6 +170,35 @@ export function SettingsView({
   const inTauri = isTauriEnvironment();
   const [storageInfo, setStorageInfo] = useState<SqliteStorageInfo | null>(null);
   const [storageBusy, setStorageBusy] = useState(false);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateFeedback, setUpdateFeedback] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+
+  async function handleCheckForAppUpdates() {
+    setUpdateBusy(true);
+    setUpdateFeedback(null);
+    try {
+      const res = await checkAndInstallDesktopUpdate((label) => {
+        setUpdateFeedback({ kind: 'ok', text: label });
+      });
+      setUpdateFeedback({
+        kind: res.status === 'unsupported' ? 'err' : 'ok',
+        text: res.message,
+      });
+    } catch (err) {
+      setUpdateFeedback({
+        kind: 'err',
+        text:
+          err instanceof Error
+            ? `Update check failed: ${err.message}`
+            : 'Unable to check for desktop updates.',
+      });
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!inTauri) return;
@@ -1611,6 +1641,46 @@ export function SettingsView({
               </div>
             </section>
           )}
+
+          {/* Desktop Auto-Updater Card */}
+          <section className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div className="settings-card-icon">
+                  <img src={APP_ICONS.downloads} alt="" className="app-icon-sm" />
+                </div>
+                <div>
+                  <h2 className="card-section-title" style={{ margin: 0 }}>
+                    Software Updates (GitHub Releases)
+                  </h2>
+                  <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
+                    Check for signed farmDB Desktop updates and install them automatically without affecting your local SQLite database.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={updateBusy}
+                onClick={() => void handleCheckForAppUpdates()}
+              >
+                <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
+                {updateBusy ? 'Checking Updates...' : 'Check for Updates'}
+              </button>
+            </div>
+            {updateFeedback && (
+              <div
+                className={
+                  updateFeedback.kind === 'ok'
+                    ? 'alert-toast-banner'
+                    : 'notice-banner'
+                }
+                role={updateFeedback.kind === 'err' ? 'alert' : 'status'}
+              >
+                <span>{updateFeedback.text}</span>
+              </div>
+            )}
+          </section>
         </div>
       )}
     </>

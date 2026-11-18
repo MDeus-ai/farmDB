@@ -6,10 +6,18 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/a580457d-475d-463e-b3fb-7faaf8b8964b"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.zeusdoreens.farmdb"
     },
     "android": {
+      "package": "com.zeus_doreens.farmdb",
       "adaptiveIcon": {
         "backgroundColor": "#e6f2ec",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -33,6 +41,11 @@
       ],
       "expo-sharing",
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a580457d-475d-463e-b3fb-7faaf8b8964b"
+      }
+    }
   }
 }

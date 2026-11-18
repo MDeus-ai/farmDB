@@ -128,32 +128,38 @@ powershell -ExecutionPolicy Bypass -File scripts/sync-app-icons.ps1 -SourceIcon 
 
 ## Production Deployment
 
-### 1. Supabase Cloud Setup (Multi-Device Sync)
+### 1. First Launch, Login-First Security & One-Time Setup Wizard
+Both Desktop and Mobile strictly launch on the **Sign In / Sign Up** portal before exposing any farm modules or background sync workers. On a new account's first sign-in (`onboardingCompleted === false`), a one-time **First-Time Setup Wizard** opens automatically with plain-English explanations for:
+- **Database Storage Location & Read-Only Protection** (Desktop custom SQLite folder relocation / Mobile sandbox path)
+- **Font Size** & **UI Element Size (Spacing Density)**
+- **Volume Units** (`Liters` / `US Gallons`) & **Currency** (`$`, `UGX`, `£`, or custom)
+- **Optional Admin Cloud Setup**: Guided step-by-step Supabase setup (`supabase.com` -> copy/run SQL -> paste Project URL & Anon Key -> inline **Test Connection** -> enable Auto-Sync & copy Admin Cloud Key `FDB1:...`)
+
+### 2. Supabase Cloud Setup (Multi-Device Sync)
 1. Create a production Supabase project at [supabase.com](https://supabase.com).
-2. Open **Supabase SQL Editor** and execute the SQL script shown inside **farmDB -> Settings -> Advanced Settings -> Cloud Sync & Supabase Database** (creates `public.farmdb_cloud_snapshots`, grants `anon`/`authenticated` permissions, enables RLS policy `farmdb_workspace_sync`, and reloads PostgREST schema cache).
+2. Open **Supabase SQL Editor** and execute the SQL script shown inside the First-Time Setup Wizard or **farmDB -> Settings -> Advanced Settings -> Cloud Sync & Supabase Database** (creates `public.farmdb_cloud_snapshots`, grants `anon`/`authenticated` permissions, enables RLS policy `farmdb_workspace_sync`, and reloads PostgREST schema cache).
 3. In farmDB Desktop or Mobile, sign in as Admin, open **Settings -> Advanced Settings**, paste your **Supabase Project URL** and **Anon / Publishable Key**, set your **Cloud Workspace ID**, click **Test Connection**, enable **Cloud Sync**, and run **Two-Way Sync Now**.
 4. Copy and safely store your **Full Admin Cloud Key (`FDB1:...`)** for logging into or recovering the workspace on new devices.
 
-### 2. Windows Desktop Installer (`.msi` & `.exe` via Tauri v2)
+### 3. Windows Desktop Installer & Auto-Updates (`.msi`, `.exe`, `tauri-plugin-updater`)
 Prerequisites: Node.js 22+, Rust toolchain (`rustup` / `cargo`), and Visual Studio C++ Build Tools + WebView2 Runtime on Windows.
 ```bash
 npm run test
 npm run typecheck
 npm run build:tauri
 ```
-Built Windows installers are output under `apps/desktop/src-tauri/target/release/bundle/`:
+Built Windows installers and signed updater artifacts are output under `apps/desktop/src-tauri/target/release/bundle/`:
 - NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.0_x64-setup.exe`
 - MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.0_x64_en-US.msi`
 
-### 3. Mobile Production Build (Android `.apk` / `.aab` & iOS via Expo EAS)
-Prerequisites: Expo account (`npm install -g eas-cli` and `eas login`), and an Android bundle/package ID (`android.package` / `ios.bundleIdentifier`) added to `apps/mobile/app.json` before Play Store / App Store submission.
+Desktop auto-updates are configured via `tauri-plugin-updater` (`apps/desktop/src-tauri/tauri.conf.json`) checking `https://github.com/MDeus-ai/farmDB/releases/latest/download/latest.json`, and can also be triggered manually from **Settings -> Advanced Settings -> Software Updates**.
+
+### 4. Mobile Production Build & OTA Updates (Android `.apk`/`.aab`, iOS & `expo-updates`)
+`apps/mobile/app.json` and `apps/mobile/eas.json` are pre-configured for EAS project `a580457d-475d-463e-b3fb-7faaf8b8964b` (`com.zeus_doreens.farmdb` on Android, `com.zeusdoreens.farmdb` on iOS) with `expo-updates` runtime versioning (`appVersion`) and channels (`development`, `preview`, `production`).
 ```bash
 # Verify Android JS/Hermes bundle locally
 cd apps/mobile
 npx expo export --platform android --output-dir .expo-check
-
-# Configure EAS build profiles (creates apps/mobile/eas.json if not present)
-eas build:configure
 
 # Build installable Android APK (internal testing) or AAB (Google Play Store)
 eas build --platform android --profile preview
@@ -161,4 +167,13 @@ eas build --platform android --profile production
 
 # Build iOS IPA (requires Apple Developer account)
 eas build --platform ios --profile production
+
+# Push an over-the-air (OTA) JS/asset update to family devices without rebuilding the APK/IPA
+eas update --branch production --message "Release update"
 ```
+
+### 5. Automated CI/CD Release Pipeline (`.github/workflows/release.yml`)
+Pushing a tag such as `farmDB-v1.5` (or `v*`) or triggering `workflow_dispatch` runs unit tests and typechecks, builds & signs Windows Desktop installers (`tauri-apps/tauri-action@v0`) with `latest.json` uploaded to the GitHub Release, and publishes an Expo OTA update (`eas-cli update --branch production`) when secrets are configured:
+- **`TAURI_SIGNING_PRIVATE_KEY`** (GitHub Repository Secret — required for signed Desktop updater releases)
+- **`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`** (optional — only needed if your signing key uses a passphrase)
+- **`EXPO_TOKEN`** (optional GitHub Repository Secret — enables automatic `eas update` OTA pushes from GitHub Actions)

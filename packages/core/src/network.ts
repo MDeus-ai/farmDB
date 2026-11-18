@@ -182,6 +182,7 @@ export const DEFAULT_ADMIN_ACCOUNT: FarmAccount = {
   canSyncCloud: true,
   permissions: getDefaultPermissionsForRole('admin'),
   status: 'active',
+  onboardingCompleted: false,
   lastSyncedAt: null,
   createdAt: 1,
   updatedAt: 1,
@@ -597,6 +598,11 @@ export function mergeFarmSnapshots(
           )
         : null,
       permissions: normalizeAccountPermissions(acc.permissions, acc.role),
+      onboardingCompleted: Boolean(
+        acc.onboardingCompleted ||
+          localAcc?.onboardingCompleted ||
+          remoteAcc?.onboardingCompleted
+      ),
     };
   });
 

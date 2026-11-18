@@ -421,6 +421,11 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
           'On the Login / Sign Up portal, create either a standalone User Account or an Admin Account (local or cloud-recovered). Joining an existing Admin’s farm via Join Key happens inside your created account’s Farm Network page.',
       },
       {
+        name: 'Strict Login-First Launch & First-Time Setup Wizard',
+        explanation:
+          'Both Desktop and Mobile strictly open on the Sign In / Sign Up portal by default so no farm records are exposed before authentication. The very first time a new account signs in, a one-time First-Time Setup Wizard walks through database location/read-only protection, Font Size, UI Element Size, Volume Units, Currency, and (for Admins) optional step-by-step Supabase Cloud DB setup.',
+      },
+      {
         name: 'Strict Sign Out Flow',
         explanation:
           'Once signed into an account, you must click Sign Out first to return to the Sign In / Sign Up portal before accessing or creating another account.',
@@ -539,6 +544,11 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
         name: 'Advanced Settings: Cloud Sync & Supabase Database (Admin Only)',
         explanation:
           'Enter your Supabase Project URL, Anon/Publishable Key, and Workspace ID; copy the one-time SQL Setup Script; test connection with instant inline feedback beside the card; pick conflict strategy (Last Write Wins / Local Priority / Cloud Priority); and toggle auto-sync.',
+      },
+      {
+        name: 'Advanced Settings: In-App Software Updates',
+        explanation:
+          'Check for and install signed Desktop updates (Windows installer / silent updater via GitHub Releases) or fetch Mobile over-the-air (OTA) Expo updates right inside Advanced Settings without reinstalling manually.',
       },
       {
         name: 'Sync Logs Tab (Admin Only)',

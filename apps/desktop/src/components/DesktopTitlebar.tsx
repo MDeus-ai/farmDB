@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Check, Minus, RefreshCw, Square, X } from 'lucide-react';
 import {
@@ -114,6 +114,7 @@ export function DesktopTitlebar({
 }: DesktopTitlebarProps) {
   const isTauri = isTauriRuntime();
   const [isMaximized, setIsMaximized] = useState(false);
+  const lastToggleAtRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -167,6 +168,12 @@ export function DesktopTitlebar({
   }, [isTauri]);
 
   const handleToggleMaximize = useCallback(() => {
+    const now = Date.now();
+    if (now - lastToggleAtRef.current < 220) {
+      return;
+    }
+    lastToggleAtRef.current = now;
+
     if (isTauri) {
       void getCurrentWindow()
         .toggleMaximize()
@@ -190,12 +197,17 @@ export function DesktopTitlebar({
   }, [isTauri]);
 
   const handleDragMouseDown = useCallback(
-    (e: MouseEvent<HTMLDivElement>) => {
+    (e: MouseEvent<HTMLElement>) => {
       if (e.button !== 0) return;
-      if ((e.target as HTMLElement).closest('button, a, input, select')) {
+      if (
+        (e.target as HTMLElement).closest(
+          'button, a, input, select, .window-controls'
+        )
+      ) {
         return;
       }
       if (e.detail === 2) {
+        e.preventDefault();
         handleToggleMaximize();
         return;
       }
@@ -235,25 +247,23 @@ export function DesktopTitlebar({
         : 'Local Offline';
 
   return (
-    <header className="window-titlebar" aria-label="Application titlebar and toolbar">
-      <div
-        className="titlebar-left"
-        data-tauri-drag-region
-        onMouseDown={handleDragMouseDown}
-      >
-        <div className="titlebar-brand" data-tauri-drag-region>
-          <span className="titlebar-brand-badge" data-tauri-drag-region>
+    <header
+      className="window-titlebar"
+      aria-label="Application titlebar and toolbar"
+      onMouseDown={handleDragMouseDown}
+    >
+      <div className="titlebar-left">
+        <div className="titlebar-brand">
+          <span className="titlebar-brand-badge">
             <img src={APP_ICONS.field} alt="" />
           </span>
-          <span className="titlebar-app-name" data-tauri-drag-region>
-            farmDB
-          </span>
+          <span className="titlebar-app-name">farmDB</span>
         </div>
 
-        <div className="titlebar-breadcrumb" data-tauri-drag-region>
+        <div className="titlebar-breadcrumb">
           {minimal ? (
-            <span className="titlebar-module-name" data-tauri-drag-region>
-              {statusLabel ?? 'Offline Livestock Ledger'}
+            <span className="titlebar-module-name">
+              {statusLabel ?? 'farmDB'}
             </span>
           ) : (
             <>
@@ -261,13 +271,12 @@ export function DesktopTitlebar({
                 src={breadcrumbIcon}
                 alt=""
                 className="titlebar-module-icon"
-                data-tauri-drag-region
               />
-              <span className="titlebar-module-name" data-tauri-drag-region>
+              <span className="titlebar-module-name">
                 {breadcrumbLabel}
               </span>
               {!authPortalOpen && sectionCount !== null ? (
-                <span className="titlebar-count-chip" data-tauri-drag-region>
+                <span className="titlebar-count-chip">
                   {sectionCount}
                 </span>
               ) : null}
@@ -276,11 +285,7 @@ export function DesktopTitlebar({
         </div>
       </div>
 
-      <div
-        className="titlebar-drag-spacer"
-        data-tauri-drag-region
-        onMouseDown={handleDragMouseDown}
-      />
+      <div className="titlebar-drag-spacer" />
 
       {!minimal ? (
         <div className="titlebar-toolbar">
