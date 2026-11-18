@@ -5,9 +5,11 @@ import {
   DEFAULT_FARM_SETTINGS,
   formatAnimalAge,
   formatDisplayDate,
+  formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
   formatVolume,
+  isFemaleMilkProducingAnimal,
   LIVESTOCK_STATUSES,
   roundAmount,
   type Livestock,
@@ -20,11 +22,13 @@ import {
   useLivestockDetail,
   useLivestockList,
   useMedicalRecordList,
+  useModulePermissions,
   useProductRecordList,
   useUpdateLivestock,
 } from '@farmdb/db';
 import {
   APP_ICONS,
+  getSexPngIcon,
   getSpeciesPngIcon,
   getStatusPngIcon,
 } from '../assets/icons';
@@ -64,6 +68,7 @@ export function LivestockDetailModal({
   const deleteMutation = useDeleteLivestock();
   const settingsQuery = useFarmSettings();
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+  const { canEdit, canDelete } = useModulePermissions('livestock');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
 
@@ -159,8 +164,8 @@ export function LivestockDetailModal({
               ) : (
                 <div className="detail-photo-empty">
                   <img
-                    src={getSpeciesPngIcon(animal.species)}
-                    alt={animal.species}
+                    src={getSpeciesPngIcon(animal.species, animal.sex)}
+                    alt={formatSpeciesLabel(animal.species, animal.sex)}
                     style={{ width: 56, height: 56, objectFit: 'contain' }}
                   />
                 </div>
@@ -169,6 +174,14 @@ export function LivestockDetailModal({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <span className="tag-chip">{animal.tagNumber}</span>
+                  <span className={`sex-pill sex-${animal.sex}`} style={{ gap: 5 }}>
+                    <img
+                      src={getSexPngIcon(animal.sex)}
+                      alt=""
+                      style={{ width: 13, height: 13, objectFit: 'contain' }}
+                    />
+                    {formatSexLabel(animal.sex)}
+                  </span>
                   <span className={`status-pill status-${animal.status}`} style={{ gap: 5 }}>
                     <img
                       src={getStatusPngIcon(animal.status)}
@@ -204,7 +217,7 @@ export function LivestockDetailModal({
                   )}
                 </div>
                 <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                  {formatSpeciesLabel(animal.species)}
+                  {formatSpeciesLabel(animal.species, animal.sex)}
                   {animal.breed ? ` · ${animal.breed}` : ''}
                 </p>
 
@@ -216,7 +229,7 @@ export function LivestockDetailModal({
                   >
                     File:{' '}
                     {animal.imageUri.startsWith('data:')
-                      ? 'Browser preview image'
+                      ? 'Optimized Cloud & Offline Photo'
                       : animal.imageUri}
                   </p>
                 )}
@@ -237,7 +250,11 @@ export function LivestockDetailModal({
               <div className="detail-fact">
                 <p className="detail-fact-label">Recorded Milk Yield</p>
                 <p className="detail-fact-value">
-                  {formatVolume(totalLiters, settings.volumeUnit)} ({records.length} logs)
+                  {isFemaleMilkProducingAnimal(animal)
+                    ? `${formatVolume(totalLiters, settings.volumeUnit)} (${records.length} logs)`
+                    : animal.sex === 'male'
+                      ? 'N/A (Male)'
+                      : 'N/A (Non-dairy)'}
                 </p>
               </div>
               <div className="detail-fact">
@@ -259,7 +276,8 @@ export function LivestockDetailModal({
                   className={`btn btn-sm ${
                     animal.status === st ? 'btn-primary' : 'btn-secondary'
                   }`}
-                  disabled={updateMutation.isPending}
+                  disabled={updateMutation.isPending || !canEdit}
+                  title={!canEdit ? 'View-only access: cannot change animal status' : undefined}
                   onClick={() => void handleStatusChange(st)}
                 >
                   {formatStatusLabel(st)}
@@ -364,7 +382,11 @@ export function LivestockDetailModal({
             )}
 
             <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
-              {confirmDelete ? (
+              {!canDelete ? (
+                <span className="status-pill status-sold">
+                  {canEdit ? 'View & Edit Only' : 'View-Only Access'}
+                </span>
+              ) : confirmDelete ? (
                 <div className="row-actions">
                   <button
                     type="button"
@@ -402,14 +424,16 @@ export function LivestockDetailModal({
                 </button>
               )}
 
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={() => onEdit(animal)}
-              >
-                <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
-                Edit Details / Photo
-              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => onEdit(animal)}
+                >
+                  <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
+                  Edit Details / Photo
+                </button>
+              )}
             </div>
           </>
         )}
@@ -421,7 +445,7 @@ export function LivestockDetailModal({
           open={imageViewerOpen && Boolean(imageSrc)}
           src={imageSrc}
           title={animal.name ?? animal.tagNumber}
-          subtitle={`${animal.tagNumber} · ${formatSpeciesLabel(animal.species)}`}
+          subtitle={`${animal.tagNumber} · ${formatSpeciesLabel(animal.species, animal.sex)}`}
           caption={
             animal.imageUri && !animal.imageUri.startsWith('data:')
               ? animal.imageUri

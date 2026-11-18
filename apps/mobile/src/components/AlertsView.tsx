@@ -14,6 +14,7 @@ import {
   getTodayIsoDate,
   validateNewAlert,
   type AlertEntryKind,
+  describeModuleAccessLevel,
   type NewAlertInput,
   type ValidationErrors,
 } from '@farmdb/core';
@@ -23,6 +24,7 @@ import {
   useCreateAlert,
   useDeleteAlert,
   useLivestockList,
+  useModulePermissions,
   useToggleAlertResolved,
 } from '@farmdb/db';
 import { MOBILE_APP_ICONS } from '../assets/icons';
@@ -48,6 +50,7 @@ interface AlertsViewProps {
 export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
   const ui = useUiScale();
   const { settings } = ui;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('alerts');
   const iconMode = settings.mobileIconMode;
   const livestockQuery = useLivestockList({});
   const allAlertsQuery = useAlertList({});
@@ -151,6 +154,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
   const [showForm, setShowForm] = useState(false);
 
   async function handleDeleteAlert(id: string) {
+    if (!canDelete) return;
     if (settings.confirmBeforeDelete && confirmDeleteId !== id) {
       setConfirmDeleteId(id);
       return;
@@ -275,28 +279,45 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
           </View>
         </View>
 
-        <View style={[styles.topRow, { gap: ui.space(8), flexWrap: 'wrap' }]}>
-          <Pressable
-            style={[
-              showForm ? styles.toggleCloseBtn : styles.toggleAddBtn,
-              { flex: 1.4, minWidth: 150, minHeight: ui.controlHeight },
-            ]}
-            onPress={() => setShowForm((prev) => !prev)}
-          >
-            <AppIcon
-              name={showForm ? 'close' : 'plus'}
-              size={ui.font(16)}
-              color={showForm ? FARMDB_COLORS.text : '#ffffff'}
-            />
-            <Text
+        <View style={[styles.topRow, { gap: ui.space(8), flexWrap: 'wrap', alignItems: 'center' }]}>
+          {canEdit ? (
+            <Pressable
               style={[
-                showForm ? styles.toggleCloseBtnText : styles.toggleAddBtnText,
-                { fontSize: ui.font(13) },
+                showForm ? styles.toggleCloseBtn : styles.toggleAddBtn,
+                { flex: 1.4, minWidth: 150, minHeight: ui.controlHeight },
               ]}
+              onPress={() => setShowForm((prev) => !prev)}
             >
-              {showForm ? 'Close Form' : 'New Alert / Note'}
-            </Text>
-          </Pressable>
+              <AppIcon
+                name={showForm ? 'close' : 'plus'}
+                size={ui.font(16)}
+                color={showForm ? FARMDB_COLORS.text : '#ffffff'}
+              />
+              <Text
+                style={[
+                  showForm ? styles.toggleCloseBtnText : styles.toggleAddBtnText,
+                  { fontSize: ui.font(13) },
+                ]}
+              >
+                {showForm ? 'Close Form' : 'New Alert / Note'}
+              </Text>
+            </Pressable>
+          ) : (
+            <View
+              style={{
+                paddingHorizontal: ui.space(10),
+                paddingVertical: ui.space(6),
+                borderRadius: 999,
+                backgroundColor: '#f3efe4',
+                borderWidth: 1,
+                borderColor: FARMDB_COLORS.border,
+              }}
+            >
+              <Text style={{ fontFamily: FARMDB_FONTS.bold, fontSize: ui.font(11), color: FARMDB_COLORS.textMuted }}>
+                {describeModuleAccessLevel(accessLevel)}
+              </Text>
+            </View>
+          )}
           <Pressable
             accessibilityLabel="Check due alerts"
             style={[
@@ -536,6 +557,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                     {animal ? (
                       <SpeciesIcon
                         species={animal.species}
+                        sex={animal.sex}
                         size={ui.font(16)}
                         color={FARMDB_COLORS.accent}
                       />
@@ -572,118 +594,124 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                     </Text>
                   </View>
 
-                  <View style={[styles.itemBtns, { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }]}>
-                    <Pressable
-                      accessibilityLabel={item.isResolved ? 'Reopen' : 'Mark done'}
-                      style={[
-                        styles.resolveBtn,
-                        {
-                          minHeight: ui.chipHeight - 2,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 4,
-                        },
-                      ]}
-                      onPress={() =>
-                        void toggleMutation.mutateAsync({
-                          id: item.id,
-                          isResolved: !item.isResolved,
-                        })
-                      }
-                    >
-                      <AppIcon
-                        name={item.isResolved ? 'refresh' : 'checkCircle'}
-                        size={ui.font(14)}
-                        color={FARMDB_COLORS.accent}
-                      />
-                      {!iconMode ? (
-                        <Text style={[styles.resolveBtnText, { fontSize: ui.font(12) }]}>
-                          {item.isResolved ? 'Reopen' : 'Done'}
-                        </Text>
+                  {canEdit || canDelete ? (
+                    <View style={[styles.itemBtns, { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }]}>
+                      {canEdit ? (
+                        <Pressable
+                          accessibilityLabel={item.isResolved ? 'Reopen' : 'Mark done'}
+                          style={[
+                            styles.resolveBtn,
+                            {
+                              minHeight: ui.chipHeight - 2,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() =>
+                            void toggleMutation.mutateAsync({
+                              id: item.id,
+                              isResolved: !item.isResolved,
+                            })
+                          }
+                        >
+                          <AppIcon
+                            name={item.isResolved ? 'refresh' : 'checkCircle'}
+                            size={ui.font(14)}
+                            color={FARMDB_COLORS.accent}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.resolveBtnText, { fontSize: ui.font(12) }]}>
+                              {item.isResolved ? 'Reopen' : 'Done'}
+                            </Text>
+                          ) : null}
+                        </Pressable>
                       ) : null}
-                    </Pressable>
-                    {confirmDeleteId === item.id ? (
-                      <View style={{ flexDirection: 'row', gap: 4 }}>
-                        <Pressable
-                          accessibilityLabel="Confirm delete"
-                          style={[
-                            styles.deleteBtn,
-                            {
-                              minHeight: ui.chipHeight - 2,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 4,
-                            },
-                          ]}
-                          onPress={() => void handleDeleteAlert(item.id)}
-                        >
-                          <AppIcon
-                            name="check"
-                            size={ui.font(14)}
-                            color={FARMDB_COLORS.danger}
-                          />
-                          {!iconMode ? (
-                            <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
-                              Confirm
-                            </Text>
-                          ) : null}
-                        </Pressable>
-                        <Pressable
-                          accessibilityLabel="Keep item"
-                          style={[
-                            styles.keepBtn,
-                            {
-                              minHeight: ui.chipHeight - 2,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 4,
-                            },
-                          ]}
-                          onPress={() => setConfirmDeleteId(null)}
-                        >
-                          <AppIcon
-                            name="close"
-                            size={ui.font(14)}
-                            color={FARMDB_COLORS.text}
-                          />
-                          {!iconMode ? (
-                            <Text style={[styles.keepBtnText, { fontSize: ui.font(11) }]}>
-                              Keep
-                            </Text>
-                          ) : null}
-                        </Pressable>
-                      </View>
-                    ) : (
-                      <Pressable
-                        accessibilityLabel="Delete item"
-                        style={[
-                          styles.deleteBtn,
-                          {
-                            minHeight: ui.chipHeight - 2,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                          },
-                        ]}
-                        onPress={() => void handleDeleteAlert(item.id)}
-                      >
-                        <AppIcon
-                          name="trash"
-                          size={ui.font(14)}
-                          color={FARMDB_COLORS.danger}
-                        />
-                        {!iconMode ? (
-                          <Text style={[styles.deleteBtnText, { fontSize: ui.font(12) }]}>
-                            Delete
-                          </Text>
-                        ) : null}
-                      </Pressable>
-                    )}
-                  </View>
+                      {canDelete ? (
+                        confirmDeleteId === item.id ? (
+                          <View style={{ flexDirection: 'row', gap: 4 }}>
+                            <Pressable
+                              accessibilityLabel="Confirm delete"
+                              style={[
+                                styles.deleteBtn,
+                                {
+                                  minHeight: ui.chipHeight - 2,
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 4,
+                                },
+                              ]}
+                              onPress={() => void handleDeleteAlert(item.id)}
+                            >
+                              <AppIcon
+                                name="check"
+                                size={ui.font(14)}
+                                color={FARMDB_COLORS.danger}
+                              />
+                              {!iconMode ? (
+                                <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
+                                  Confirm
+                                </Text>
+                              ) : null}
+                            </Pressable>
+                            <Pressable
+                              accessibilityLabel="Keep item"
+                              style={[
+                                styles.keepBtn,
+                                {
+                                  minHeight: ui.chipHeight - 2,
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 4,
+                                },
+                              ]}
+                              onPress={() => setConfirmDeleteId(null)}
+                            >
+                              <AppIcon
+                                name="close"
+                                size={ui.font(14)}
+                                color={FARMDB_COLORS.text}
+                              />
+                              {!iconMode ? (
+                                <Text style={[styles.keepBtnText, { fontSize: ui.font(11) }]}>
+                                  Keep
+                                </Text>
+                              ) : null}
+                            </Pressable>
+                          </View>
+                        ) : (
+                          <Pressable
+                            accessibilityLabel="Delete item"
+                            style={[
+                              styles.deleteBtn,
+                              {
+                                minHeight: ui.chipHeight - 2,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 4,
+                              },
+                            ]}
+                            onPress={() => void handleDeleteAlert(item.id)}
+                          >
+                            <AppIcon
+                              name="trash"
+                              size={ui.font(14)}
+                              color={FARMDB_COLORS.danger}
+                            />
+                            {!iconMode ? (
+                              <Text style={[styles.deleteBtnText, { fontSize: ui.font(12) }]}>
+                                Delete
+                              </Text>
+                            ) : null}
+                          </Pressable>
+                        )
+                      ) : null}
+                    </View>
+                  ) : null}
                 </View>
               );
             })

@@ -5,9 +5,12 @@ import {
   validateNewProductRecord,
   validateUpdateProductRecord,
   type FinancialLog,
+  type LivestockSex,
+  type LivestockStatus,
   type NewProductRecordInput,
   type ProductRecord,
   type ProductRecordFilter,
+  type Species,
   type UpdateProductRecordInput,
   type ValidationErrors,
 } from '@farmdb/core';
@@ -139,20 +142,45 @@ export function createProductionRepository(
       input: NewProductRecordInput,
       options?: LogMilkYieldOptions
     ): Promise<CreateProductRecordResult> {
-      const validation = validateNewProductRecord(input);
+      const targetLivestockId = (input.livestockId ?? '').trim();
+      const animal = targetLivestockId
+        ? await db
+            .select({
+              id: livestock.id,
+              tagNumber: livestock.tagNumber,
+              species: livestock.species,
+              sex: livestock.sex,
+              dob: livestock.dob,
+              status: livestock.status,
+            })
+            .from(livestock)
+            .where(eq(livestock.id, targetLivestockId))
+            .get()
+        : undefined;
+
+      if (targetLivestockId && !animal) {
+        throw new ProductionValidationError(
+          { livestockId: 'Selected animal does not exist.' },
+          'Selected animal does not exist.'
+        );
+      }
+
+      const validation = validateNewProductRecord(input, {
+        animal: animal
+          ? {
+              species: animal.species as Species,
+              sex: animal.sex as LivestockSex,
+              dob: animal.dob,
+              status: animal.status as LivestockStatus,
+            }
+          : undefined,
+      });
       if (!validation.ok || !validation.data) {
         const msg =
           Object.values(validation.errors).find(Boolean) ??
           'Invalid production record.';
         throw new ProductionValidationError(validation.errors, msg);
       }
-
-      const animal = await db
-        .select({ id: livestock.id, tagNumber: livestock.tagNumber })
-        .from(livestock)
-        .where(eq(livestock.id, validation.data.livestockId))
-        .get();
-
       if (!animal) {
         throw new ProductionValidationError(
           { livestockId: 'Selected animal does not exist.' },
@@ -215,12 +243,54 @@ export function createProductionRepository(
         throw new ProductRecordNotFoundError(id);
       }
 
-      const validation = validateUpdateProductRecord(input);
+      const targetLivestockId = (
+        input.livestockId ?? existing.livestockId
+      ).trim();
+      const animal = targetLivestockId
+        ? await db
+            .select({
+              id: livestock.id,
+              species: livestock.species,
+              sex: livestock.sex,
+              dob: livestock.dob,
+              status: livestock.status,
+            })
+            .from(livestock)
+            .where(eq(livestock.id, targetLivestockId))
+            .get()
+        : undefined;
+
+      if (targetLivestockId && !animal) {
+        throw new ProductionValidationError(
+          { livestockId: 'Selected animal does not exist.' },
+          'Selected animal does not exist.'
+        );
+      }
+
+      const validation = validateUpdateProductRecord(input, {
+        animal: animal
+          ? {
+              species: animal.species as Species,
+              sex: animal.sex as LivestockSex,
+              dob: animal.dob,
+              status: animal.status as LivestockStatus,
+            }
+          : undefined,
+      });
       if (!validation.ok || !validation.data) {
         const msg =
           Object.values(validation.errors).find(Boolean) ??
           'Invalid production record update.';
         throw new ProductionValidationError(validation.errors, msg);
+      }
+      if (
+        input.date === undefined &&
+        animal?.dob &&
+        existing.date < animal.dob
+      ) {
+        const msg =
+          'Production date cannot be earlier than the animal’s date of birth.';
+        throw new ProductionValidationError({ date: msg }, msg);
       }
 
       const now = Date.now();

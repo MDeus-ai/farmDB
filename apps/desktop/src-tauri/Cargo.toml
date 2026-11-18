@@ -1,6 +1,6 @@
 [package]
 name = "farmdb-desktop"
-version = "0.1.0"
+version = "1.5.0"
 description = "farmDB Offline-First Livestock Management Desktop App"
 authors = ["farmDB"]
 edition = "2024"

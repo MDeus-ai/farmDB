@@ -12,10 +12,13 @@ import {
   buildAnimalPedigree,
   formatAnimalAge,
   formatDisplayDate,
+  formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
   formatVolume,
+  isFemaleMilkProducingAnimal,
   LIVESTOCK_STATUSES,
+  describeModuleAccessLevel,
   type Livestock,
   type LivestockStatus,
 } from '@farmdb/core';
@@ -25,12 +28,13 @@ import {
   useLivestockDetail,
   useLivestockList,
   useMedicalRecordList,
+  useModulePermissions,
   useProductRecordList,
   useUpdateLivestock,
 } from '@farmdb/db';
 import { deleteManagedLivestockPhoto } from '../services/imageStorage';
 import { FARMDB_COLORS, FARMDB_FONTS, useUiScale } from '../theme/uiScale';
-import { AppIcon, SpeciesIcon, StatusIcon } from './FarmIcons';
+import { AppIcon, SexIcon, SpeciesIcon, StatusIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { ImageLightboxOverlay } from './ImageLightboxModal';
 
@@ -50,6 +54,7 @@ export function LivestockDetailModal({
   onOpenFamilyTree,
 }: LivestockDetailModalProps) {
   const ui = useUiScale();
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('livestock');
   const iconMode = ui.settings.mobileIconMode;
   const detailQuery = useLivestockDetail(livestockId);
   const allLivestockQuery = useLivestockList({});
@@ -94,7 +99,7 @@ export function LivestockDetailModal({
   }
 
   async function handleDeleteConfirmed() {
-    if (!animal) return;
+    if (!animal || !canDelete) return;
     const oldUri = animal.imageUri;
     const removed = await deleteMutation.mutateAsync(animal.id);
     if (removed) {
@@ -164,6 +169,7 @@ export function LivestockDetailModal({
                 <View style={styles.heroPlaceholder}>
                   <SpeciesIcon
                     species={animal.species}
+                    sex={animal.sex}
                     size={ui.font(44)}
                     color={FARMDB_COLORS.accent}
                   />
@@ -179,12 +185,14 @@ export function LivestockDetailModal({
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, flexWrap: 'wrap' }}>
                   <SpeciesIcon
                     species={animal.species}
+                    sex={animal.sex}
                     size={ui.font(17)}
                     color={FARMDB_COLORS.textMuted}
                   />
+                  <SexIcon sex={animal.sex} size={ui.font(14)} />
                   <StatusIcon status={animal.status} size={ui.font(15)} />
                   <Text style={[styles.statusMeta, { fontSize: ui.font(13), flexShrink: 1 }]}>
-                    {formatSpeciesLabel(animal.species)} · {formatStatusLabel(animal.status)}
+                    {formatSpeciesLabel(animal.species, animal.sex)} · {formatSexLabel(animal.sex)} · {formatStatusLabel(animal.status)}
                   </Text>
                 </View>
               </View>
@@ -278,17 +286,33 @@ export function LivestockDetailModal({
                   ]}
                 >
                   <Text style={[styles.factLabel, { fontSize: ui.font(11) }]}>
-                    Species
+                    Species & Sex
                   </Text>
-                  <Text style={[styles.factValue, { fontSize: ui.font(14) }]}>
-                    {formatSpeciesLabel(animal.species)}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                    <SexIcon sex={animal.sex} size={ui.font(14)} />
+                    <Text style={[styles.factValue, { fontSize: ui.font(14) }]}>
+                      {formatSpeciesLabel(animal.species, animal.sex)} · {formatSexLabel(animal.sex)}
+                    </Text>
+                  </View>
                 </View>
               </View>
 
-              <Text style={[styles.sectionLabel, { fontSize: ui.font(12) }]}>
-                Quick Status Update
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+                <Text style={[styles.sectionLabel, { fontSize: ui.font(12) }]}>
+                  Quick Status Update
+                </Text>
+                {!canEdit || !canDelete ? (
+                  <Text
+                    style={{
+                      fontFamily: FARMDB_FONTS.bold,
+                      fontSize: ui.font(11),
+                      color: FARMDB_COLORS.textMuted,
+                    }}
+                  >
+                    {describeModuleAccessLevel(accessLevel)}
+                  </Text>
+                ) : null}
+              </View>
               <View style={[styles.statusRow, { flexWrap: 'wrap' }]}>
                 {LIVESTOCK_STATUSES.map((st) => {
                   const active = animal.status === st;
@@ -298,6 +322,7 @@ export function LivestockDetailModal({
                       style={[
                         styles.statusChip,
                         active && styles.statusChipActive,
+                        !canEdit && { opacity: 0.6 },
                         {
                           minHeight: ui.chipHeight,
                           minWidth: 96,
@@ -308,8 +333,12 @@ export function LivestockDetailModal({
                           gap: 5,
                         },
                       ]}
-                      onPress={() => void handleStatusUpdate(st)}
-                      disabled={updateMutation.isPending}
+                      onPress={() => {
+                        if (canEdit) {
+                          void handleStatusUpdate(st);
+                        }
+                      }}
+                      disabled={!canEdit || updateMutation.isPending}
                     >
                       <StatusIcon
                         status={st}
@@ -337,8 +366,13 @@ export function LivestockDetailModal({
                     { fontSize: ui.font(13), lineHeight: ui.lineHeight(13, 1.42) },
                   ]}
                 >
-                  Milk: {formatVolume(totalYield, ui.settings.volumeUnit)} ({records.length}{' '}
-                  logs) · Medical: {medicalRecords.length} record(s) · Open
+                  Milk:{' '}
+                  {isFemaleMilkProducingAnimal(animal)
+                    ? `${formatVolume(totalYield, ui.settings.volumeUnit)} (${records.length} logs)`
+                    : animal.sex === 'male'
+                      ? 'N/A (Male)'
+                      : 'N/A (Non-dairy)'}{' '}
+                  · Medical: {medicalRecords.length} record(s) · Open
                   alerts: {openAlerts.length}
                 </Text>
                 {medicalRecords[0] ? (
@@ -444,31 +478,34 @@ export function LivestockDetailModal({
               ) : null}
 
               <View style={styles.actionsRow}>
-                <Pressable
-                  style={[
-                    styles.editBtn,
-                    {
-                      minHeight: ui.controlHeight,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 7,
-                    },
-                  ]}
-                  onPress={() => onEdit(animal)}
-                >
-                  <AppIcon
-                    name="edit"
-                    size={ui.font(16)}
-                    color={FARMDB_COLORS.accent}
-                  />
-                  <Text style={[styles.editBtnText, { fontSize: ui.font(14) }]}>
-                    {iconMode ? 'Edit' : 'Edit Details / Photo'}
-                  </Text>
-                </Pressable>
+                {canEdit ? (
+                  <Pressable
+                    style={[
+                      styles.editBtn,
+                      {
+                        minHeight: ui.controlHeight,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 7,
+                      },
+                    ]}
+                    onPress={() => onEdit(animal)}
+                  >
+                    <AppIcon
+                      name="edit"
+                      size={ui.font(16)}
+                      color={FARMDB_COLORS.accent}
+                    />
+                    <Text style={[styles.editBtnText, { fontSize: ui.font(14) }]}>
+                      {iconMode ? 'Edit' : 'Edit Details / Photo'}
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
 
-              {confirmDelete ? (
+              {canDelete ? (
+                confirmDelete ? (
                 <View style={[styles.confirmRow, { flexWrap: 'wrap' }]}>
                   <Pressable
                     style={[
@@ -542,7 +579,8 @@ export function LivestockDetailModal({
                     Delete Animal
                   </Text>
                 </Pressable>
-              )}
+              )
+              ) : null}
             </>
           )}
         </FarmScrollView>

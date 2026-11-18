@@ -46,7 +46,7 @@ export function formatAlertNotificationContent(
   animal?: Livestock | null
 ): { title: string; body: string } {
   const subject = animal
-    ? `${formatSpeciesLabel(animal.species)} #${animal.tagNumber}${animal.name ? ` (${animal.name})` : ''}`
+    ? `${formatSpeciesLabel(animal.species, animal.sex)} #${animal.tagNumber}${animal.name ? ` (${animal.name})` : ''}`
     : 'Farm Alert';
 
   const title = animal ? `farmDB Alert · ${subject}` : `farmDB · ${alert.title}`;

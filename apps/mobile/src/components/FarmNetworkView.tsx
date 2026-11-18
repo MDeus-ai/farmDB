@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  buildAllModulePermissions,
   encodeFarmNetworkJoinKey,
   FARM_ACCOUNT_AVATARS,
   FARM_ACCOUNT_ROLES,
@@ -34,8 +35,8 @@ import {
   useCreateFarmAccount,
   useDeleteFarmAccount,
   useFarmAccountList,
+  useJoinFarmNetwork,
   useRotateNetworkJoinKey,
-  useSwitchFarmAccount,
   useUpdateFarmAccount,
 } from '@farmdb/db';
 import { MOBILE_APP_ICONS } from '../assets/icons';
@@ -45,22 +46,22 @@ import { FarmScrollView } from './FarmScrollView';
 import { ModernDropdown } from './ModernDropdown';
 
 interface FarmNetworkViewProps {
-  onOpenAuthPortal?: () => void;
+  onSignOut?: () => void;
 }
 
-export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
+export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   const ui = useUiScale();
   const { settings } = ui;
 
   const accountsQuery = useFarmAccountList({});
   const activeAccountQuery = useActiveFarmAccount();
 
-  const switchMut = useSwitchFarmAccount();
   const createMut = useCreateFarmAccount();
   const updateMut = useUpdateFarmAccount();
   const deleteMut = useDeleteFarmAccount();
   const rotateKeyMut = useRotateNetworkJoinKey();
   const acceptPendingMut = useAcceptPendingAccount();
+  const joinNetworkMut = useJoinFarmNetwork();
 
   const accounts = accountsQuery.data ?? [];
   const activeAccount = activeAccountQuery.data;
@@ -101,12 +102,18 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
 
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [isSeeding, setIsSeeding] = useState(false);
 
-  // PIN prompt
-  const [pinTarget, setPinTarget] = useState<FarmAccount | null>(null);
-  const [pinText, setPinText] = useState('');
-  const [pinErr, setPinErr] = useState<string | null>(null);
+  // Join Network modal
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [joinKeyInput, setJoinKeyInput] = useState('');
+  const [joinErr, setJoinErr] = useState<string | null>(null);
+
+  // Change Password / PIN modal
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [curPin, setCurPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [pwdErr, setPwdErr] = useState<string | null>(null);
 
   // Account / Privilege / Approval modal
   const [accModalOpen, setAccModalOpen] = useState(false);
@@ -152,7 +159,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
     setAEmail(acc.email ?? '');
     setAPhone(acc.phone ?? '');
     setAAvatar(acc.avatarKey);
-    setAPin(acc.accessCode ?? '');
+    setAPin(acc.id === activeAccount?.id ? (acc.accessCode ?? '') : '');
     setAStatus(approvePending ? 'active' : acc.status);
     setACanSync(acc.canSyncCloud);
     setAPerms({ ...acc.permissions });
@@ -163,6 +170,16 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
   async function handleSaveAccount() {
     setAError(null);
     const enforcedPerms: FarmAccountPermissions = aPerms;
+    const isAdminEditingOtherExistingWithPin = Boolean(
+      editingAcc &&
+        editingAcc.id !== activeAccount?.id &&
+        editingAcc.accessCode &&
+        editingAcc.accessCode.trim().length > 0
+    );
+    if (!editingAcc && aRole !== 'admin' && aPin.trim().length < 4) {
+      setAError('Set a login PIN / passcode (4 to 32 characters) for this user account.');
+      return;
+    }
     try {
       if (editingAcc && approvingMode) {
         await acceptPendingMut.mutateAsync({
@@ -185,7 +202,9 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
           email: aEmail || null,
           phone: aPhone || null,
           avatarKey: aAvatar,
-          accessCode: aPin || null,
+          ...(isAdminEditingOtherExistingWithPin
+            ? {}
+            : { accessCode: aPin || null }),
           status: aStatus,
           canManageNetwork: Boolean(editingAcc?.isPrimaryAdmin),
           canSyncCloud: aCanSync,
@@ -222,33 +241,62 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
     }
   }
 
-  async function handleTrySwitch(acc: FarmAccount) {
-    if (acc.accessCode && acc.accessCode.trim().length > 0) {
-      setPinTarget(acc);
-      setPinText('');
-      setPinErr(null);
+  async function handleJoinNetworkSubmit() {
+    if (!activeAccount) return;
+    setJoinErr(null);
+    const trimmed = joinKeyInput.trim();
+    if (!trimmed) {
+      setJoinErr('Enter a Farm Network Join Key (FARM-XXXX or FDB1:...).');
       return;
     }
     try {
-      await switchMut.mutateAsync({ accountId: acc.id });
-      setNotice(`Signed in as ${acc.displayName}.`);
+      const res = await joinNetworkMut.mutateAsync({
+        joinKey: trimmed,
+        accountId: activeAccount.id,
+      });
+      setJoinKeyInput('');
+      setJoinOpen(false);
+      setNotice(
+        isAdminOrManager
+          ? `Connected ${activeAccount.displayName} to Farm Network "${res.farmName}"${res.syncedWithCloud ? ' (cloud sync linked)' : ''}.`
+          : `Joined Farm Network "${res.farmName}"${res.syncedWithCloud ? ' and synced with cloud' : ''}. Your membership request is now awaiting Admin approval.`
+      );
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Unable to switch account.');
+      setJoinErr(err instanceof Error ? err.message : 'Unable to join network.');
     }
   }
 
-  async function handlePinSubmit() {
-    if (!pinTarget) return;
-    setPinErr(null);
+  async function handleChangePasswordSubmit() {
+    if (!activeAccount) return;
+    setPwdErr(null);
+    const hasPin = Boolean(
+      activeAccount.accessCode && activeAccount.accessCode.trim().length > 0
+    );
+    if (hasPin && curPin !== activeAccount.accessCode) {
+      setPwdErr('Current password / PIN does not match.');
+      return;
+    }
+    const nextPin = newPin.trim();
+    if (nextPin.length < 4 || nextPin.length > 32) {
+      setPwdErr('New password / PIN must be 4 to 32 characters.');
+      return;
+    }
+    if (nextPin !== confirmPin.trim()) {
+      setPwdErr('New password / PIN and confirmation do not match.');
+      return;
+    }
     try {
-      await switchMut.mutateAsync({
-        accountId: pinTarget.id,
-        accessCode: pinText,
+      await updateMut.mutateAsync({
+        id: activeAccount.id,
+        input: { accessCode: nextPin },
       });
-      setNotice(`Signed in as ${pinTarget.displayName}.`);
-      setPinTarget(null);
+      setCurPin('');
+      setNewPin('');
+      setConfirmPin('');
+      setPwdOpen(false);
+      setNotice(`Updated login password / PIN for ${activeAccount.displayName}.`);
     } catch (err) {
-      setPinErr(err instanceof Error ? err.message : 'Incorrect PIN.');
+      setPwdErr(err instanceof Error ? err.message : 'Unable to update password.');
     }
   }
 
@@ -289,46 +337,6 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
     }
   }
 
-  async function handleSeedNetwork() {
-    if (isSeeding) return;
-    setIsSeeding(true);
-    try {
-      const names = new Set(accounts.map((a) => a.displayName.toLowerCase()));
-      if (!names.has('martha mukasa (family)')) {
-        await createMut.mutateAsync({
-          displayName: 'Martha Mukasa (Family)',
-          role: 'family_member',
-          relationship: 'Spouse / Co-Manager',
-          avatarKey: 'farmerFemale',
-          canSyncCloud: true,
-        });
-      }
-      if (!names.has('mr. kato (greenvalley partner)')) {
-        await createMut.mutateAsync({
-          displayName: 'Mr. Kato (GreenValley Partner)',
-          role: 'external_owner',
-          relationship: 'External Bull Owner',
-          avatarKey: 'peasant',
-          accessCode: '1234',
-        });
-      }
-      if (!names.has('david okello (pending join)')) {
-        await createMut.mutateAsync({
-          displayName: 'David Okello (Pending Join)',
-          role: 'family_member',
-          relationship: 'Joined via Farm Join Key',
-          avatarKey: 'farmer',
-          status: 'pending',
-        });
-      }
-      setNotice('Loaded sample Farm Network accounts & pending join request.');
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Seed failed.');
-    } finally {
-      setIsSeeding(false);
-    }
-  }
-
   return (
     <FarmScrollView
       dockAware
@@ -364,37 +372,53 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
         </View>
 
         <View style={[styles.actionRow, { gap: ui.space(8) }]}>
-          {onOpenAuthPortal ? (
-            <Pressable
-              style={[styles.primaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
-              onPress={onOpenAuthPortal}
-            >
-              <AppIcon name="farmer" size={ui.font(14)} />
-              <Text style={[styles.primaryBtnText, { fontSize: ui.font(12) }]}>
-                Login / Sign Up
-              </Text>
-            </Pressable>
-          ) : null}
+          <Pressable
+            style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
+            onPress={() => {
+              setJoinKeyInput('');
+              setJoinErr(null);
+              setJoinOpen(true);
+            }}
+          >
+            <AppIcon name="network" size={ui.font(14)} />
+            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+              Join Network
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
+            onPress={() => {
+              setCurPin('');
+              setNewPin('');
+              setConfirmPin('');
+              setPwdErr(null);
+              setPwdOpen(true);
+            }}
+          >
+            <AppIcon name="settings" size={ui.font(14)} />
+            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+              Password
+            </Text>
+          </Pressable>
           {isAdminOrManager ? (
             <Pressable
-              style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
+              style={[styles.primaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
               onPress={openAddAccount}
             >
               <AppIcon name="plus" size={ui.font(14)} />
-              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
-                Add Account
+              <Text style={[styles.primaryBtnText, { fontSize: ui.font(12) }]}>
+                Invite to Network
               </Text>
             </Pressable>
           ) : null}
-          {isAdminOrManager && accounts.length < 3 ? (
+          {onSignOut ? (
             <Pressable
               style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
-              disabled={isSeeding}
-              onPress={() => void handleSeedNetwork()}
+              onPress={onSignOut}
             >
-              <AppIcon name="staff" size={ui.font(14)} />
+              <AppIcon name="farmer" size={ui.font(14)} />
               <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
-                Sample
+                Sign Out
               </Text>
             </Pressable>
           ) : null}
@@ -418,6 +442,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
       ) : null}
 
       {/* Admin Network Join Key Card */}
+      {isAdminOrManager ? (
       <View
         style={[
           styles.card,
@@ -430,18 +455,16 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
               Admin Network Join Key
             </Text>
           </View>
-          {isAdminOrManager ? (
-            <Pressable
-              style={[styles.secondaryBtn, { minHeight: Math.max(34, ui.chipHeight - 2), paddingVertical: ui.space(4) }]}
-              disabled={rotateKeyMut.isPending}
-              onPress={() => void handleRotateJoinKey()}
-            >
-              <AppIcon name="refresh" size={ui.font(13)} />
-              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(11) }]}>
-                New Key
-              </Text>
-            </Pressable>
-          ) : null}
+          <Pressable
+            style={[styles.secondaryBtn, { minHeight: Math.max(34, ui.chipHeight - 2), paddingVertical: ui.space(4) }]}
+            disabled={rotateKeyMut.isPending}
+            onPress={() => void handleRotateJoinKey()}
+          >
+            <AppIcon name="refresh" size={ui.font(13)} />
+            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(11) }]}>
+              New Key
+            </Text>
+          </Pressable>
         </View>
 
         <View style={styles.joinCodeBox}>
@@ -468,7 +491,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
           <View style={styles.joinCodeBox}>
             <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
               <Text style={[styles.label, { fontSize: ui.font(11) }]}>
-                Cloud Invite Key (Remote Devices)
+                Cloud Key (Invites &amp; Admin Cross-Device Login)
               </Text>
               <Pressable
                 onPress={() =>
@@ -489,6 +512,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
           </View>
         ) : null}
       </View>
+      ) : null}
 
       {/* Pending Join Requests Card */}
       {pendingAccounts.length > 0 ? (
@@ -623,13 +647,20 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
               </Text>
 
               <View style={[styles.cardFooterBtns, { gap: ui.space(8), marginTop: 4 }]}>
-                {!isCurrent ? (
+                {isCurrent ? (
                   <Pressable
-                    style={styles.switchBtn}
-                    onPress={() => void handleTrySwitch(acc)}
+                    style={styles.smallEditBtn}
+                    onPress={() => {
+                      setCurPin('');
+                      setNewPin('');
+                      setConfirmPin('');
+                      setPwdErr(null);
+                      setPwdOpen(true);
+                    }}
                   >
-                    <Text style={[styles.switchBtnText, { fontSize: ui.font(11) }]}>
-                      Switch Account
+                    <AppIcon name="settings" size={ui.font(13)} />
+                    <Text style={[styles.smallEditBtnText, { fontSize: ui.font(11) }]}>
+                      Change Password
                     </Text>
                   </Pressable>
                 ) : null}
@@ -686,7 +717,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                 ? 'Assign Privileges & Accept Request'
                 : editingAcc
                   ? 'Edit Account & Privileges'
-                  : 'Add Network Account'}
+                  : 'Invite to Farm Network'}
             </Text>
             <Pressable onPress={() => setAccModalOpen(false)} hitSlop={8} style={{ flexShrink: 0 }}>
               <AppIcon name="close" size={ui.font(20)} />
@@ -743,9 +774,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                     title="Select Role"
                     onChange={(r) => {
                       setARole(r);
-                      if (!editingAcc || approvingMode) {
-                        setAPerms(getDefaultPermissionsForRole(r));
-                      }
+                      setAPerms(getDefaultPermissionsForRole(r));
                     }}
                   />
                 </View>
@@ -810,14 +839,29 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
 
                   <View style={styles.fieldGroup}>
                     <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-                      Optional Switch PIN
+                      {!editingAcc && aRole !== 'admin'
+                        ? 'Login PIN / Passcode *'
+                        : 'Login PIN / Passcode'}
                     </Text>
-                    <TextInput
-                      style={[styles.input, { fontSize: ui.font(14) }]}
-                      value={aPin}
-                      onChangeText={setAPin}
-                      placeholder="Leave blank for no PIN"
-                    />
+                    {editingAcc &&
+                    editingAcc.id !== activeAccount?.id &&
+                    editingAcc.accessCode ? (
+                      <Text style={[styles.subText, { fontSize: ui.font(12) }]}>
+                        Login credentials are private to this user. Admin can edit privileges or delete the account.
+                      </Text>
+                    ) : (
+                      <TextInput
+                        style={[styles.input, { fontSize: ui.font(14) }]}
+                        secureTextEntry
+                        value={aPin}
+                        onChangeText={setAPin}
+                        placeholder={
+                          !editingAcc && aRole !== 'admin'
+                            ? 'Required 4+ character PIN'
+                            : 'Optional 4+ character PIN'
+                        }
+                      />
+                    )}
                   </View>
                 </>
               ) : null}
@@ -849,46 +893,121 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                     <Switch value={aCanSync} onValueChange={setACanSync} />
                   </View>
 
-                  <Text
-                    style={[
-                      styles.label,
-                      { fontSize: ui.font(12), marginTop: 4 },
-                    ]}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 6,
+                      marginTop: 4,
+                    }}
                   >
-                    Module Privileges (tap to cycle level):
-                  </Text>
-                  <View style={{ gap: 6 }}>
-                    {FARM_PERMISSION_MODULES.map((mod) => {
-                      const level = aPerms[mod];
-                      const nextIdx =
-                        (FARM_MODULE_ACCESS_LEVELS.indexOf(level) + 1) %
-                        FARM_MODULE_ACCESS_LEVELS.length;
-                      const nextLevel = FARM_MODULE_ACCESS_LEVELS[nextIdx]!;
-                      return (
+                    <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                      Module Privileges
+                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {(
+                        [
+                          { label: 'Role Defaults', apply: () => setAPerms(getDefaultPermissionsForRole(aRole)) },
+                          { label: 'All Full', apply: () => setAPerms(buildAllModulePermissions('full')) },
+                          { label: 'All Edit', apply: () => setAPerms(buildAllModulePermissions('edit')) },
+                          { label: 'All View', apply: () => setAPerms(buildAllModulePermissions('view')) },
+                          { label: 'All Hidden', apply: () => setAPerms(buildAllModulePermissions('none')) },
+                        ] as const
+                      ).map((preset) => (
                         <Pressable
-                          key={mod}
-                          style={[styles.rbacMobRow, { flexWrap: 'wrap', gap: 8 }]}
-                          onPress={() =>
-                            setAPerms((prev) => ({
-                              ...prev,
-                              [mod]: nextLevel,
-                            }))
-                          }
+                          key={preset.label}
+                          style={{
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            borderRadius: 999,
+                            backgroundColor: FARMDB_COLORS.surfaceMuted,
+                            borderWidth: 1,
+                            borderColor: FARMDB_COLORS.border,
+                          }}
+                          onPress={preset.apply}
                         >
                           <Text
-                            style={[styles.switchLabel, { fontSize: ui.font(13), minWidth: 120 }]}
+                            style={{
+                              fontSize: ui.font(10.5),
+                              fontFamily: FARMDB_FONTS.semibold,
+                              color: FARMDB_COLORS.text,
+                            }}
+                          >
+                            {preset.label}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                  <View style={{ gap: 8 }}>
+                    {FARM_PERMISSION_MODULES.map((mod) => {
+                      const level = aPerms[mod];
+                      return (
+                        <View
+                          key={mod}
+                          style={[styles.rbacMobRow, { flexDirection: 'column', alignItems: 'stretch', gap: 8 }]}
+                        >
+                          <Text
+                            style={[styles.switchLabel, { fontSize: ui.font(13) }]}
                           >
                             {formatPermissionModuleLabel(mod)}
                           </Text>
-                          <Text
-                            style={[
-                              styles.permMobBadge,
-                              { fontSize: ui.font(11) },
-                            ]}
-                          >
-                            {level.toUpperCase()}
-                          </Text>
-                        </Pressable>
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                            {FARM_MODULE_ACCESS_LEVELS.map((lvl) => {
+                              const active = level === lvl;
+                              const labelText =
+                                lvl === 'none'
+                                  ? 'Hidden'
+                                  : lvl === 'view'
+                                    ? 'View'
+                                    : lvl === 'edit'
+                                      ? 'Edit'
+                                      : 'Full';
+                              return (
+                                <Pressable
+                                  key={lvl}
+                                  style={{
+                                    flexGrow: 1,
+                                    minWidth: 62,
+                                    minHeight: Math.max(30, ui.chipHeight - 4),
+                                    paddingHorizontal: 8,
+                                    paddingVertical: 5,
+                                    borderRadius: 8,
+                                    borderWidth: 1,
+                                    borderColor: active
+                                      ? FARMDB_COLORS.accent
+                                      : FARMDB_COLORS.border,
+                                    backgroundColor: active
+                                      ? FARMDB_COLORS.accent
+                                      : FARMDB_COLORS.surface,
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                  }}
+                                  onPress={() =>
+                                    setAPerms((prev) => ({
+                                      ...prev,
+                                      [mod]: lvl,
+                                    }))
+                                  }
+                                >
+                                  <Text
+                                    style={{
+                                      fontSize: ui.font(11),
+                                      fontFamily: active
+                                        ? FARMDB_FONTS.bold
+                                        : FARMDB_FONTS.semibold,
+                                      color: active ? '#ffffff' : FARMDB_COLORS.text,
+                                    }}
+                                  >
+                                    {labelText}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        </View>
                       );
                     })}
                   </View>
@@ -917,41 +1036,105 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
         </SafeAreaView>
       </Modal>
 
-      {/* PIN Modal */}
+      {/* Join Network via Key Modal */}
       <Modal
-        visible={Boolean(pinTarget)}
+        visible={joinOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => setPinTarget(null)}
+        onRequestClose={() => setJoinOpen(false)}
       >
         <View style={styles.pinOverlay}>
           <View style={styles.pinDialog}>
             <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
-              Enter Access PIN
+              Join Farm Network with Key
             </Text>
             <Text style={[styles.subText, { fontSize: ui.font(12) }]}>
-              Passcode for {pinTarget?.displayName}
+              Paste a FARM-XXXX or FDB1:... Join Key to connect{' '}
+              {activeAccount?.displayName ?? 'your account'}.
             </Text>
             <TextInput
-              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(15) }]}
-              secureTextEntry
-              value={pinText}
-              onChangeText={setPinText}
-              placeholder="PIN..."
+              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(14) }]}
+              value={joinKeyInput}
+              onChangeText={setJoinKeyInput}
+              placeholder="FARM-XXXX or FDB1:..."
+              autoCapitalize="none"
             />
-            {pinErr ? <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>{pinErr}</Text> : null}
+            {joinErr ? <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>{joinErr}</Text> : null}
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
               <Pressable
                 style={[styles.secondaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight }]}
-                onPress={() => setPinTarget(null)}
+                onPress={() => setJoinOpen(false)}
               >
                 <Text style={[styles.secondaryBtnText, { fontSize: ui.font(13) }]}>Cancel</Text>
               </Pressable>
               <Pressable
                 style={[styles.primaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight }]}
-                onPress={() => void handlePinSubmit()}
+                disabled={joinNetworkMut.isPending}
+                onPress={() => void handleJoinNetworkSubmit()}
               >
-                <Text style={[styles.primaryBtnText, { fontSize: ui.font(13) }]}>Unlock</Text>
+                <Text style={[styles.primaryBtnText, { fontSize: ui.font(13) }]}>
+                  {joinNetworkMut.isPending ? 'Joining...' : 'Join'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Change Password / PIN Modal */}
+      <Modal
+        visible={pwdOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPwdOpen(false)}
+      >
+        <View style={styles.pinOverlay}>
+          <View style={styles.pinDialog}>
+            <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+              Change Password / PIN
+            </Text>
+            <Text style={[styles.subText, { fontSize: ui.font(12) }]}>
+              Updating credentials for {activeAccount?.displayName ?? 'Account'}
+            </Text>
+            {Boolean(activeAccount?.accessCode && activeAccount.accessCode.trim()) ? (
+              <TextInput
+                style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(14) }]}
+                secureTextEntry
+                value={curPin}
+                onChangeText={setCurPin}
+                placeholder="Current Password / PIN"
+              />
+            ) : null}
+            <TextInput
+              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(14) }]}
+              secureTextEntry
+              value={newPin}
+              onChangeText={setNewPin}
+              placeholder="New Password / PIN (4+ chars)"
+            />
+            <TextInput
+              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(14) }]}
+              secureTextEntry
+              value={confirmPin}
+              onChangeText={setConfirmPin}
+              placeholder="Confirm New Password / PIN"
+            />
+            {pwdErr ? <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>{pwdErr}</Text> : null}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+              <Pressable
+                style={[styles.secondaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight }]}
+                onPress={() => setPwdOpen(false)}
+              >
+                <Text style={[styles.secondaryBtnText, { fontSize: ui.font(13) }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.primaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight }]}
+                disabled={updateMut.isPending}
+                onPress={() => void handleChangePasswordSubmit()}
+              >
+                <Text style={[styles.primaryBtnText, { fontSize: ui.font(13) }]}>
+                  {updateMut.isPending ? 'Saving...' : 'Save'}
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -970,7 +1153,7 @@ const styles = StyleSheet.create({
   },
   activeAccCard: {
     borderColor: FARMDB_COLORS.accent,
-    borderWidth: 1.5,
+    borderWidth: 2.25,
   },
   heroRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   heroIconWrap: {

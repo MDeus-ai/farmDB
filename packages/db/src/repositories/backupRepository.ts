@@ -1,15 +1,19 @@
 import { eq } from 'drizzle-orm';
 import {
   DEFAULT_FARM_SETTINGS,
+  inferDefaultLivestockSex,
+  LIVESTOCK_SEXES,
   validateFarmSettings,
   type FarmDbSnapshot,
   type FarmSettings,
+  type LivestockSex,
 } from '@farmdb/core';
 import type { FarmDrizzleDb } from '../driver';
 import type { DatabaseEventBus } from '../events';
 import {
   alerts,
   animalOwnerships,
+  cloudSyncLogs,
   farmAccounts,
   farmSettings,
   financialLogs,
@@ -43,9 +47,16 @@ export interface RestoreSnapshotResult {
   accountCount?: number;
 }
 
+export interface RestoreSnapshotOptions {
+  preserveLocalSession?: boolean;
+}
+
 export interface BackupRepository {
   exportSnapshot(): Promise<FarmDbSnapshot>;
-  restoreSnapshot(snapshot: FarmDbSnapshot): Promise<RestoreSnapshotResult>;
+  restoreSnapshot(
+    snapshot: FarmDbSnapshot,
+    options?: RestoreSnapshotOptions
+  ): Promise<RestoreSnapshotResult>;
 }
 
 export function createBackupRepository(
@@ -67,6 +78,7 @@ export function createBackupRepository(
     async exportSnapshot(): Promise<FarmDbSnapshot> {
       const [
         currentSettings,
+        settingsUpdatedAt,
         allLivestock,
         allProduction,
         allMedical,
@@ -77,8 +89,10 @@ export function createBackupRepository(
         allWorkerTasks,
         allOwnerships,
         allAccounts,
+        allSyncLogs,
       ] = await Promise.all([
         repos.settings.get(),
+        repos.settings.getUpdatedAt(),
         repos.livestock.list({}),
         repos.production.list({}),
         repos.medical.list({}),
@@ -89,6 +103,7 @@ export function createBackupRepository(
         repos.hr.listTasks({}),
         repos.ownerships ? repos.ownerships.list({}) : Promise.resolve([]),
         repos.network ? repos.network.listAccountsRaw() : Promise.resolve([]),
+        repos.network ? repos.network.listSyncLogs(100) : Promise.resolve([]),
       ]);
 
       return {
@@ -96,6 +111,7 @@ export function createBackupRepository(
         app: 'farmDB',
         exportedAt: new Date().toISOString(),
         settings: currentSettings,
+        ...(settingsUpdatedAt > 0 ? { settingsUpdatedAt } : {}),
         livestock: allLivestock,
         productRecords: allProduction,
         medicalRecords: allMedical,
@@ -106,12 +122,18 @@ export function createBackupRepository(
         workerTasks: allWorkerTasks,
         animalOwnerships: allOwnerships,
         farmAccounts: allAccounts,
+        ...(allSyncLogs.length > 0 ? { cloudSyncLogs: allSyncLogs } : {}),
       };
     },
 
     async restoreSnapshot(
-      snapshot: FarmDbSnapshot
+      snapshot: FarmDbSnapshot,
+      options?: RestoreSnapshotOptions
     ): Promise<RestoreSnapshotResult> {
+      const localSettings = options?.preserveLocalSession
+        ? await repos.settings.get()
+        : null;
+
       // Delete child tables before parent tables to satisfy foreign keys
       await db.delete(workerTasks).run();
       await db.delete(workerPayments).run();
@@ -126,14 +148,34 @@ export function createBackupRepository(
       await db.delete(farmSettings).run();
 
       const now = Date.now();
-      const validated = validateFarmSettings({
+      const rawMergedSettings: Partial<FarmSettings> = {
         ...DEFAULT_FARM_SETTINGS,
         ...(snapshot.settings ?? {}),
-      });
+      };
+      if (options?.preserveLocalSession && localSettings) {
+        const restoredAccountIds = new Set(
+          (snapshot.farmAccounts ?? []).map((a) => a.id)
+        );
+        rawMergedSettings.supabaseUrl =
+          localSettings.supabaseUrl || rawMergedSettings.supabaseUrl;
+        rawMergedSettings.supabaseAnonKey =
+          localSettings.supabaseAnonKey || rawMergedSettings.supabaseAnonKey;
+        rawMergedSettings.cloudWorkspaceId =
+          localSettings.cloudWorkspaceId || rawMergedSettings.cloudWorkspaceId;
+        rawMergedSettings.cloudSyncEnabled = localSettings.cloudSyncEnabled;
+        rawMergedSettings.activeAccountId = restoredAccountIds.has(
+          localSettings.activeAccountId
+        )
+          ? localSettings.activeAccountId
+          : 'owner-admin';
+      }
+
+      const validated = validateFarmSettings(rawMergedSettings);
       const settingsToRestore: FarmSettings =
         validated.ok && validated.data
           ? validated.data
           : { ...DEFAULT_FARM_SETTINGS };
+      const settingsTimestamp = snapshot.settingsUpdatedAt ?? now;
       const settingKeys = Object.keys(settingsToRestore) as Array<
         keyof FarmSettings
       >;
@@ -144,7 +186,7 @@ export function createBackupRepository(
           settingKeys.map((key) => ({
             key,
             value: String(settingsToRestore[key]),
-            updatedAt: now,
+            updatedAt: settingsTimestamp,
           }))
         )
         .run();
@@ -157,6 +199,9 @@ export function createBackupRepository(
           .values({
             id: row.id,
             species: row.species,
+            sex: (LIVESTOCK_SEXES as readonly string[]).includes(row.sex)
+              ? (row.sex as LivestockSex)
+              : inferDefaultLivestockSex(row.tagNumber),
             tagNumber: row.tagNumber,
             name: row.name,
             breed: row.breed,
@@ -364,6 +409,9 @@ export function createBackupRepository(
             relationship: row.relationship ?? null,
             avatarKey: row.avatarKey ?? 'farmer',
             accessCode: row.accessCode ?? null,
+            supabaseUrl: row.supabaseUrl ?? null,
+            supabaseAnonKey: row.supabaseAnonKey ?? null,
+            cloudWorkspaceId: row.cloudWorkspaceId ?? null,
             isPrimaryAdmin: Boolean(row.isPrimaryAdmin),
             canManageNetwork: Boolean(row.canManageNetwork),
             canSyncCloud: Boolean(row.canSyncCloud),
@@ -374,6 +422,29 @@ export function createBackupRepository(
             updatedAt: row.updatedAt,
           })
           .run();
+      }
+
+      const syncLogsList = snapshot.cloudSyncLogs ?? [];
+      if (syncLogsList.length > 0) {
+        const existingLogRows = await db
+          .select({ id: cloudSyncLogs.id })
+          .from(cloudSyncLogs);
+        const existingLogIds = new Set(existingLogRows.map((r) => r.id));
+        for (const log of syncLogsList) {
+          if (existingLogIds.has(log.id)) continue;
+          await db
+            .insert(cloudSyncLogs)
+            .values({
+              id: log.id,
+              direction: log.direction,
+              status: log.status,
+              recordsPushed: Number(log.recordsPushed ?? 0),
+              recordsPulled: Number(log.recordsPulled ?? 0),
+              summary: log.summary,
+              createdAt: log.createdAt,
+            })
+            .run();
+        }
       }
 
       events.emit(['*']);

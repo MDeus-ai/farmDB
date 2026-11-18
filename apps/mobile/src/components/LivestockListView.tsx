@@ -11,6 +11,7 @@ import {
   formatAnimalAge,
   formatDisplayDate,
   formatOwnershipCategoryLabel,
+  formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
   getPrimaryOwnershipByLivestockMap,
@@ -19,15 +20,17 @@ import {
   SPECIES_LIST,
   type Livestock,
   type LivestockFilter,
+  type LivestockSex,
   type LivestockSortOption,
+  describeModuleAccessLevel,
   type LivestockStatus,
   type Species,
 } from '@farmdb/core';
 import {
-  useCreateLivestock,
   useDeleteLivestock,
   useFarmSummary,
   useLivestockList,
+  useModulePermissions,
   useOwnershipList,
 } from '@farmdb/db';
 import {
@@ -41,7 +44,7 @@ import {
   FARMDB_FONTS,
   useUiScale,
 } from '../theme/uiScale';
-import { AppIcon, SpeciesIcon, StatusIcon } from './FarmIcons';
+import { AppIcon, SexIcon, SpeciesIcon, StatusIcon } from './FarmIcons';
 import { FarmFlatList } from './FarmScrollView';
 import { LivestockDetailModal } from './LivestockDetailModal';
 import { LivestockFormModal } from './LivestockFormModal';
@@ -56,9 +59,11 @@ interface LivestockListViewProps {
 
 export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) {
   const ui = useUiScale();
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('livestock');
   const iconMode = ui.settings.mobileIconMode;
+  type MobileSpeciesFilter = 'all' | 'cow' | 'bull' | 'cattle' | 'goat' | 'sheep' | 'duck' | 'other';
   const [search, setSearch] = useState('');
-  const [species, setSpecies] = useState<Species | 'all'>('all');
+  const [speciesChoice, setSpeciesChoice] = useState<MobileSpeciesFilter>('all');
   const [status, setStatus] = useState<LivestockStatus | 'all'>('active');
   const [sortBy, setSortBy] = useState<LivestockSortOption>('updated');
   const [modalVisible, setModalVisible] = useState(false);
@@ -67,15 +72,29 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const filter: LivestockFilter = useMemo(
-    () => ({ search, species, status }),
-    [search, species, status]
+    () => ({
+      search,
+      species:
+        speciesChoice === 'cow' ||
+        speciesChoice === 'bull' ||
+        speciesChoice === 'cattle'
+          ? 'cow'
+          : speciesChoice,
+      sex:
+        speciesChoice === 'cow'
+          ? 'female'
+          : speciesChoice === 'bull'
+            ? 'male'
+            : 'all',
+      status,
+    }),
+    [search, speciesChoice, status]
   );
 
   const listQuery = useLivestockList(filter);
   const allForTagsQuery = useLivestockList({});
   const ownershipsQuery = useOwnershipList({ status: 'active' });
   const summaryQuery = useFarmSummary();
-  const createMutation = useCreateLivestock();
   const deleteMutation = useDeleteLivestock();
 
   const ownershipByAnimal = useMemo(
@@ -127,15 +146,30 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
     []
   );
 
-  const speciesFilterOptions = useMemo<ModernDropdownOption<Species | 'all'>[]>(
+  const speciesFilterOptions = useMemo<ModernDropdownOption<MobileSpeciesFilter>[]>(
     () => [
       {
         value: 'all',
         label: 'All Species',
         iconSource: MOBILE_APP_ICONS.group,
       },
-      ...SPECIES_LIST.map((sp) => ({
-        value: sp,
+      {
+        value: 'cow',
+        label: 'Cow',
+        iconSource: getSpeciesPngSource('cow', 'female'),
+      },
+      {
+        value: 'bull',
+        label: 'Bull',
+        iconSource: getSpeciesPngSource('cow', 'male'),
+      },
+      {
+        value: 'cattle',
+        label: 'Cattle (All)',
+        iconSource: MOBILE_APP_ICONS.herd,
+      },
+      ...SPECIES_LIST.filter((sp) => sp !== 'cow').map((sp) => ({
+        value: sp as MobileSpeciesFilter,
         label: formatSpeciesLabel(sp),
         iconSource: getSpeciesPngSource(sp),
       })),
@@ -143,80 +177,8 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
     []
   );
 
-  async function handleLoadSample() {
-    const existingByTag = new Map(
-      (allForTagsQuery.data ?? []).map((item) => [item.tagNumber, item.id])
-    );
-
-    async function ensureSample(input: {
-      tagNumber: string;
-      name: string;
-      breed: string;
-      dob: string;
-      sireTag?: string;
-      damTag?: string;
-    }) {
-      const foundId = existingByTag.get(input.tagNumber);
-      if (foundId) return foundId;
-      const created = await createMutation.mutateAsync({
-        species: 'cow',
-        tagNumber: input.tagNumber,
-        name: input.name,
-        breed: input.breed,
-        dob: input.dob,
-        status: 'active',
-        sireId: input.sireTag ? (existingByTag.get(input.sireTag) ?? null) : null,
-        damId: input.damTag ? (existingByTag.get(input.damTag) ?? null) : null,
-      });
-      existingByTag.set(created.tagNumber, created.id);
-      return created.id;
-    }
-
-    await ensureSample({
-      tagNumber: 'BULL-101',
-      name: 'Titan',
-      breed: 'Holstein',
-      dob: '2019-04-10',
-    });
-    await ensureSample({
-      tagNumber: 'COW-318',
-      name: 'Willow',
-      breed: 'Ayrshire',
-      dob: '2020-03-18',
-    });
-    await ensureSample({
-      tagNumber: 'BULL-108',
-      name: 'Orion',
-      breed: 'Jersey',
-      dob: '2020-07-12',
-    });
-    await ensureSample({
-      tagNumber: 'COW-402',
-      name: 'Bessie',
-      breed: 'Holstein',
-      dob: '2022-03-14',
-      sireTag: 'BULL-101',
-      damTag: 'COW-318',
-    });
-    await ensureSample({
-      tagNumber: 'COW-409',
-      name: 'Daisy',
-      breed: 'Jersey',
-      dob: '2022-09-02',
-      sireTag: 'BULL-108',
-      damTag: 'COW-318',
-    });
-    await ensureSample({
-      tagNumber: 'COW-512',
-      name: 'Clover',
-      breed: 'Holstein',
-      dob: '2024-06-21',
-      sireTag: 'BULL-108',
-      damTag: 'COW-402',
-    });
-  }
-
   async function handleDelete(item: Livestock) {
+    if (!canDelete) return;
     if (ui.settings.confirmBeforeDelete && confirmDeleteId !== item.id) {
       setConfirmDeleteId(item.id);
       return;
@@ -281,32 +243,55 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
           ) : null}
         </View>
 
-        <Pressable
-          accessibilityLabel="Add Livestock"
-          style={[
-            styles.addBtn,
-            {
-              minHeight: ui.controlHeight,
-              paddingHorizontal: ui.space(iconMode ? 14 : 16),
-              borderRadius: Math.max(10, ui.radius - 2),
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-            },
-          ]}
-          onPress={() => {
-            setEditing(null);
-            setModalVisible(true);
-          }}
-        >
-          <AppIcon name="plus" size={ui.font(18)} color="#ffffff" />
-          {!iconMode ? (
-            <Text style={[styles.addBtnText, { fontSize: ui.font(13) }]}>
-              Add
+        {canEdit ? (
+          <Pressable
+            accessibilityLabel="Add Livestock"
+            style={[
+              styles.addBtn,
+              {
+                minHeight: ui.controlHeight,
+                paddingHorizontal: ui.space(iconMode ? 14 : 16),
+                borderRadius: Math.max(10, ui.radius - 2),
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+              },
+            ]}
+            onPress={() => {
+              setEditing(null);
+              setModalVisible(true);
+            }}
+          >
+            <AppIcon name="plus" size={ui.font(18)} color="#ffffff" />
+            {!iconMode ? (
+              <Text style={[styles.addBtnText, { fontSize: ui.font(13) }]}>
+                Add
+              </Text>
+            ) : null}
+          </Pressable>
+        ) : (
+          <View
+            style={{
+              paddingHorizontal: ui.space(10),
+              paddingVertical: ui.space(6),
+              borderRadius: 999,
+              backgroundColor: '#f3efe4',
+              borderWidth: 1,
+              borderColor: FARMDB_COLORS.border,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: FARMDB_FONTS.bold,
+                fontSize: ui.font(11),
+                color: FARMDB_COLORS.textMuted,
+              }}
+            >
+              {describeModuleAccessLevel(accessLevel)}
             </Text>
-          ) : null}
-        </Pressable>
+          </View>
+        )}
       </View>
 
       {/* Filters & Date Sort */}
@@ -324,11 +309,11 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
         <View style={{ flex: 1, minWidth: ui.isCramped ? 128 : 96 }}>
           <ModernDropdown
             compact
-            value={species}
+            value={speciesChoice}
             options={speciesFilterOptions}
             title="Species"
             accessibilityLabel="Filter by Species"
-            onChange={setSpecies}
+            onChange={setSpeciesChoice}
           />
         </View>
         <View style={{ flex: 1, minWidth: ui.isCramped ? 140 : 96 }}>
@@ -403,24 +388,6 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
             <Text style={[styles.emptyTitle, { fontSize: ui.font(16) }]}>
               {listQuery.isLoading ? 'Loading...' : 'No livestock found'}
             </Text>
-            {!listQuery.isLoading && (summary?.totalLivestock ?? 0) === 0 ? (
-              <Pressable
-                style={[
-                  styles.sampleBtn,
-                  {
-                    minHeight: ui.controlHeight,
-                    paddingHorizontal: ui.space(16),
-                    justifyContent: 'center',
-                  },
-                ]}
-                onPress={() => void handleLoadSample()}
-                disabled={createMutation.isPending}
-              >
-                <Text style={[styles.sampleBtnText, { fontSize: ui.font(13) }]}>
-                  Load Sample Herd
-                </Text>
-              </Pressable>
-            ) : null}
           </View>
         }
         renderItem={({ item }) => {
@@ -460,6 +427,7 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
                   >
                     <SpeciesIcon
                       species={item.species}
+                      sex={item.sex}
                       size={ui.font(24)}
                       color={FARMDB_COLORS.accent}
                     />
@@ -481,11 +449,14 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
                     </View>
                   </View>
 
-                  <Text style={[styles.animalMeta, { fontSize: ui.font(13) }]}>
-                    {formatSpeciesLabel(item.species)}
-                    {item.breed ? ` · ${item.breed}` : ''}
-                    {item.dob ? ` · ${formatAnimalAge(item.dob)}` : ''}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                    <SexIcon sex={item.sex} size={ui.font(12)} />
+                    <Text style={[styles.animalMeta, { fontSize: ui.font(13), flexShrink: 1 }]}>
+                      {formatSpeciesLabel(item.species, item.sex)} · {formatSexLabel(item.sex)}
+                      {item.breed ? ` · ${item.breed}` : ''}
+                      {item.dob ? ` · ${formatAnimalAge(item.dob)}` : ''}
+                    </Text>
+                  </View>
 
                   {showOwnership ? (
                     <View style={styles.ownershipChip}>
@@ -506,67 +477,11 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
                   </Text>
                 </View>
 
-                <View style={[styles.cardActions, { gap: ui.space(6), flexWrap: 'wrap' }]}>
-                  <Pressable
-                    accessibilityLabel={`Edit ${item.tagNumber}`}
-                    style={[
-                      styles.secondaryAction,
-                      {
-                        minHeight: Math.max(30, ui.chipHeight - 4),
-                        paddingHorizontal: ui.space(10),
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 4,
-                      },
-                    ]}
-                    onPress={() => {
-                      setEditing(item);
-                      setModalVisible(true);
-                    }}
-                  >
-                    <AppIcon
-                      name="edit"
-                      size={ui.font(13)}
-                      color={FARMDB_COLORS.text}
-                    />
-                    {!iconMode ? (
-                      <Text style={[styles.secondaryActionText, { fontSize: ui.font(11) }]}>
-                        Edit
-                      </Text>
-                    ) : null}
-                  </Pressable>
-
-                  {confirmDeleteId === item.id ? (
-                    <>
+                {canEdit || canDelete ? (
+                  <View style={[styles.cardActions, { gap: ui.space(6), flexWrap: 'wrap' }]}>
+                    {canEdit ? (
                       <Pressable
-                        accessibilityLabel="Confirm delete"
-                        style={[
-                          styles.dangerAction,
-                          {
-                            minHeight: Math.max(30, ui.chipHeight - 4),
-                            paddingHorizontal: ui.space(10),
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                          },
-                        ]}
-                        onPress={() => void handleDelete(item)}
-                      >
-                        <AppIcon
-                          name="check"
-                          size={ui.font(13)}
-                          color={FARMDB_COLORS.danger}
-                        />
-                        {!iconMode ? (
-                          <Text style={[styles.dangerActionText, { fontSize: ui.font(11) }]}>
-                            Confirm
-                          </Text>
-                        ) : null}
-                      </Pressable>
-                      <Pressable
-                        accessibilityLabel="Keep record"
+                        accessibilityLabel={`Edit ${item.tagNumber}`}
                         style={[
                           styles.secondaryAction,
                           {
@@ -578,49 +493,111 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
                             gap: 4,
                           },
                         ]}
-                        onPress={() => setConfirmDeleteId(null)}
+                        onPress={() => {
+                          setEditing(item);
+                          setModalVisible(true);
+                        }}
                       >
                         <AppIcon
-                          name="close"
+                          name="edit"
                           size={ui.font(13)}
                           color={FARMDB_COLORS.text}
                         />
                         {!iconMode ? (
                           <Text style={[styles.secondaryActionText, { fontSize: ui.font(11) }]}>
-                            Keep
+                            Edit
                           </Text>
                         ) : null}
                       </Pressable>
-                    </>
-                  ) : (
-                    <Pressable
-                      accessibilityLabel={`Delete ${item.tagNumber}`}
-                      style={[
-                        styles.dangerAction,
-                        {
-                          minHeight: Math.max(30, ui.chipHeight - 4),
-                          paddingHorizontal: ui.space(10),
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 4,
-                        },
-                      ]}
-                      onPress={() => void handleDelete(item)}
-                    >
-                      <AppIcon
-                        name="trash"
-                        size={ui.font(13)}
-                        color={FARMDB_COLORS.danger}
-                      />
-                      {!iconMode ? (
-                        <Text style={[styles.dangerActionText, { fontSize: ui.font(11) }]}>
-                          Delete
-                        </Text>
-                      ) : null}
-                    </Pressable>
-                  )}
-                </View>
+                    ) : null}
+
+                    {canDelete ? (
+                      confirmDeleteId === item.id ? (
+                        <>
+                          <Pressable
+                            accessibilityLabel="Confirm delete"
+                            style={[
+                              styles.dangerAction,
+                              {
+                                minHeight: Math.max(30, ui.chipHeight - 4),
+                                paddingHorizontal: ui.space(10),
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 4,
+                              },
+                            ]}
+                            onPress={() => void handleDelete(item)}
+                          >
+                            <AppIcon
+                              name="check"
+                              size={ui.font(13)}
+                              color={FARMDB_COLORS.danger}
+                            />
+                            {!iconMode ? (
+                              <Text style={[styles.dangerActionText, { fontSize: ui.font(11) }]}>
+                                Confirm
+                              </Text>
+                            ) : null}
+                          </Pressable>
+                          <Pressable
+                            accessibilityLabel="Keep record"
+                            style={[
+                              styles.secondaryAction,
+                              {
+                                minHeight: Math.max(30, ui.chipHeight - 4),
+                                paddingHorizontal: ui.space(10),
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 4,
+                              },
+                            ]}
+                            onPress={() => setConfirmDeleteId(null)}
+                          >
+                            <AppIcon
+                              name="close"
+                              size={ui.font(13)}
+                              color={FARMDB_COLORS.text}
+                            />
+                            {!iconMode ? (
+                              <Text style={[styles.secondaryActionText, { fontSize: ui.font(11) }]}>
+                                Keep
+                              </Text>
+                            ) : null}
+                          </Pressable>
+                        </>
+                      ) : (
+                        <Pressable
+                          accessibilityLabel={`Delete ${item.tagNumber}`}
+                          style={[
+                            styles.dangerAction,
+                            {
+                              minHeight: Math.max(30, ui.chipHeight - 4),
+                              paddingHorizontal: ui.space(10),
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() => void handleDelete(item)}
+                        >
+                          <AppIcon
+                            name="trash"
+                            size={ui.font(13)}
+                            color={FARMDB_COLORS.danger}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.dangerActionText, { fontSize: ui.font(11) }]}>
+                              Delete
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      )
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             </Pressable>
           );
@@ -880,17 +857,5 @@ const styles = StyleSheet.create({
     color: '#5d675f',
     textAlign: 'center',
     marginTop: 6,
-  },
-  sampleBtn: {
-    marginTop: 14,
-    backgroundColor: '#e6f2ec',
-    borderRadius: 9,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  sampleBtnText: {
-    color: '#2d6a4f',
-    fontFamily: FARMDB_FONTS.bold,
-    fontSize: 13,
   },
 });

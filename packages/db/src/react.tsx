@@ -6,16 +6,23 @@ import {
   useQuery,
 } from '@tanstack/react-query';
 import {
+  canAccountDeleteInModule,
+  canAccountEditModule,
+  canAccountViewModule,
   formatAlertNotificationContent,
   formatPaymentAlertNotification,
+  getAccountModuleAccess,
+  isAdminAccount,
   type AlertFilter,
   type AlertItem,
   type AnimalOwnership,
   type AnimalOwnershipFilter,
+  type AppSectionId,
   type CloudSyncDirection,
   type CloudSyncLog,
   type FarmAccount,
   type FarmAccountFilter,
+  type FarmModuleAccessLevel,
   type FarmSettings,
   type FarmWorker,
   type FarmWorkerFilter,
@@ -64,6 +71,7 @@ import {
   DatabaseEventBus,
   FARMDB_QUERY_KEYS,
 } from './events';
+import { wrapSessionWithRbac } from './rbac';
 import {
   createAlertsRepository,
   type AlertsRepository,
@@ -101,6 +109,8 @@ import {
   type JoinFarmNetworkInput,
   type JoinFarmNetworkResult,
   type NetworkRepository,
+  type RecoverAdminCloudInput,
+  type RecoverAdminCloudResult,
 } from './repositories/networkRepository';
 import {
   createOwnershipRepository,
@@ -183,7 +193,7 @@ export function createFarmDbSession(driver: SqlDriver): FarmDbContextValue {
     settings,
   });
 
-  return {
+  return wrapSessionWithRbac({
     driverKind: driver.kind,
     db,
     driver,
@@ -198,7 +208,7 @@ export function createFarmDbSession(driver: SqlDriver): FarmDbContextValue {
     network,
     settings,
     backup,
-  };
+  });
 }
 
 export interface FarmDbProviderProps {
@@ -757,6 +767,30 @@ export function useActiveFarmAccount() {
   });
 }
 
+export interface ModulePermissionsState {
+  accessLevel: FarmModuleAccessLevel;
+  canView: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  isAdmin: boolean;
+  activeAccount: FarmAccount | undefined;
+}
+
+export function useModulePermissions(
+  section: AppSectionId
+): ModulePermissionsState {
+  const { data: activeAccount } = useActiveFarmAccount();
+  const accessLevel = getAccountModuleAccess(activeAccount, section);
+  return {
+    accessLevel,
+    canView: canAccountViewModule(activeAccount, section),
+    canEdit: canAccountEditModule(activeAccount, section),
+    canDelete: canAccountDeleteInModule(activeAccount, section),
+    isAdmin: isAdminAccount(activeAccount),
+    activeAccount,
+  };
+}
+
 export function useSwitchFarmAccount() {
   const { network } = useFarmDb();
   return useMutation<
@@ -805,6 +839,13 @@ export function useJoinFarmNetwork() {
   const { network } = useFarmDb();
   return useMutation<JoinFarmNetworkResult, Error, JoinFarmNetworkInput>({
     mutationFn: (input) => network.joinNetworkWithKey(input),
+  });
+}
+
+export function useRecoverAdminFromCloud() {
+  const { network } = useFarmDb();
+  return useMutation<RecoverAdminCloudResult, Error, RecoverAdminCloudInput>({
+    mutationFn: (input) => network.recoverAdminFromCloud(input),
   });
 }
 

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import {
   DEFAULT_FARM_SETTINGS,
+  describeModuleAccessLevel,
   formatDisplayDate,
   getAlertUrgency,
   getTodayIsoDate,
@@ -18,6 +19,7 @@ import {
   useDeleteAlert,
   useFarmSettings,
   useLivestockList,
+  useModulePermissions,
   useToggleAlertResolved,
 } from '@farmdb/db';
 import { APP_ICONS } from '../assets/icons';
@@ -34,6 +36,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
   const livestockQuery = useLivestockList({});
   const settingsQuery = useFarmSettings();
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('alerts');
   const allAlertsQuery = useAlertList({});
 
   const [kindFilter, setKindFilter] = useState<AlertEntryKind | 'all'>('all');
@@ -206,15 +209,22 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
           <h1 className="page-title">Alerts &amp; Notes</h1>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={() => void handleRunDueCheck()}
-          disabled={checkingDue}
-        >
-          <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
-          {checkingDue ? 'Checking...' : 'Check Due Alerts Now'}
-        </button>
+        <div className="row-actions">
+          {(!canEdit || !canDelete) && (
+            <span className="status-pill status-sold">
+              {describeModuleAccessLevel(accessLevel)}
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => void handleRunDueCheck()}
+            disabled={checkingDue}
+          >
+            <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
+            {checkingDue ? 'Checking...' : 'Check Due Alerts Now'}
+          </button>
+        </div>
       </div>
 
       <div className="stats-grid">
@@ -247,6 +257,12 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
         <div className="card">
           <h2 className="card-section-title">New Alert or Note</h2>
 
+          {!canEdit ? (
+            <p style={{ color: 'var(--text-muted)', marginBottom: 0 }}>
+              View-Only Access: Your account can review reminders and notes, but cannot schedule or resolve entries.
+            </p>
+          ) : (
+            <>
           <div className="view-toggle" style={{ marginBottom: 14 }}>
             <button
               type="button"
@@ -357,6 +373,8 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
               </button>
             </div>
           </form>
+            </>
+          )}
         </div>
 
         <div className="card">
@@ -421,65 +439,70 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                       </p>
                     </div>
 
-                    <div className="row-actions">
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() =>
-                          void toggleMutation.mutateAsync({
-                            id: item.id,
-                            isResolved: !item.isResolved,
-                          })
-                        }
-                        title={item.isResolved ? 'Reopen' : 'Mark Resolved'}
-                      >
-                        {item.isResolved ? (
-                          <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
-                        ) : (
-                          <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                        )}
-                      </button>
-                      {confirmDeleteId === item.id ? (
-                        <>
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-sm"
-                            onClick={() => {
-                              setConfirmDeleteId(null);
-                              void deleteMutation.mutateAsync(item.id);
-                            }}
-                            disabled={deleteMutation.isPending}
-                          >
-                            <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                            Confirm
-                          </button>
+                    {(canEdit || canDelete) && (
+                      <div className="row-actions">
+                        {canEdit && (
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            onClick={() => setConfirmDeleteId(null)}
-                          >
-                            <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          onClick={() => {
-                            if (settings.confirmBeforeDelete) {
-                              setConfirmDeleteId(item.id);
-                            } else {
-                              void deleteMutation.mutateAsync(item.id);
+                            onClick={() =>
+                              void toggleMutation.mutateAsync({
+                                id: item.id,
+                                isResolved: !item.isResolved,
+                              })
                             }
-                          }}
-                          disabled={deleteMutation.isPending}
-                          aria-label="Delete alert or note"
-                        >
-                          <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
-                        </button>
-                      )}
-                    </div>
+                            title={item.isResolved ? 'Reopen' : 'Mark Resolved'}
+                          >
+                            {item.isResolved ? (
+                              <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
+                            ) : (
+                              <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                            )}
+                          </button>
+                        )}
+                        {canDelete &&
+                          (confirmDeleteId === item.id ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => {
+                                  setConfirmDeleteId(null);
+                                  void deleteMutation.mutateAsync(item.id);
+                                }}
+                                disabled={deleteMutation.isPending}
+                              >
+                                <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setConfirmDeleteId(null)}
+                              >
+                                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              onClick={() => {
+                                if (settings.confirmBeforeDelete) {
+                                  setConfirmDeleteId(item.id);
+                                } else {
+                                  void deleteMutation.mutateAsync(item.id);
+                                }
+                              }}
+                              disabled={deleteMutation.isPending}
+                              aria-label="Delete alert or note"
+                            >
+                              <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                            </button>
+                          ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}

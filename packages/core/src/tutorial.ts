@@ -33,31 +33,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Getting Started',
     targetSection: 'livestock',
     summary:
-      'farmDB keeps your whole livestock farm organized in one place. Every record saves directly onto your phone or computer first using SQLite, so it works even with zero internet connection.',
+      'farmDB keeps your entire livestock operation organized in one offline-first SQLite database on Desktop and Mobile, with optional Admin-controlled Supabase cloud synchronization.',
     cardsAndFeatures: [
       {
-        name: 'Navigation Menu (Sidebar / Hamburger Drawer)',
+        name: 'Navigation Menu & Custom Desktop Titlebar',
         explanation:
-          'On Desktop, use the dark-green sidebar on the left to switch pages. On Mobile, use the 5 everyday buttons on the bottom pill or tap the ☰ menu button at the top-left for every page, Settings, and Login.',
+          'On Desktop, use the dark-green sidebar to switch modules and the top titlebar for quick Cloud Sync status, Alert shortcuts, Settings, Account, and custom window controls. On Mobile, use the floating bottom bar or tap the top-left ☰ menu for all modules, Settings, and Sign Out.',
       },
       {
-        name: 'Live Record Counters',
+        name: 'Live Record Counters & Active Focus Highlights',
         explanation:
-          'Small numbers beside menu items show how many active animals, milk entries, medical visits, financial logs, or open alerts you currently have.',
+          'Badges beside menu items show current counts for active animals, milk entries, medical records, finances, staff, and open alerts, framed with clear green selection/hover highlights.',
       },
       {
-        name: 'Account Card & Login / Sign Up',
+        name: 'Farm Hover Hints (Desktop)',
         explanation:
-          'At the bottom of the menu, see who is signed in (Admin Account or User Account), switch accounts, create a new user, or connect to another farm using a Join Key.',
+          'Hover over toolbar icons, tree controls, preview buttons, or actions to see a themed farmDB hint pop-up explaining what that control does.',
+      },
+      {
+        name: 'Account Card & Sign Out',
+        explanation:
+          'Displays the currently signed-in Admin or User profile at the bottom of the menu. Click Sign Out whenever you need to exit your active session before signing into or registering another account.',
       },
     ],
     howToSteps: [
       'Pick any module from the left sidebar (Desktop) or bottom bar / ☰ drawer (Mobile).',
-      'New farms can click "Load Sample" buttons on Livestock, Ownerships, Family Tree, or HR to practice with demo cows and data.',
+      'Start in Herd Registry to register your livestock, then track Family Tree lineage, female Milk Production, Medical treatments, Ownerships, HR, and Financial Ledger.',
       'Re-open this walkthrough anytime from the App Guide button in the menu or inside Settings.',
     ],
     proTip:
-      'Your screens stay clean and free of clutter — anytime you forget what a card or button does, open App Guide.',
+      'While signed in, you must click Sign Out before logging into another account — keeping every person’s workspace session isolated just like standard desktop and mobile software.',
   },
   {
     id: 'livestock',
@@ -66,36 +71,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Herd & Genetics',
     targetSection: 'livestock',
     summary:
-      'This is your digital farm notebook for every animal on the farm — cows, goats, sheep, ducks, and other livestock.',
+      'Your digital herd register for cows, bulls, goats, sheep, ducks, and other livestock — tracking Sex, Cow vs. Bull labels, validated ear tags, birth dates, lineage links, and cloud-ready optimized photos.',
     cardsAndFeatures: [
       {
-        name: 'Summary Cards (Active Herd, Cows, Total, Sold / Deceased)',
+        name: 'Summary Cards (Active Herd, Cows/Bulls, Total, Sold / Deceased)',
         explanation:
-          'Shows live counts of how many animals are currently on the farm versus already sold or deceased.',
+          'Displays live counts across active animals, cattle breakdown, total registered head, and sold or deceased stock.',
       },
       {
-        name: 'Search & Filters (Status, Species, Sort)',
+        name: 'Sex (Female / Male) & Cow vs. Bull Icons',
         explanation:
-          'Quickly find any animal by typing its ear tag, name, or breed, or narrow the list to one species or active-only animals.',
+          'Every animal records Sex explicitly with dedicated gender icons and automatic Cow vs. Bull distinction and icons across filters, cards, tables, and charts.',
       },
       {
-        name: 'Add Livestock Button & Form',
+        name: 'Add / Edit Livestock Form & Validation',
         explanation:
-          'Creates a new animal profile with Tag Number (must be unique), Species icon, Name, Breed, Date of Birth (used to compute age automatically), Status, and an optional photo.',
+          'Validates unique normalized Tag Numbers, realistic non-future birth dates, species, sex, breed, status, and optional Sire/Dam (when your account has Family Tree edit permissions).',
       },
       {
-        name: 'Animal Card / Row & Profile Pop-up',
+        name: 'Optimized Animal Photos & Enlarged Lightbox Viewer',
         explanation:
-          'Click or tap any animal to open its full Animal Profile — update its status quickly, attach a Sire/Dam, see its milk & medical history, or jump straight to its Family Tree.',
+          'Uploaded livestock photos are automatically compressed into lightweight ~480px WebP/JPEG images (~15-35 KB) so they store offline AND sync across Supabase Cloud DB. Click any photo to open it in the enlarged Image Viewer window.',
       },
     ],
     howToSteps: [
-      'Tap + Add Livestock (or + Add) and enter at least a Species and unique Tag Number (like COW-402).',
-      'Optionally add Name, Breed, Date of Birth, and take or pick a photo.',
-      'Tap any saved animal later to update its status to Sold or Deceased, or inspect all of its farm records.',
+      'Click + Add Livestock (or + Add) and select Species, Sex (Female or Male), unique Tag Number (such as COW-402 or BULL-101), Name, Breed, and Date of Birth.',
+      'Attach a photo if desired — farmDB optimizes it automatically for fast offline viewing and cloud sync.',
+      'Click any animal row/card (or the Eye quick-preview icon) to inspect details, enlarge its photo, change status, or jump directly to its Family Tree.',
     ],
     proTip:
-      'Add accurate Dates of Birth when registering calves so Farm Statistics can automatically group your herd by age.',
+      'Always set accurate Sex and Date of Birth when registering livestock — only female animals appear in Milk Production dropdowns, and Farm Statistics uses birth dates and sex to build cohort analytics.',
   },
   {
     id: 'ownerships',
@@ -104,36 +109,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Herd & Genetics',
     targetSection: 'ownerships',
     summary:
-      'Use Ownerships whenever an animal physically on your farm belongs completely or partly to someone else — such as boarded cattle, sold cows waiting for pickup, or bulls brought in temporarily for breeding.',
+      'Track custody whenever an animal on the farm is shared, boarded, on temporary breeding loan, or already sold and awaiting buyer pickup.',
     cardsAndFeatures: [
       {
         name: 'Custody Summary Cards',
         explanation:
-          'Shows active non-farm animals, sold animals still awaiting buyer pickup, breeding/quarantine guests, and total care/boarding fees.',
+          'Summarizes active external/shared animals, sold livestock awaiting buyer pickup, breeding/quarantine guests, and total care or boarding fees.',
       },
       {
-        name: 'All Records vs. Owners Directory Tabs',
+        name: 'Custody Records vs. Owners Directory Tabs',
         explanation:
-          'View individual animal custody agreements or group animals by owner name and contact info.',
+          'Switch between individual custody agreements and a grouped directory organized by each external owner or partner.',
       },
       {
-        name: 'Ownership Form Fields',
+        name: 'Ownership Form & Date Validation',
         explanation:
-          'Choose the animal, enter Owner Name & Contact, pick Category (Farm Owned, Co-Owned, Boarded / External, Sold Awaiting Pickup, Breeding Loan), Share %, Start/Pickup Dates, and optional Boarding Fee.',
+          'Choose the animal, enter Owner Name & Contact, pick Category (Farm Owned, Co-Owned, Boarded / External, Sold Awaiting Pickup, Breeding Loan), Share %, valid Start/Expected End Dates, and optional Boarding Fee.',
       },
       {
         name: 'Linked Farm Network Account',
         explanation:
-          'Optional field letting Admins connect an ownership record directly to a partner’s Farm Network account.',
+          'Optional field allowing Admins to link a custody record directly to a partner’s Farm Network account.',
       },
     ],
     howToSteps: [
-      'Click Add Ownership Record and select the animal staying on your farm.',
-      'Enter the external owner’s name, choose why the animal is on the farm (e.g. Sold Retained or Breeding Loan), and save.',
-      'Change status to Returned or Picked Up once the animal leaves the farm.',
+      'Click Record Ownership (or Add Ownership Record) and select the animal staying on your farm.',
+      'Enter the external owner details, custody category, share percentage, dates, and optional boarding fee, then save.',
+      'Update status to Returned or Picked Up once the animal leaves your custody.',
     ],
     proTip:
-      'Animals with an active external ownership automatically display a colored owner tag in your Herd Registry list so staff never confuse them with farm-owned stock.',
+      'Animals with active non-farm custody display an owner badge directly inside Herd Registry so workers always know which stock belongs to external partners or buyers.',
   },
   {
     id: 'family_tree',
@@ -142,36 +147,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Herd & Genetics',
     targetSection: 'family_tree',
     summary:
-      'Trace parents, grandparents, siblings, and calves visually so you know which bull bred which cow and avoid accidental inbreeding.',
+      'Trace up to three+ generations of ancestors, siblings, and calves in both Pedigree Tree and Simplified Graph views with inbreeding checks and role-based edit protection.',
     cardsAndFeatures: [
       {
-        name: 'Lineage KPIs (In Family Lines, Parent Bonds, Depth, Dynasties)',
+        name: 'Pedigree Tree & Simplified Graph Views',
         explanation:
-          'Measures how many animals have parent records linked, the deepest tracked generation, and distinct family bloodline groups.',
+          'Toggle cleanly inside Pedigree Tree between rich Pedigree cards and the compact Simplified Graph bloodline diagram, plus Progeny & Siblings and Bloodline Map sub-tabs.',
       },
       {
-        name: 'Species Filter & Focal Animal Selector',
+        name: 'Click-and-Drag Tree Panning',
         explanation:
-          'Pick any animal to make it the center of attention; click any parent or calf node on the tree to smoothly refocus around that animal.',
+          'On Desktop, left-click and move the mouse directly on the Pedigree Tree or Simplified Graph canvas to pan/scroll across ancestors cleanly (or swipe/drag on Mobile).',
       },
       {
-        name: 'Tree Views (Pedigree, Progeny & Siblings, Bloodline Map)',
+        name: 'Sex & Cow/Bull Distinction + Quick Eye Preview',
         explanation:
-          'Switch between upward ancestors, downward calves/siblings, or an interactive herd-wide bloodline relationship map.',
+          'Every node shows clear Cow/Bull/species and sex indicators, plus a quick-view Eye button to inspect full animal metrics without losing your place in the tree.',
       },
       {
-        name: 'Link Parents & Calves Editor',
+        name: 'Strict Privilege Enforcement (family_tree RBAC)',
         explanation:
-          'Assign or change an animal’s Sire (father) and Dam (mother) at any time — including checking genetic overlap before breeding.',
+          'Only accounts granted View & Edit or Full Access to Family Tree can link/unlink a Sire (bull/father), Dam (cow/mother), or newborn calves — blocked cleanly at both the UI and database repository layers for read-only accounts.',
       },
     ],
     howToSteps: [
-      'Pick a Focal Animal from the dropdown at the top.',
-      'Click Link Parents & Calves if no Sire or Dam is set yet and choose the parents.',
-      'Tap any box on the pedigree chart to follow its ancestors or inspect its offspring.',
+      'Filter by Species (or Cow / Bull) and select a Focal Animal from the dropdown.',
+      'Switch between Pedigree Tree and Simplified Graph to inspect parents and grandparents; left-click and drag to pan comfortably.',
+      'If your account has Family Tree edit privileges, open Link Parents & Calves to connect a valid Sire and Dam and check genetic overlap before breeding.',
     ],
     proTip:
-      'When registering a newborn calf, set its Sire and Dam right inside the Add Livestock popup to build your Family Tree automatically.',
+      'Read-only family members or staff can still browse every ancestor and open the Eye quick preview card safely without any risk of altering breeding lines.',
   },
   {
     id: 'production',
@@ -180,36 +185,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Daily Records',
     targetSection: 'production',
     summary:
-      'Record daily milk yields per animal and optionally post matching milk sale income straight to your Financial Ledger in one step.',
+      'Log daily milk yields for active female milk-producing animals and automatically post matching milk sale revenue into Financial Ledger.',
     cardsAndFeatures: [
       {
-        name: 'Yield Summary Cards (Today, 7/14-Day Total, Average, Top Producer)',
+        name: 'Milk-Producing Female Animal Filter',
         explanation:
-          'Tracks how much milk the herd produced today, total recent volume, average per milking entry, and which tag is leading.',
+          'The Animal* selector automatically filters to active female milk-producing animals only — bulls, other males, and sold/deceased animals are excluded from milking entry selection and validated at save time.',
       },
       {
-        name: 'Daily Yield Entry Form',
+        name: 'Yield Summary Cards (Today, Recent Total, Average, Top Producer)',
         explanation:
-          'Select the milking animal, date, yield volume (in Liters or US Gallons based on Settings), and quality notes. On Mobile, tap "Log Daily Milk Yield" at the top to open this form.',
+          'Tracks daily farm output, multi-day total, average per milking entry, and top-producing animal tag.',
       },
       {
-        name: 'Auto-Record Milk Sale Toggle & Rate',
+        name: 'Auto-Record Milk Sale Toggle & Standard Rate',
         explanation:
-          'When switched on, farmDB multiplies the yield by your milk price per liter/gallon and automatically creates a Milk Sale income log in Financial Ledger.',
+          'When enabled, farmDB multiplies saved yield by your configured price per liter/gallon and posts a linked Milk Sale income record automatically.',
       },
       {
-        name: 'Production Trend Chart & Top Producers Card',
+        name: 'Production Trend Chart & Top Producers',
         explanation:
-          'Visualizes daily herd output over time and ranks your highest-producing animals so you can spot sudden drops early.',
+          'Visualizes daily herd output in Liters or US Gallons and ranks your highest-producing females so unexpected drops stand out right away.',
       },
     ],
     howToSteps: [
-      'Choose the cow or goat, set the date, and type the yield amount.',
-      'Leave Auto-Record Milk Sale enabled if you sell the milk at your standard price, or turn it off for household/calf-fed milk.',
-      'Save — both the milk log and chart update right away.',
+      'Choose a female milking animal under Animal*, confirm the date, and enter a positive yield volume.',
+      'Leave Auto-Record Milk Sale enabled for sold milk, or switch it off for household or calf-fed milk.',
+      'Save — yield totals, charts, and linked financial income (if enabled) update immediately.',
     ],
     proTip:
-      'Changing between Liters and US Gallons in Settings automatically converts every saved milk volume cleanly across charts and totals.',
+      'If an animal does not appear in the Animal* dropdown under Milk Production, check Herd Registry to verify its Sex is set to Female and its Status is Active.',
   },
   {
     id: 'medical',
@@ -218,36 +223,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Daily Records',
     targetSection: 'medical',
     summary:
-      'Keep a lifetime health record for every animal — vaccinations, illnesses, deworming, treatments, veterinarian visits, and medical costs.',
+      'Maintain a complete veterinary record for every animal — vaccinations, diagnoses, medications, vet visits, and optional automated expense posting.',
     cardsAndFeatures: [
       {
         name: 'Health KPIs (Entries, Total Spend, Treated Animals, Latest Checkup)',
         explanation:
-          'Shows how many treatments have been recorded, total money spent on care, and how many animals needed attention.',
+          'Shows cumulative treatment count, veterinary spend, number of treated animals, and latest visit date.',
       },
       {
-        name: 'Log Medical Record Form',
+        name: 'Log Medical Record Form & Validation',
         explanation:
-          'Pick the animal, treatment date, cost, condition/diagnosis (e.g. Annual Vaccine or Hoof Trim), medication given, and optional veterinarian name. On Mobile, tap "Log Medical Treatment" to open it.',
+          'Select the animal, valid treatment date, non-negative cost, diagnosis/condition, medication/treatment given, and optional veterinarian name.',
       },
       {
         name: 'Auto-Record Cost Toggle',
         explanation:
-          'Automatically records treatment costs greater than 0 as a Veterinary/Medical expense in Financial Ledger so books stay accurate without double typing.',
+          'Automatically posts treatment costs above 0 as a Medical expense in Financial Ledger so accounting stays accurate without double entry.',
       },
       {
-        name: 'Medical Timeline & Filters',
+        name: 'Searchable Medical Timeline',
         explanation:
-          'Chronological log searchable by animal, condition, medication, or veterinarian.',
+          'Review chronological care logs filtered by animal, condition, medication, or veterinarian.',
       },
     ],
     howToSteps: [
-      'Select the animal and date, then fill in Condition and Treatment.',
-      'Enter what the treatment cost (or 0 for routine free checks) and leave Auto-Record Cost on to log the expense.',
-      'Use Search or the Animal dropdown on the Timeline to review past vaccines before breeding or selling.',
+      'Select an animal, enter the treatment date, Condition, and Treatment details.',
+      'Enter the treatment cost (or 0 for routine checks) and leave Auto-Record Cost active to log the ledger expense.',
+      'Use timeline filters anytime to check vaccine history before breeding, buying, or selling.',
     ],
     proTip:
-      'Using clear words like "Vaccine" or "Booster" in Condition or Treatment helps Farm Statistics calculate your Preventive Care Coverage % accurately.',
+      'Include keywords like "Vaccine", "Booster", or "Deworming" in Condition or Treatment so Farm Statistics computes Preventive Care Coverage % accurately.',
   },
   {
     id: 'financial',
@@ -256,36 +261,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Daily Records',
     targetSection: 'financial',
     summary:
-      'Track every dollar, shilling, or pound coming in and going out of the farm — combining manual expenses with auto-recorded milk sales and medical/payroll costs.',
+      'Track all farm income and expenses in your local currency — combining manual entries with automated milk sales and medical/payroll costs.',
     cardsAndFeatures: [
       {
         name: 'Profit Summary Cards (Income, Expenses, Net Profit, Margin %)',
         explanation:
-          'Compares total farm revenue against expenses to show real net profit and percentage margin.',
+          'Compares total farm revenue against spending to display real net profit and percentage margin.',
       },
       {
-        name: 'Monthly Income vs. Expenses / Profit Snapshot Chart',
+        name: 'Monthly Income vs. Expenses Chart',
         explanation:
-          'Side-by-side chart comparing monthly revenue and spending (swipe horizontally on Mobile when viewing several months).',
+          'Side-by-side monthly bar comparison showing revenue versus operating expenses.',
       },
       {
         name: 'Standard Milk Rate & Currency Card',
         explanation:
-          'Quick shortcut to set your default milk sale rate per liter and currency symbol ($, UGX, £, or custom currency).',
+          'Shortcut to view/adjust your active milk pricing and currency symbol ($, UGX, £, or custom currency).',
       },
       {
-        name: 'Add Transaction Form & Ledger Table',
+        name: 'Add Transaction Form & Filtered Ledger',
         explanation:
-          'Record feed, equipment, livestock sales, vet bills, or custom income, filterable by Income vs. Expenses and linked animal.',
+          'Log feed, equipment, livestock sales, or custom entries with date/amount validation and optional animal attribution.',
       },
     ],
     howToSteps: [
-      'Tap Add Transaction (or Record Income / Expense) to log feed, livestock sales, or equipment purchases.',
-      'Pick Income or Expense, choose a Category, enter Amount and Date, and optionally link a specific animal.',
-      'Check the Profit Margin card and chart anytime to see whether the farm is operating profitably.',
+      'Click Add Transaction (or Record Income / Expense) to log farm purchases or sales.',
+      'Pick Income or Expense, choose a Category, enter a positive Amount and Date, and optionally tag an animal.',
+      'Use filters to audit specific categories or inspect per-animal/per-species profitability.',
     ],
     proTip:
-      'Linking an expense or sale directly to a specific animal lets Farm Statistics calculate profitability per species automatically.',
+      'Linking livestock sales, feed costs, or vet bills to specific animals feeds directly into the Species Performance Matrix in Farm Statistics.',
   },
   {
     id: 'alerts',
@@ -294,36 +299,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Daily Records',
     targetSection: 'alerts',
     summary:
-      'Never miss a vaccination date, buyer pickup, or barn maintenance task — and keep quick everyday notes right next to scheduled reminders.',
+      'Track scheduled due-date reminders for vaccinations, checkups, and buyer pickups alongside pinned non-urgent farm notes.',
     cardsAndFeatures: [
       {
         name: 'Alert Counters (Due/Overdue, Open Alerts, Active Notes, Resolved)',
         explanation:
-          'Shows how many scheduled reminders need attention today or are overdue.',
+          'Highlights overdue or due-today tasks versus routine checklist notes.',
       },
       {
         name: 'Scheduled Alert vs. Farm Note Toggle',
         explanation:
-          'Scheduled Alerts have a due Trigger Date and trigger desktop/mobile notification banners; Farm Notes stay pinned as a simple checklist.',
+          'Scheduled Alerts carry a Trigger Date and fire native Desktop/Mobile notifications when due; Notes stay neatly listed without firing urgent badges.',
       },
       {
-        name: 'Check Due Alerts Button',
+        name: 'Check Due Alerts Button & Background Worker',
         explanation:
-          'Manually scans all open alerts immediately (background checks also run automatically on the interval set in Settings).',
+          'Scans open alerts immediately on click or automatically in the background at your configured Settings interval.',
       },
       {
-        name: 'Alert Cards & Mark Done',
+        name: 'Animal Link & One-Click Resolve',
         explanation:
-          'Link any alert to an animal (or leave as General Farm), search open items, and tap Resolve/Done once completed.',
+          'Attach an alert to a specific animal or keep it farm-wide, and resolve completed items cleanly.',
       },
     ],
     howToSteps: [
-      'Tap New Alert / Note (on Mobile) or use the form on Desktop and pick Scheduled Alert or Note.',
-      'Type a clear title, choose the due Trigger Date, optionally pick an animal, and save.',
-      'When a reminder banner pops up on the due date, complete the chore and click Resolve.',
+      'Choose Scheduled Alert or Farm Note, enter a title, optional description, and Trigger Date (for alerts).',
+      'Optionally attach an animal so the reminder links back to that tag.',
+      'Click Resolve / Mark Done once completed to clear the active alert count.',
     ],
     proTip:
-      'Keep important barn reminders under Notes so your Due Alerts badge only lights up for truly time-sensitive tasks.',
+      'Keep general barn checklists as Farm Notes so your notification badge highlights only date-critical tasks.',
   },
   {
     id: 'hr',
@@ -332,36 +337,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Analytics & Team',
     targetSection: 'hr',
     summary:
-      'Manage everyone who works on your farm — track monthly/weekly pay schedules, get early almost-due payday warnings, and assign daily tasks.',
+      'Organize farm workers, recurring weekly/monthly pay schedules, early almost-due payroll alerts, and animal/farm task assignments.',
     cardsAndFeatures: [
       {
-        name: 'HR Summary Cards & Early Due Banners',
+        name: 'HR Summary Cards & Payroll Due Banners',
         explanation:
-          'Shows active staff count, estimated monthly wage bill, overdue or almost-due salary payments, and open tasks.',
+          'Shows active workers, estimated monthly payroll commitment, upcoming/overdue salary alerts, and open task count.',
       },
       {
         name: 'Three Tabs: Staff Directory, Salary Ledger, Allocated Tasks',
         explanation:
-          'Switch between worker profiles & pay rates, pending/paid salary records, and assigned barn/field chores.',
+          'Manage worker profiles and pay frequencies, track pending vs. paid wage disbursements, and assign prioritized daily chores.',
       },
       {
         name: 'Record Payment & Mark Paid',
         explanation:
-          'Schedule upcoming wages or click Mark Paid when you pay a worker — automatically optionally logging Payroll in Financial Ledger.',
+          'Create scheduled wage payments or mark wages Paid — automatically optionally logging a matching Payroll expense in Financial Ledger.',
       },
       {
-        name: 'Task Priority & Status Tracking',
+        name: 'Task Priority & Animal Links',
         explanation:
-          'Assign High/Medium/Low priority tasks to a worker and optionally attach them to a specific animal.',
+          'Assign High, Medium, or Low priority tasks to staff and optionally link them to a specific animal.',
       },
     ],
     howToSteps: [
-      'Add each farm worker with their Role, Phone, Salary Amount, and Pay Schedule.',
-      'Use Record Payment to track upcoming or completed wage payouts.',
-      'Open Tasks to assign chores like milking equipment checks or calf feeding and mark them Completed.',
+      'Add workers with Role, Phone, Salary Amount, Pay Frequency (monthly/weekly/etc.), and next due date.',
+      'Use Salary Ledger to generate or confirm wage payments and mark them Paid.',
+      'Create tasks under Allocated Tasks and update progress from Pending to Completed.',
     ],
     proTip:
-      'Adjust "Payroll Alert Lead Days" in Settings if you want warnings 5 or 7 days before salaries come due.',
+      'Set "Payment Alert Lead Days" in Settings to be notified ahead of upcoming paydays before wages become overdue.',
   },
   {
     id: 'statistics',
@@ -370,74 +375,74 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Analytics & Team',
     targetSection: 'statistics',
     summary:
-      'Turns all of your saved Herd, Milk, Medical, Ownership, and Financial data into live visual charts and species performance reports.',
+      'Transforms live Herd, Sex, Milk, Medical, Financial, and Ownership records into interactive charts, cohort ratios, and species performance tables.',
     cardsAndFeatures: [
       {
-        name: 'Species Filter & 7D / 14D / 30D Toggle',
+        name: 'Species & Sex Filters (Cow / Bull / Female / Male) + 7D / 14D / 30D Window',
         explanation:
-          'Inspect charts across the entire farm or isolate a single species like Cows or Goats over your chosen timeframe.',
+          'Inspect analytics across the full farm, filter specifically to Cow or Bull or Female/Male cohorts, and zoom charts across 7, 14, or 30 days.',
       },
       {
-        name: '6 Analytics KPI Cards',
+        name: 'Herd KPIs with Female/Male & Cow/Bull Breakdown',
         explanation:
-          'Summarizes Active Herd %, Cumulative Milk Output, Preventive Care Coverage %, Medical Spend, Average Herd Age, and Net Profit.',
+          'Summarizes Active Herd %, Cumulative Milk & average per active milking female, Preventive Care Coverage %, Medical Spend, Average Herd Age, Net Profit, plus exact Female/Male and Cow/Bull badges.',
       },
       {
-        name: 'Interactive Charts',
+        name: 'Interactive Analytics Charts',
         explanation:
-          'Includes Milk Yield Velocity, Herd Status by Species (Active/Sold/Deceased), Top Producers, Age Demographics Donut, Health Conditions, and Breed Distribution.',
+          'Displays Milk Yield Velocity, Herd Status by Species, Top Producers (with Cow/Bull and Sex icons), Age Demographics Donut, Health Conditions, Breed Distribution, and Sex Cohort Breakdown.',
       },
       {
-        name: 'Species Performance Summary / Matrix',
+        name: 'Species Performance Matrix',
         explanation:
-          'Compares every species side by side by headcount, active share, milk yield, veterinary cost, and linked financial P&L.',
+          'Compares every species side by side by headcount, active share, cumulative milk output, vet spend, and animal-linked revenue vs. expenses.',
       },
     ],
     howToSteps: [
-      'Select "All Species" for a full farm overview or pick one species (like Cow) from the top dropdown.',
-      'Toggle 7D, 14D, or 30D to zoom in or out on milk production trends.',
-      'On Mobile, swipe left and right across wide line/bar charts to read every date and label comfortably.',
+      'Pick a Species/Sex filter at the top (such as All Species, Cow, Bull, or Goat) and choose 7D, 14D, or 30D.',
+      'Inspect the Top KPIs and Sex Breakdown cards to monitor female milking productivity versus male herd ratios.',
+      'Scroll through charts (swipe horizontally on Mobile charts when dense) and review Species Performance Matrix.',
     ],
     proTip:
-      'Whenever a chart says "No records yet", log entries in Herd, Production, or Medical — every chart updates automatically in real time.',
+      'Every chart updates live from your SQLite database — filtering to "Cow" shows female dairy cattle metrics while "Bull" isolates breeding bulls.',
   },
   {
     id: 'accounts_auth',
     stepNumber: 11,
-    title: 'Accounts, Sign-Up & Join Keys',
+    title: 'Accounts, Sign-Up & Sign Out',
     category: 'Accounts & System',
     targetSection: null,
     summary:
-      'farmDB supports two clear account types: full Farm Owner Admin Accounts (network & cloud controllers) and simpler User Accounts (local farm tracking or invited network members).',
+      'farmDB separates Farm Owner Admin Accounts from User Accounts, enforcing strict Sign Out before switching accounts and keeping Admin cloud credentials portable across devices.',
     cardsAndFeatures: [
       {
-        name: 'Admin Account vs. User Account',
+        name: 'Sign In vs. Sign Up (No Auth-Screen Join Key Tab)',
         explanation:
-          'Admin Accounts unlock Farm Network, Join Key generation, Cloud Sync settings, and full local features. User Accounts work offline on local SQLite with Export & Backup enabled cleanly without network complexity.',
+          'On the Login / Sign Up portal, create either a standalone User Account or an Admin Account (local or cloud-recovered). Joining an existing Admin’s farm via Join Key happens inside your created account’s Farm Network page.',
       },
       {
-        name: 'Sign In & Account Switcher',
+        name: 'Strict Sign Out Flow',
         explanation:
-          'Pick any account on this device and enter its passcode PIN (if one was set) to switch profiles.',
+          'Once signed into an account, you must click Sign Out first to return to the Sign In / Sign Up portal before accessing or creating another account.',
       },
       {
-        name: 'Sign Up (Local User or Join an Admin)',
+        name: 'Admin Cloud Recovery & Credential Persistence',
         explanation:
-          'Leave Join Key blank to create an independent local User Account, OR paste an Admin’s Join Key (FARM-XXXX or FDB1:...) to request shared access to their farm database.',
+          'Admin accounts save their linked Supabase URL, Anon/Publishable Key, and Workspace ID so logging in or recovering with a Cloud Key / credentials on another device automatically downloads your entire farm database, settings, and optimized animal photos.',
       },
       {
-        name: 'Pending Approval Screen',
+        name: 'Credential Isolation & Change Password / PIN',
         explanation:
-          'Accounts that join via key wait safely in Pending state until the Farm Owner Admin reviews their permissions and accepts them.',
+          'Admins manage permissions and can remove accounts, but cannot enter another user’s account without that user’s login credentials. Every signed-in user can change their own Password / PIN in Farm Network.',
       },
     ],
     howToSteps: [
-      'Open Login / Sign Up from the bottom of the menu anytime.',
-      'To create a standalone farm profile on this device, choose Sign Up -> User Account and leave Join Key empty.',
-      'To connect to another farmer’s Admin database, paste their Join Key on Sign Up or Enter Join Key, then tap Check Approval once accepted.',
+      'Use Sign Up to create an initial Admin Account (or a standalone User Account), optionally setting an Email and access Password / PIN.',
+      'Use Sign Out in the menu or Farm Network page whenever switching users on a shared device.',
+      'To recover an Admin database on a second PC or phone, open Sign In / Cloud Admin Recovery, enter your Cloud Key (or Supabase URL + Anon Key + PIN), and sync down.',
     ],
     proTip:
-      'Set a 4+ digit Switch PIN when creating an Admin account so staff or guests using the same device cannot accidentally change Admin permissions.',
+      'Save your Admin Full Cloud Key (FDB1:...) from Advanced Settings -> Cloud Sync in a password manager so restoring onto a new laptop or phone takes one paste.',
   },
   {
     id: 'network',
@@ -447,31 +452,36 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     targetSection: 'network',
     adminOnly: true,
     summary:
-      'Admins use Farm Network to invite family members, external animal owners, managers, and vets — and decide exactly which modules each person can see or edit.',
+      'Admins manage shared farm access from Farm Network — generating Invite Keys, approving join requests, enforcing per-module RBAC privileges, and removing inactive members.',
     cardsAndFeatures: [
       {
-        name: 'Network Join Key Card (Short Key & Invite Key)',
+        name: 'Invite to Network (Short FARM-XXXX Key & Full FDB1 Key)',
         explanation:
-          'Displays your shareable FARM-XXXX code and full cloud invite key; click Rotate Key anytime to invalidate old codes.',
+          'Click Invite to Network to view or share your short code (same workspace) or full cloud Invite Key (FDB1:...), and Rotate Key anytime to invalidate old codes.',
       },
       {
-        name: 'Pending Join Requests Panel',
+        name: 'Join Network (In-Account Connection)',
         explanation:
-          'Lists people who entered your Join Key and are waiting. Assign their access permissions and click Accept to let them into the farm.',
+          'Both User and Admin accounts have a Join Network button inside Farm Network to connect to another farm’s network using a Join Key.',
       },
       {
-        name: 'Account Module Permissions',
+        name: 'Pending Requests & Per-Module RBAC Permissions',
         explanation:
-          'Control every module individually per person: Hidden (no access), View Only, View & Edit, or Full Admin.',
+          'Review pending members, assign module-by-module access (Hidden, View Only, View & Edit, or Full Access), and enforce rules at the database repository level.',
+      },
+      {
+        name: 'Change Password / PIN & Member Management',
+        explanation:
+          'Users update their own password/PIN cleanly, while Admins can adjust member privileges or remove accounts without accessing users’ private credentials.',
       },
     ],
     howToSteps: [
-      'Configure Supabase Cloud Sync in Settings first if connecting multiple devices over the internet.',
-      'Share your Network Join Key from Farm Network with a family member or partner.',
-      'When they appear in Pending Requests, set their module privileges (for example, Vet = Full Medical, Financial = Hidden) and click Accept.',
+      'Configure Cloud Sync & Supabase Database under Settings -> Advanced Settings if sharing across separate devices.',
+      'Click Invite to Network in Farm Network and share your FARM-XXXX code or FDB1:... Invite Key with a family member, vet, or partner.',
+      'Have them sign into their own farmDB account, open Farm Network -> Join Network, and paste the key; then approve them and set module privileges.',
     ],
     proTip:
-      'External animal owners can be given View Only access to Livestock and Ownerships while keeping Financial Ledger and Human Resources Hidden.',
+      'External animal owners or vets can be restricted to View Only or Hidden on Financial Ledger and HR while keeping Medical or Ownerships editable as needed.',
   },
   {
     id: 'backup',
@@ -480,69 +490,69 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Accounts & System',
     targetSection: 'backup',
     summary:
-      'Protect your farm history forever — both Admin Accounts and User Accounts can export spreadsheets, portable farm snapshots, and raw SQLite database files.',
+      'Protect your production farm ledger with offline spreadsheet exports, portable full JSON snapshots (including optimized livestock images), and physical SQLite .db backups.',
     cardsAndFeatures: [
       {
-        name: 'Export Full JSON & Restore from JSON',
+        name: 'Full JSON Snapshot Export & Restore',
         explanation:
-          'Saves every animal, milk record, medical log, finance entry, HR item, ownership, and setting into one portable JSON file you can restore on another PC or phone.',
+          'Packages all animals, optimized photos, lineage, milk logs, medical history, financial ledger, alerts, HR payroll/tasks, ownerships, accounts, and settings into one portable JSON file.',
       },
       {
-        name: 'CSV Spreadsheet Downloads',
+        name: 'CSV Spreadsheet Bundles',
         explanation:
-          'Export individual tables (Livestock, Milk Production, Medical, Financial, Alerts) into Excel-friendly CSV spreadsheets.',
+          'Exports clean RFC-4180 CSV spreadsheets (livestock, production, medical, financial, alerts, HR, ownerships) ready for Excel or accounting audits.',
       },
       {
-        name: 'SQLite Database File (.db) Backup & Restore',
+        name: 'Native SQLite Database (.db) Backup & Restore',
         explanation:
-          'Copies or replaces your exact physical local farmdb.db database file cleanly.',
+          'Exports a verified copy of your physical farmdb.db file or restores a validated SQLite .db backup safely (running pending schema migrations automatically).',
       },
     ],
     howToSteps: [
-      'Click Export Full JSON regularly and save a copy to a USB drive, cloud folder, or share sheet.',
-      'On a new computer or phone, open Export & Backup -> Restore from JSON and pick that file to bring all farm records across.',
-      'Use CSV buttons anytime you want to open tables in Excel or print reports.',
+      'Click Export Full JSON periodically and keep a backup copy on an external drive or safe cloud folder.',
+      'Use Export CSVs anytime you want spreadsheet analysis or printable accounting reports.',
+      'To migrate offline between devices, transfer your JSON snapshot or .db file and import it from Export & Backup.',
     ],
     proTip:
-      'JSON snapshots work seamlessly between Windows Desktop and Android/iOS Mobile so you can move your farm data between devices offline!',
+      'Full JSON snapshots work seamlessly between Windows Desktop and Android/iOS Mobile, carrying optimized animal photos across offline.',
   },
   {
     id: 'settings',
     stepNumber: 14,
-    title: 'Settings, Display & Cloud Sync',
+    title: 'Settings, Advanced Settings & Sync Logs',
     category: 'Accounts & System',
     targetSection: 'settings',
     summary:
-      'Personalize readability, units, currencies, notifications, and (for Admin Accounts) automatic Supabase internet database synchronization.',
+      'Organized into three clean tabs — Settings (Display, Units, Defaults), Advanced Settings (Native SQLite Storage & Read-Only Protection + Cloud Sync & Supabase), and Sync Logs.',
     cardsAndFeatures: [
       {
-        name: 'Display & Accessibility',
+        name: 'Settings Tab (Display, Units & Automation)',
         explanation:
-          'Resize all text cleanly (Small to Extra Large), adjust button spacing/density, and toggle compact Mobile Icon Mode.',
+          'Configure Font Size (Small to Extra Large), Spacing Density, Mobile Icon Mode, Liters vs. US Gallons, Date Format, Currency ($ / UGX / £ / custom), Milk Rate, Auto-Ledger flags, and Confirm Before Delete.',
       },
       {
-        name: 'Units, Currency & Defaults',
+        name: 'Advanced Settings: Native SQLite Database Storage & Read-Only Protection',
         explanation:
-          'Pick Liters or US Gallons, choose date display format (ISO / MDY / DMY), pick your currency, and turn auto-accounting defaults on or off.',
+          'Inspect the active farmdb.db path and file size, move native SQLite storage to a custom folder (Desktop), and enforce Read-Only File Protection (OS read-only lock + PRAGMA query_only + verified shadow backup) to block external tampering.',
       },
       {
-        name: 'Cloud Sync & Supabase (Admin Only)',
+        name: 'Advanced Settings: Cloud Sync & Supabase Database (Admin Only)',
         explanation:
-          'Paste your Supabase Project URL and Anon/Publishable Key, copy the one-time SQL Setup Script, pick conflict rules, and enable automatic background internet sync.',
+          'Enter your Supabase Project URL, Anon/Publishable Key, and Workspace ID; copy the one-time SQL Setup Script; test connection with instant inline feedback beside the card; pick conflict strategy (Last Write Wins / Local Priority / Cloud Priority); and toggle auto-sync.',
       },
       {
         name: 'Sync Logs Tab (Admin Only)',
         explanation:
-          'Review every push, pull, or connection test timestamp and error message cleanly inside Settings.',
+          'Audit every Push, Pull, Two-Way Sync, and Connection Test timestamp, transferred record count, and status message cleanly.',
       },
     ],
     howToSteps: [
-      'Pick your preferred Font Size, Currency, and Liters vs. Gallons in Settings.',
-      'If using cloud sharing as an Admin, run the SQL Setup Script in Supabase, paste URL + Key, click Test Connection, then turn on Auto-Sync.',
-      'Check Sync Logs in the top Settings tab anytime to confirm when your last cloud sync completed.',
+      'Adjust Font Size, Currency, and Liters vs. Gallons in the Settings tab.',
+      'Open Advanced Settings to verify Native SQLite Read-Only Protection is enabled and, for Admins, configure Supabase URL + Key and run the SQL Setup Script in Supabase.',
+      'Click Test Connection right inside the Cloud Sync card, turn on Auto-Sync, and review Sync Logs anytime.',
     ],
     proTip:
-      'Settings is the only screen where field hints stay visible permanently — while the rest of the app stays clean and distraction-free.',
+      'Test Connection feedback appears directly inside the Cloud Sync & Supabase Database card so you never have to scroll away to verify status.',
   },
 ] as const;
 

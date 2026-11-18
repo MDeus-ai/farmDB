@@ -6,8 +6,8 @@ import {
   Text,
   View,
 } from 'react-native';
-import type { ExportTableKey } from '@farmdb/core';
-import { useFarmDb, useFarmSummary } from '@farmdb/db';
+import { describeModuleAccessLevel, type ExportTableKey } from '@farmdb/core';
+import { useFarmDb, useFarmSummary, useModulePermissions } from '@farmdb/db';
 import type { ExpoSqlController } from '../db/mobileDriver';
 import {
   exportCsvMobile,
@@ -39,6 +39,7 @@ const EXPORT_TABLES: Array<{ key: ExportTableKey; label: string }> = [
 
 export function BackupView({ sqlController }: BackupViewProps) {
   const ui = useUiScale();
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('backup');
   const { backup, events } = useFarmDb();
   const summaryQuery = useFarmSummary();
   const summary = summaryQuery.data;
@@ -131,145 +132,24 @@ export function BackupView({ sqlController }: BackupViewProps) {
       ) : null}
 
       <View style={[styles.card, { padding: ui.space(14), borderRadius: ui.radius, gap: ui.space(10) }]}>
-        <View style={styles.sectionTitleRow}>
-          <AppIcon name="cloud" size={ui.font(18)} />
-          <Text style={[styles.cardTitle, { fontSize: ui.font(16), flexShrink: 1 }]}>
-            CSV &amp; JSON Export
-          </Text>
+        <View style={[styles.sectionTitleRow, { justifyContent: 'space-between', flexWrap: 'wrap' }]}>
+          <View style={styles.sectionTitleRow}>
+            <AppIcon name="cloud" size={ui.font(18)} />
+            <Text style={[styles.cardTitle, { fontSize: ui.font(16), flexShrink: 1 }]}>
+              CSV &amp; JSON Export
+            </Text>
+          </View>
+          {!canEdit || !canDelete ? (
+            <Text style={[styles.statLabel, { fontSize: ui.font(11) }]}>
+              {describeModuleAccessLevel(accessLevel)}
+            </Text>
+          ) : null}
         </View>
 
-        <Pressable
-          style={[
-            styles.primaryBtn,
-            busy && styles.disabledBtn,
-            {
-              minHeight: ui.controlHeight,
-              paddingHorizontal: ui.space(14),
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-            },
-          ]}
-          disabled={busy}
-          onPress={() =>
-            void runAction(async () => {
-              const snap = await backup.exportSnapshot();
-              const out = await exportJsonMobile(snap);
-              setStatusMessage(`Exported JSON snapshot (${out}).`);
-            })
-          }
-        >
-          <AppIcon name="cloud" size={ui.font(16)} />
-          <Text style={[styles.primaryBtnText, { fontSize: ui.font(14), flexShrink: 1, textAlign: 'center' }]}>
-            Export Full JSON Backup
-          </Text>
-        </Pressable>
-
-        <Pressable
-          style={[
-            styles.secondaryBtn,
-            busy && styles.disabledBtn,
-            {
-              minHeight: ui.controlHeight,
-              paddingHorizontal: ui.space(14),
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-            },
-          ]}
-          disabled={busy}
-          onPress={() =>
-            void runAction(async () => {
-              const snap = await pickJsonSnapshotMobile();
-              if (!snap) return;
-              const counts = await backup.restoreSnapshot(snap);
-              setStatusMessage(
-                `Restored ${counts.livestockCount} animal(s), ${counts.productCount} yields, ${counts.medicalCount} medical, ${counts.financialCount} financial.`
-              );
-            })
-          }
-        >
-          <AppIcon name="download" size={ui.font(16)} />
-          <Text style={[styles.secondaryBtnText, { fontSize: ui.font(14), flexShrink: 1, textAlign: 'center' }]}>
-            Restore from JSON File
-          </Text>
-        </Pressable>
-
-        <View style={[styles.csvGrid, { gap: ui.space(8) }]}>
-          {EXPORT_TABLES.map((tbl) => (
-            <Pressable
-              key={tbl.key}
-              style={[
-                styles.csvChip,
-                busy && styles.disabledBtn,
-                {
-                  minHeight: ui.chipHeight,
-                  minWidth: 118,
-                  flexGrow: 1,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                },
-              ]}
-              disabled={busy}
-              onPress={() =>
-                void runAction(async () => {
-                  const snap = await backup.exportSnapshot();
-                  const out = await exportCsvMobile(snap, tbl.key);
-                  setStatusMessage(`Exported ${tbl.label} (${out}).`);
-                })
-              }
-            >
-              <Text style={[styles.csvChipText, { fontSize: ui.font(12), textAlign: 'center' }]}>
-                {tbl.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      <View style={[styles.card, { padding: ui.space(14), borderRadius: ui.radius }]}>
-        <View style={styles.sectionTitleRow}>
-          <AppIcon name="database" size={ui.font(18)} />
-          <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
-            SQLite Database File (.db)
-          </Text>
-        </View>
-
-        <Pressable
-          style={[
-            styles.primaryBtn,
-            busy && styles.disabledBtn,
-            {
-              minHeight: ui.controlHeight,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-            },
-          ]}
-          disabled={busy}
-          onPress={() =>
-            void runAction(async () => {
-              const bytes = await sqlController.serializeDatabaseBytes();
-              const out = await exportSqliteBytesMobile(bytes);
-              setStatusMessage(
-                `Saved ${bytes.byteLength} bytes SQLite .db backup (${out}).`
-              );
-            })
-          }
-        >
-          <AppIcon name="databaseCheck" size={ui.font(17)} />
-          <Text style={[styles.primaryBtnText, { fontSize: ui.font(14) }]}>
-            Save .db Backup File
-          </Text>
-        </Pressable>
-
-        {Platform.OS !== 'web' ? (
+        {canEdit ? (
           <Pressable
             style={[
-              styles.dangerBtn,
+              styles.primaryBtn,
               busy && styles.disabledBtn,
               {
                 minHeight: ui.controlHeight,
@@ -283,31 +163,177 @@ export function BackupView({ sqlController }: BackupViewProps) {
             disabled={busy}
             onPress={() =>
               void runAction(async () => {
-                const bytes = await pickBinaryDbBackupMobile();
-                if (!bytes) return;
-                await sqlController.restoreDatabaseBytes(bytes);
-                events.emit(['*']);
+                const snap = await backup.exportSnapshot();
+                const out = await exportJsonMobile(snap);
+                setStatusMessage(`Exported JSON snapshot (${out}).`);
+              })
+            }
+          >
+            <AppIcon name="cloud" size={ui.font(16)} />
+            <Text style={[styles.primaryBtnText, { fontSize: ui.font(14), flexShrink: 1, textAlign: 'center' }]}>
+              Export Full JSON Backup
+            </Text>
+          </Pressable>
+        ) : (
+          <Text style={[styles.webHint, { fontSize: ui.font(12) }]}>
+            Exporting or restoring backups requires Edit or Full privilege in Backup &amp; Export.
+          </Text>
+        )}
+
+        {canDelete ? (
+          <Pressable
+            style={[
+              styles.secondaryBtn,
+              busy && styles.disabledBtn,
+              {
+                minHeight: ui.controlHeight,
+                paddingHorizontal: ui.space(14),
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+              },
+            ]}
+            disabled={busy}
+            onPress={() =>
+              void runAction(async () => {
+                const snap = await pickJsonSnapshotMobile();
+                if (!snap) return;
+                const counts = await backup.restoreSnapshot(snap);
                 setStatusMessage(
-                  `Restored ${bytes.byteLength} bytes SQLite database and refreshed views.`
+                  `Restored ${counts.livestockCount} animal(s), ${counts.productCount} yields, ${counts.medicalCount} medical, ${counts.financialCount} financial.`
                 );
               })
             }
           >
             <AppIcon name="download" size={ui.font(16)} />
-            <Text
-              style={[
-                styles.dangerBtnText,
-                { fontSize: ui.font(14), flexShrink: 1, textAlign: 'center' },
-              ]}
-            >
-              Restore from .db File
+            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(14), flexShrink: 1, textAlign: 'center' }]}>
+              Restore from JSON File
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {canEdit ? (
+          <View style={[styles.csvGrid, { gap: ui.space(8) }]}>
+            {EXPORT_TABLES.map((tbl) => (
+              <Pressable
+                key={tbl.key}
+                style={[
+                  styles.csvChip,
+                  busy && styles.disabledBtn,
+                  {
+                    minHeight: ui.chipHeight,
+                    minWidth: 118,
+                    flexGrow: 1,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  },
+                ]}
+                disabled={busy}
+                onPress={() =>
+                  void runAction(async () => {
+                    const snap = await backup.exportSnapshot();
+                    const out = await exportCsvMobile(snap, tbl.key);
+                    setStatusMessage(`Exported ${tbl.label} (${out}).`);
+                  })
+                }
+              >
+                <Text style={[styles.csvChipText, { fontSize: ui.font(12), textAlign: 'center' }]}>
+                  {tbl.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+
+      <View style={[styles.card, { padding: ui.space(14), borderRadius: ui.radius }]}>
+        <View style={styles.sectionTitleRow}>
+          <AppIcon name="database" size={ui.font(18)} />
+          <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+            SQLite Database File (.db)
+          </Text>
+        </View>
+
+        {canEdit ? (
+          <Pressable
+            style={[
+              styles.primaryBtn,
+              busy && styles.disabledBtn,
+              {
+                minHeight: ui.controlHeight,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+              },
+            ]}
+            disabled={busy}
+            onPress={() =>
+              void runAction(async () => {
+                const bytes = await sqlController.serializeDatabaseBytes();
+                const out = await exportSqliteBytesMobile(bytes);
+                setStatusMessage(
+                  `Saved ${bytes.byteLength} bytes SQLite .db backup (${out}).`
+                );
+              })
+            }
+          >
+            <AppIcon name="databaseCheck" size={ui.font(17)} />
+            <Text style={[styles.primaryBtnText, { fontSize: ui.font(14) }]}>
+              Save .db Backup File
             </Text>
           </Pressable>
         ) : (
           <Text style={[styles.webHint, { fontSize: ui.font(12) }]}>
-            Native device build only.
+            Saving raw SQLite .db files requires Edit or Full privilege.
           </Text>
         )}
+
+        {canDelete ? (
+          Platform.OS !== 'web' ? (
+            <Pressable
+              style={[
+                styles.dangerBtn,
+                busy && styles.disabledBtn,
+                {
+                  minHeight: ui.controlHeight,
+                  paddingHorizontal: ui.space(14),
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                },
+              ]}
+              disabled={busy}
+              onPress={() =>
+                void runAction(async () => {
+                  const bytes = await pickBinaryDbBackupMobile();
+                  if (!bytes) return;
+                  await sqlController.restoreDatabaseBytes(bytes);
+                  events.emit(['*']);
+                  setStatusMessage(
+                    `Restored ${bytes.byteLength} bytes SQLite database and refreshed views.`
+                  );
+                })
+              }
+            >
+              <AppIcon name="download" size={ui.font(16)} />
+              <Text
+                style={[
+                  styles.dangerBtnText,
+                  { fontSize: ui.font(14), flexShrink: 1, textAlign: 'center' },
+                ]}
+              >
+                Restore from .db File
+              </Text>
+            </Pressable>
+          ) : (
+            <Text style={[styles.webHint, { fontSize: ui.font(12) }]}>
+              Native device build only.
+            </Text>
+          )
+        ) : null}
       </View>
     </FarmScrollView>
   );

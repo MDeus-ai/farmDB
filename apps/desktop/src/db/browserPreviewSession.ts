@@ -7,7 +7,9 @@ import {
   generateId,
   generateShortJoinCode,
   getTodayIsoDate,
+  inferDefaultLivestockSex,
   isAdminAccount,
+  LIVESTOCK_SEXES,
   mergeFarmSnapshots,
   normalizeAccountPermissions,
   normalizeSupabaseBaseUrl,
@@ -53,6 +55,7 @@ import {
   type HrDuePaymentAlertItem,
   type Livestock,
   type LivestockFilter,
+  type LivestockSex,
   type MedicalRecord,
   type MedicalRecordFilter,
   type NewAlertInput,
@@ -103,6 +106,7 @@ import {
   WorkerNotFoundError,
   WorkerPaymentNotFoundError,
   WorkerTaskNotFoundError,
+  wrapSessionWithRbac,
   type AcceptPendingAccountOptions,
   type AlertsRepository,
   type BackupRepository,
@@ -125,6 +129,9 @@ import {
   type NetworkRepository,
   type OwnershipRepository,
   type ProductionRepository,
+  type RecoverAdminCloudInput,
+  type RecoverAdminCloudResult,
+  type RestoreSnapshotOptions,
   type RestoreSnapshotResult,
   type SettingsRepository,
 } from '@farmdb/db';
@@ -141,6 +148,7 @@ const OWNERSHIPS_KEY = 'farmdb_browser_preview_ownerships_v1';
 const ACCOUNTS_KEY = 'farmdb_browser_preview_accounts_v1';
 const SYNC_LOGS_KEY = 'farmdb_browser_preview_sync_logs_v1';
 const SETTINGS_KEY = 'farmdb_browser_preview_settings_v1';
+const SETTINGS_UPDATED_AT_KEY = 'farmdb_browser_preview_settings_updated_at_v1';
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -176,6 +184,10 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       });
       return merged.ok && merged.data ? merged.data : { ...DEFAULT_FARM_SETTINGS };
     },
+    async getUpdatedAt(): Promise<number> {
+      const val = readJson<number>(SETTINGS_UPDATED_AT_KEY, 0);
+      return typeof val === 'number' && Number.isFinite(val) ? val : 0;
+    },
     async update(input: Partial<FarmSettings>): Promise<FarmSettings> {
       const current = await this.get();
       const merged: FarmSettings = {
@@ -190,12 +202,41 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         throw new SettingsValidationError(validation.errors, msg);
       }
       writeJson(SETTINGS_KEY, validation.data);
+      const changedSharedKey = (Object.keys(input) as Array<keyof FarmSettings>).some(
+        (key) => key !== 'activeAccountId' && validation.data![key] !== current[key]
+      );
+      if (changedSharedKey) {
+        writeJson(SETTINGS_UPDATED_AT_KEY, Date.now());
+      }
       events.emit(['settings']);
       return validation.data;
+    },
+    async restoreSettings(
+      nextSettings: Partial<FarmSettings>,
+      updatedAt?: number
+    ): Promise<FarmSettings> {
+      const validation = validateFarmSettings({
+        ...DEFAULT_FARM_SETTINGS,
+        ...nextSettings,
+      });
+      const valid =
+        validation.ok && validation.data
+          ? validation.data
+          : { ...DEFAULT_FARM_SETTINGS };
+      writeJson(SETTINGS_KEY, valid);
+      writeJson(
+        SETTINGS_UPDATED_AT_KEY,
+        typeof updatedAt === 'number' && Number.isFinite(updatedAt) && updatedAt > 0
+          ? Math.floor(updatedAt)
+          : Date.now()
+      );
+      events.emit(['settings']);
+      return valid;
     },
     async reset(): Promise<FarmSettings> {
       const defaults: FarmSettings = { ...DEFAULT_FARM_SETTINGS };
       writeJson(SETTINGS_KEY, defaults);
+      writeJson(SETTINGS_UPDATED_AT_KEY, Date.now());
       events.emit(['settings']);
       return defaults;
     },
@@ -281,7 +322,9 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       if (idx === -1 || !rows[idx]) {
         throw new FinancialLogNotFoundError(id);
       }
-      const validation = validateUpdateFinancialLog(input);
+      const validation = validateUpdateFinancialLog(input, {
+        currentTransactionType: rows[idx].transactionType,
+      });
       if (!validation.ok || !validation.data) {
         const msg =
           Object.values(validation.errors).find(Boolean) ??
@@ -349,16 +392,25 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       input: NewProductRecordInput,
       options?: LogMilkYieldOptions
     ): Promise<CreateProductRecordResult> {
-      const validation = validateNewProductRecord(input);
+      const targetId = (input.livestockId ?? '').trim();
+      const animals = readJson<Livestock[]>(LIVESTOCK_KEY, []).map(
+        normalizePreviewLivestock
+      );
+      const animal = targetId ? animals.find((a) => a.id === targetId) : undefined;
+      if (targetId && !animal) {
+        throw new ProductionValidationError(
+          { livestockId: 'Selected animal does not exist.' },
+          'Selected animal does not exist.'
+        );
+      }
+
+      const validation = validateNewProductRecord(input, { animal });
       if (!validation.ok || !validation.data) {
         const msg =
           Object.values(validation.errors).find(Boolean) ??
           'Invalid production record.';
         throw new ProductionValidationError(validation.errors, msg);
       }
-
-      const animals = readJson<Livestock[]>(LIVESTOCK_KEY, []);
-      const animal = animals.find((a) => a.id === validation.data!.livestockId);
       if (!animal) {
         throw new ProductionValidationError(
           { livestockId: 'Selected animal does not exist.' },
@@ -417,12 +469,32 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       if (idx === -1 || !rows[idx]) {
         throw new ProductRecordNotFoundError(id);
       }
-      const validation = validateUpdateProductRecord(input);
+      const targetId = (input.livestockId ?? rows[idx].livestockId).trim();
+      const animals = readJson<Livestock[]>(LIVESTOCK_KEY, []).map(
+        normalizePreviewLivestock
+      );
+      const animal = targetId ? animals.find((a) => a.id === targetId) : undefined;
+      if (targetId && !animal) {
+        throw new ProductionValidationError(
+          { livestockId: 'Selected animal does not exist.' },
+          'Selected animal does not exist.'
+        );
+      }
+      const validation = validateUpdateProductRecord(input, { animal });
       if (!validation.ok || !validation.data) {
         const msg =
           Object.values(validation.errors).find(Boolean) ??
           'Invalid production record update.';
         throw new ProductionValidationError(validation.errors, msg);
+      }
+      if (
+        input.date === undefined &&
+        animal?.dob &&
+        rows[idx].date < animal.dob
+      ) {
+        const msg =
+          'Production date cannot be earlier than the animal’s date of birth.';
+        throw new ProductionValidationError({ date: msg }, msg);
       }
       const updated: ProductRecord = {
         ...rows[idx],
@@ -701,8 +773,12 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
   };
 
   function normalizePreviewLivestock(row: Livestock): Livestock {
+    const sex = (LIVESTOCK_SEXES as readonly string[]).includes(row.sex)
+      ? (row.sex as LivestockSex)
+      : inferDefaultLivestockSex(row.tagNumber);
     return {
       ...row,
+      sex,
       sireId: row.sireId ?? null,
       damId: row.damId ?? null,
     };
@@ -715,6 +791,9 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         .map(normalizePreviewLivestock)
         .filter((row) => {
           if (filter?.species && filter.species !== 'all' && row.species !== filter.species) {
+            return false;
+          }
+          if (filter?.sex && filter.sex !== 'all' && row.sex !== filter.sex) {
             return false;
           }
           if (filter?.status && filter.status !== 'all' && row.status !== filter.status) {
@@ -754,6 +833,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       );
       const validation = validateNewLivestock(input, {
         existingTags: rows.map((r) => r.tagNumber),
+        allLivestock: rows,
       });
       if (!validation.ok || !validation.data) {
         const msg =
@@ -765,6 +845,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       const created: Livestock = {
         id: generateId(),
         species: validation.data.species,
+        sex: validation.data.sex,
         tagNumber: validation.data.tagNumber,
         name: validation.data.name,
         breed: validation.data.breed,
@@ -794,6 +875,9 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         existingTags: rows.map((r) => r.tagNumber),
         currentTag: existing.tagNumber,
         currentId: id,
+        currentSpecies: existing.species,
+        currentDob: existing.dob,
+        allLivestock: rows,
       });
       if (!validation.ok || !validation.data) {
         const msg =
@@ -1482,6 +1566,60 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
   let backup!: BackupRepository;
   let bypassSyncAccountGate = false;
 
+  const createPreviewSupabaseFetcher = (anonKey: string) => {
+    const isPublishableKey = anonKey.startsWith('sb_publishable_');
+    const baseHeaders: Record<string, string> = {
+      apikey: anonKey,
+      'Content-Type': 'application/json',
+      ...(isPublishableKey ? {} : { Authorization: `Bearer ${anonKey}` }),
+    };
+
+    return async (
+      url: string,
+      init: RequestInit & { extraHeaders?: Record<string, string> }
+    ) => {
+      const res = await fetch(url, {
+        ...init,
+        headers: {
+          ...baseHeaders,
+          ...(init.extraHeaders ?? {}),
+        },
+      });
+      if (res.status === 401 && isPublishableKey) {
+        return fetch(url, {
+          ...init,
+          headers: {
+            ...baseHeaders,
+            Authorization: `Bearer ${anonKey}`,
+            ...(init.extraHeaders ?? {}),
+          },
+        });
+      }
+      return res;
+    };
+  };
+
+  async function applyPreviewAdminCredsIfEmpty(account: FarmAccount): Promise<void> {
+    if (!isAdminAccount(account)) return;
+    const accUrl = account.supabaseUrl
+      ? normalizeSupabaseBaseUrl(account.supabaseUrl)
+      : '';
+    const accKey = account.supabaseAnonKey?.trim() ?? '';
+    if (!accUrl || !accKey) return;
+    const cur = await settings.get();
+    if (!cur.supabaseUrl.trim() || !cur.supabaseAnonKey.trim()) {
+      await settings.update({
+        supabaseUrl: accUrl,
+        supabaseAnonKey: accKey,
+        cloudWorkspaceId:
+          account.cloudWorkspaceId?.trim() ||
+          cur.cloudWorkspaceId ||
+          'farmdb-homestead-main',
+        cloudSyncEnabled: true,
+      });
+    }
+  }
+
   const network: NetworkRepository = {
     async listAccountsRaw(): Promise<FarmAccount[]> {
       return readJson<FarmAccount[]>(ACCOUNTS_KEY, []).sort(
@@ -1555,7 +1693,23 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           'This account is suspended.'
         );
       }
-      if (
+      if (!account.isPrimaryAdmin) {
+        if (!account.accessCode || account.accessCode.trim().length === 0) {
+          throw new NetworkValidationError(
+            {
+              accessCode:
+                'This user account requires login credentials before it can be accessed.',
+            },
+            'This user account requires login credentials before it can be accessed.'
+          );
+        }
+        if ((accessCode ?? '').trim() !== account.accessCode.trim()) {
+          throw new NetworkValidationError(
+            { accessCode: 'Incorrect access PIN / passcode.' },
+            'Incorrect access PIN / passcode.'
+          );
+        }
+      } else if (
         account.accessCode &&
         account.accessCode.trim().length > 0 &&
         (accessCode ?? '').trim() !== account.accessCode.trim()
@@ -1566,6 +1720,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         );
       }
       await settings.update({ activeAccountId: account.id });
+      await applyPreviewAdminCredsIfEmpty(account);
       events.emit(['network', 'settings'], account.id);
       return account;
     },
@@ -1579,6 +1734,8 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         throw new NetworkValidationError(validation.errors, msg);
       }
       const now = Date.now();
+      const isAdminRole =
+        validation.data.isPrimaryAdmin || validation.data.role === 'admin';
       const created: FarmAccount = {
         id: validation.data.id || generateId(),
         displayName: validation.data.displayName,
@@ -1588,6 +1745,9 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         relationship: validation.data.relationship,
         avatarKey: validation.data.avatarKey,
         accessCode: validation.data.accessCode,
+        supabaseUrl: isAdminRole ? validation.data.supabaseUrl : null,
+        supabaseAnonKey: isAdminRole ? validation.data.supabaseAnonKey : null,
+        cloudWorkspaceId: isAdminRole ? validation.data.cloudWorkspaceId : null,
         isPrimaryAdmin: validation.data.isPrimaryAdmin,
         canManageNetwork: validation.data.canManageNetwork,
         canSyncCloud: validation.data.canSyncCloud,
@@ -1617,12 +1777,39 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           'Invalid account update.';
         throw new NetworkValidationError(validation.errors, msg);
       }
+      const currentActive = await this.getActiveAccount();
+      const preserveExistingAccessCode =
+        currentActive.id !== existing.id &&
+        Boolean(existing.accessCode && existing.accessCode.trim().length > 0);
       const nextRole: FarmAccountRole = existing.isPrimaryAdmin
         ? 'admin'
         : validation.data.role ?? existing.role;
       const updated: FarmAccount = {
         ...existing,
         ...validation.data,
+        accessCode: preserveExistingAccessCode
+          ? existing.accessCode
+          : validation.data.accessCode !== undefined
+            ? validation.data.accessCode
+            : existing.accessCode,
+        supabaseUrl:
+          existing.isPrimaryAdmin || nextRole === 'admin'
+            ? validation.data.supabaseUrl !== undefined
+              ? validation.data.supabaseUrl
+              : existing.supabaseUrl ?? null
+            : null,
+        supabaseAnonKey:
+          existing.isPrimaryAdmin || nextRole === 'admin'
+            ? validation.data.supabaseAnonKey !== undefined
+              ? validation.data.supabaseAnonKey
+              : existing.supabaseAnonKey ?? null
+            : null,
+        cloudWorkspaceId:
+          existing.isPrimaryAdmin || nextRole === 'admin'
+            ? validation.data.cloudWorkspaceId !== undefined
+              ? validation.data.cloudWorkspaceId
+              : existing.cloudWorkspaceId ?? null
+            : null,
         role: nextRole,
         permissions: existing.isPrimaryAdmin
           ? normalizeAccountPermissions(undefined, 'admin')
@@ -1642,6 +1829,9 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       };
       rows[idx] = updated;
       writeJson(ACCOUNTS_KEY, rows);
+      if (currentActive.id === updated.id) {
+        await applyPreviewAdminCredsIfEmpty(updated);
+      }
       events.emit(['network'], id);
       return updated;
     },
@@ -1740,15 +1930,10 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       if (input.accountId) {
         const existing = await this.getAccountById(input.accountId);
         if (!existing) throw new FarmAccountNotFoundError(input.accountId);
-        if (existing.isPrimaryAdmin) {
-          throw new NetworkValidationError(
-            { accountId: 'Primary Farm Owner cannot join as pending.' },
-            'Primary Farm Owner cannot join as pending.'
-          );
-        }
+        const isAdminJoining = existing.isPrimaryAdmin || existing.role === 'admin';
         targetAccount = await this.updateAccount(existing.id, {
-          status: 'pending',
-          canManageNetwork: false,
+          status: isAdminJoining ? 'active' : 'pending',
+          canManageNetwork: isAdminJoining,
           canSyncCloud: true,
         });
       } else if (input.newAccount) {
@@ -1787,6 +1972,172 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         account: targetAccount,
         syncedWithCloud,
         farmName: updatedSettings.farmName,
+      };
+    },
+    async recoverAdminFromCloud(
+      input: RecoverAdminCloudInput
+    ): Promise<RecoverAdminCloudResult> {
+      let baseUrl = '';
+      let anonKey = '';
+      let workspaceId =
+        input.cloudWorkspaceId?.trim() || 'farmdb-homestead-main';
+
+      if (input.cloudKey && input.cloudKey.trim().length > 0) {
+        const decoded = decodeFarmNetworkJoinKey(input.cloudKey);
+        if (
+          !decoded ||
+          decoded.kind !== 'full' ||
+          !decoded.supabaseUrl ||
+          !decoded.supabaseAnonKey
+        ) {
+          throw new NetworkValidationError(
+            {
+              cloudKey:
+                'Paste a valid full Farm Cloud Key (FDB1:...) or enter your Supabase URL and Key below.',
+            },
+            'Paste a valid full Farm Cloud Key (FDB1:...) or enter your Supabase URL and Key below.'
+          );
+        }
+        baseUrl = decoded.supabaseUrl;
+        anonKey = decoded.supabaseAnonKey;
+        workspaceId = decoded.workspaceId || workspaceId;
+      } else {
+        baseUrl = normalizeSupabaseBaseUrl(input.supabaseUrl ?? '');
+        anonKey = (input.supabaseAnonKey ?? '').trim();
+        if (!baseUrl || !/^https?:\/\/.+/i.test(baseUrl) || !anonKey) {
+          throw new NetworkValidationError(
+            {
+              supabaseUrl:
+                'Enter your Cloud Key (FDB1:...) or valid Supabase Project URL and Anon Key.',
+            },
+            'Enter your Cloud Key (FDB1:...) or valid Supabase Project URL and Anon Key.'
+          );
+        }
+      }
+
+      const fetchSupabase = createPreviewSupabaseFetcher(anonKey);
+      const restEndpoint = `${baseUrl}/rest/v1/farmdb_cloud_snapshots`;
+      const res = await fetchSupabase(
+        `${restEndpoint}?workspace_id=eq.${encodeURIComponent(workspaceId)}&select=workspace_id,farm_name,snapshot`,
+        { method: 'GET' }
+      );
+      if (!res.ok) {
+        throw new Error(`Unable to reach Supabase cloud (HTTP ${res.status}).`);
+      }
+      const rows = (await res.json()) as Array<{
+        workspace_id: string;
+        farm_name?: string;
+        snapshot?: unknown;
+      }>;
+      if (!rows.length || !rows[0]?.snapshot) {
+        throw new Error(
+          `No synced cloud farm database was found for workspace "${workspaceId}".`
+        );
+      }
+
+      const remoteSnapshot = parseFarmSnapshotJson(
+        JSON.stringify(rows[0].snapshot)
+      );
+      const remoteAdmins = (remoteSnapshot.farmAccounts ?? []).filter((acc) =>
+        isAdminAccount(acc)
+      );
+      const emailFilter = input.email?.trim().toLowerCase();
+      let targetAdmin = emailFilter
+        ? remoteAdmins.find(
+            (acc) => (acc.email ?? '').trim().toLowerCase() === emailFilter
+          )
+        : undefined;
+      if (emailFilter && !targetAdmin) {
+        throw new NetworkValidationError(
+          {
+            email: `No Admin account matching "${input.email!.trim()}" was found in workspace "${workspaceId}".`,
+          },
+          `No Admin account matching "${input.email!.trim()}" was found in workspace "${workspaceId}".`
+        );
+      }
+      targetAdmin =
+        targetAdmin ??
+        remoteAdmins.find((acc) => acc.isPrimaryAdmin) ??
+        remoteAdmins[0];
+
+      if (
+        targetAdmin?.accessCode &&
+        targetAdmin.accessCode.trim().length > 0 &&
+        (input.accessCode ?? '').trim() !== targetAdmin.accessCode.trim()
+      ) {
+        throw new NetworkValidationError(
+          { accessCode: 'Incorrect Admin password / PIN for the cloud workspace.' },
+          'Incorrect Admin password / PIN for the cloud workspace.'
+        );
+      }
+
+      const targetAdminId = targetAdmin?.id ?? DEFAULT_ADMIN_ACCOUNT.id;
+      await settings.update({
+        supabaseUrl: baseUrl,
+        supabaseAnonKey: anonKey,
+        cloudWorkspaceId: workspaceId,
+        cloudSyncEnabled: true,
+        activeAccountId: targetAdminId,
+      });
+
+      const restoredCounts = await backup.restoreSnapshot(remoteSnapshot, {
+        preserveLocalSession: true,
+      });
+      const existingRows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+      const now = Date.now();
+      const updatedRows = existingRows.map((acc) =>
+        acc.id === targetAdminId
+          ? {
+              ...acc,
+              supabaseUrl: baseUrl,
+              supabaseAnonKey: anonKey,
+              cloudWorkspaceId: workspaceId,
+              lastSyncedAt: now,
+              updatedAt: now,
+            }
+          : acc
+      );
+      writeJson(ACCOUNTS_KEY, updatedRows);
+      const recovered =
+        updatedRows.find((a) => a.id === targetAdminId) ??
+        (await this.ensureAdminAccount());
+      const totalPulled =
+        restoredCounts.livestockCount +
+        restoredCounts.productCount +
+        restoredCounts.medicalCount +
+        restoredCounts.financialCount +
+        restoredCounts.alertCount +
+        (remoteSnapshot.workers?.length ?? 0) +
+        (remoteSnapshot.workerPayments?.length ?? 0) +
+        (remoteSnapshot.workerTasks?.length ?? 0) +
+        (remoteSnapshot.animalOwnerships?.length ?? 0) +
+        (remoteSnapshot.farmAccounts?.length ?? 0);
+
+      const syncLogs = readJson<CloudSyncLog[]>(SYNC_LOGS_KEY, []);
+      writeJson(
+        SYNC_LOGS_KEY,
+        [
+          {
+            id: generateId(),
+            direction: 'pull' as CloudSyncDirection,
+            status: 'success' as const,
+            recordsPushed: 0,
+            recordsPulled: totalPulled,
+            summary: `Signed into Admin account "${recovered.displayName}" and downloaded ${totalPulled} records from Supabase workspace "${workspaceId}".`,
+            createdAt: now,
+          },
+          ...syncLogs,
+        ].slice(0, 60)
+      );
+      events.emit(['*']);
+
+      return {
+        account: recovered,
+        farmName:
+          remoteSnapshot.settings.farmName ||
+          rows[0]?.farm_name ||
+          'farmDB Homestead',
+        recordsPulled: totalPulled,
       };
     },
     async acceptPendingAccount(
@@ -1904,37 +2255,8 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         };
       }
 
+      const fetchSupabase = createPreviewSupabaseFetcher(anonKey);
       const restEndpoint = `${baseUrl}/rest/v1/farmdb_cloud_snapshots`;
-      const isPublishableKey = anonKey.startsWith('sb_publishable_');
-      const baseHeaders: Record<string, string> = {
-        apikey: anonKey,
-        'Content-Type': 'application/json',
-        ...(isPublishableKey ? {} : { Authorization: `Bearer ${anonKey}` }),
-      };
-
-      const fetchSupabase = async (
-        url: string,
-        init: RequestInit & { extraHeaders?: Record<string, string> }
-      ) => {
-        const res = await fetch(url, {
-          ...init,
-          headers: {
-            ...baseHeaders,
-            ...(init.extraHeaders ?? {}),
-          },
-        });
-        if (res.status === 401 && isPublishableKey) {
-          return fetch(url, {
-            ...init,
-            headers: {
-              ...baseHeaders,
-              Authorization: `Bearer ${anonKey}`,
-              ...(init.extraHeaders ?? {}),
-            },
-          });
-        }
-        return res;
-      };
 
       try {
         if (direction === 'test') {
@@ -1978,7 +2300,36 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           };
         }
 
-        await this.ensureAdminAccount();
+        const ensuredAdmin = await this.ensureAdminAccount();
+        const activeSyncAcc = await this.getActiveAccount();
+        if (baseUrl && anonKey) {
+          const targetId = isAdminAccount(activeSyncAcc)
+            ? activeSyncAcc.id
+            : ensuredAdmin.id;
+          const accRows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+          let changedCreds = false;
+          const nextAccRows = accRows.map((a) => {
+            if (
+              a.id === targetId &&
+              (a.supabaseUrl !== baseUrl ||
+                a.supabaseAnonKey !== anonKey ||
+                a.cloudWorkspaceId !== workspaceId)
+            ) {
+              changedCreds = true;
+              return {
+                ...a,
+                supabaseUrl: baseUrl,
+                supabaseAnonKey: anonKey,
+                cloudWorkspaceId: workspaceId,
+                updatedAt: Date.now(),
+              };
+            }
+            return a;
+          });
+          if (changedCreds) {
+            writeJson(ACCOUNTS_KEY, nextAccRows);
+          }
+        }
         const localSnap = await backup.exportSnapshot();
         let pulled: FarmDbSnapshot | null = null;
         if (direction === 'pull' || direction === 'bidirectional') {
@@ -2014,7 +2365,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           payload = mergeRes.merged;
           pulledCount = mergeRes.recordsPulled;
           pushedCount = mergeRes.recordsPushed;
-          await backup.restoreSnapshot(payload);
+          await backup.restoreSnapshot(payload, { preserveLocalSession: true });
         }
 
         if (direction === 'push' || direction === 'bidirectional') {
@@ -2075,6 +2426,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     async exportSnapshot(): Promise<FarmDbSnapshot> {
       const [
         currentSettings,
+        settingsUpdatedAt,
         allLivestock,
         allProduction,
         allMedical,
@@ -2087,6 +2439,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         allAccounts,
       ] = await Promise.all([
         settings.get(),
+        settings.getUpdatedAt(),
         livestock.list({}),
         production.list({}),
         medical.list({}),
@@ -2104,6 +2457,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         app: 'farmDB',
         exportedAt: new Date().toISOString(),
         settings: currentSettings,
+        settingsUpdatedAt,
         livestock: allLivestock,
         productRecords: allProduction,
         medicalRecords: allMedical,
@@ -2114,21 +2468,41 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         workerTasks: allWorkerTasks,
         animalOwnerships: allOwnerships,
         farmAccounts: allAccounts,
+        cloudSyncLogs: readJson<CloudSyncLog[]>(SYNC_LOGS_KEY, []),
       };
     },
     async restoreSnapshot(
-      snapshot: FarmDbSnapshot
+      snapshot: FarmDbSnapshot,
+      options?: RestoreSnapshotOptions
     ): Promise<RestoreSnapshotResult> {
-      const validatedSettings = validateFarmSettings({
+      const localBefore = options?.preserveLocalSession
+        ? await settings.get()
+        : null;
+      const incomingAccounts = snapshot.farmAccounts ?? [];
+      const hasValidLocalAccount = Boolean(
+        localBefore?.activeAccountId &&
+          incomingAccounts.some((acc) => acc.id === localBefore.activeAccountId)
+      );
+      const nextSettings: FarmSettings = {
         ...DEFAULT_FARM_SETTINGS,
         ...(snapshot.settings ?? {}),
-      });
-      writeJson(
-        SETTINGS_KEY,
-        validatedSettings.ok && validatedSettings.data
-          ? validatedSettings.data
-          : { ...DEFAULT_FARM_SETTINGS }
-      );
+      };
+      if (localBefore) {
+        nextSettings.cloudSyncEnabled = localBefore.cloudSyncEnabled;
+        nextSettings.supabaseUrl = localBefore.supabaseUrl;
+        nextSettings.supabaseAnonKey = localBefore.supabaseAnonKey;
+        nextSettings.cloudWorkspaceId = localBefore.cloudWorkspaceId;
+        nextSettings.autoSyncOnInternet = localBefore.autoSyncOnInternet;
+        nextSettings.cloudSyncIntervalSeconds =
+          localBefore.cloudSyncIntervalSeconds;
+        nextSettings.syncConflictStrategy = localBefore.syncConflictStrategy;
+        nextSettings.syncIncludeFinancials = localBefore.syncIncludeFinancials;
+        nextSettings.syncIncludeHr = localBefore.syncIncludeHr;
+        nextSettings.activeAccountId = hasValidLocalAccount
+          ? localBefore.activeAccountId
+          : (snapshot.settings?.activeAccountId ?? 'owner-admin');
+      }
+      await settings.restoreSettings(nextSettings, snapshot.settingsUpdatedAt);
       writeJson(
         LIVESTOCK_KEY,
         snapshot.livestock.map(normalizePreviewLivestock)
@@ -2141,7 +2515,20 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       writeJson(WORKER_PAYMENTS_KEY, snapshot.workerPayments ?? []);
       writeJson(WORKER_TASKS_KEY, snapshot.workerTasks ?? []);
       writeJson(OWNERSHIPS_KEY, snapshot.animalOwnerships ?? []);
-      writeJson(ACCOUNTS_KEY, snapshot.farmAccounts ?? []);
+      writeJson(ACCOUNTS_KEY, incomingAccounts);
+      const existingLogs = readJson<CloudSyncLog[]>(SYNC_LOGS_KEY, []);
+      const logMap = new Map(existingLogs.map((l) => [l.id, l]));
+      for (const incoming of snapshot.cloudSyncLogs ?? []) {
+        if (!logMap.has(incoming.id)) {
+          logMap.set(incoming.id, incoming);
+        }
+      }
+      writeJson(
+        SYNC_LOGS_KEY,
+        Array.from(logMap.values())
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 60)
+      );
       events.emit(['*']);
       return {
         livestockCount: snapshot.livestock.length,
@@ -2153,7 +2540,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     },
   };
 
-  return {
+  return wrapSessionWithRbac({
     driverKind: 'memory-fallback',
     events,
     livestock,
@@ -2166,5 +2553,5 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     network,
     settings,
     backup,
-  };
+  });
 }

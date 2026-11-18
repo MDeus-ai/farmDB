@@ -73,7 +73,7 @@ export function TutorialOverlay({
         <aside className="tutorial-sidebar">
           <div className="tutorial-sidebar-brand">
             <div className="brand-mark">
-              <img src={APP_ICONS.barn} alt="" />
+              <img src={APP_ICONS.field} alt="" />
             </div>
             <div>
               <strong style={{ display: 'block', color: '#ffffff', fontSize: '0.96rem' }}>

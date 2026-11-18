@@ -1,8 +1,14 @@
 import React from 'react';
 import { Image } from 'react-native';
 import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
-import type { FarmAccountAvatar, LivestockStatus, Species } from '@farmdb/core';
+import type {
+  FarmAccountAvatar,
+  LivestockSex,
+  LivestockStatus,
+  Species,
+} from '@farmdb/core';
 import {
+  getSexPngSource,
   getSpeciesPngSource,
   getStatusPngSource,
   MOBILE_APP_ICONS,
@@ -10,8 +16,14 @@ import {
 import { FARMDB_COLORS } from '../theme/uiScale';
 
 export type AppIconName =
+  | 'appLogo'
+  | 'field'
   | 'barn'
   | 'barnAlt'
+  | 'cow'
+  | 'bull'
+  | 'female'
+  | 'male'
   | 'settings'
   | 'backup'
   | 'livestock'
@@ -74,8 +86,14 @@ interface IconProps {
 }
 
 const PNG_ICON_MAP: Partial<Record<AppIconName, number>> = {
+  appLogo: MOBILE_APP_ICONS.field,
+  field: MOBILE_APP_ICONS.field,
   barn: MOBILE_APP_ICONS.barn,
   barnAlt: MOBILE_APP_ICONS.barnAlt,
+  cow: MOBILE_APP_ICONS.cow,
+  bull: MOBILE_APP_ICONS.bull,
+  female: MOBILE_APP_ICONS.female,
+  male: MOBILE_APP_ICONS.male,
   settings: MOBILE_APP_ICONS.settings,
   backup: MOBILE_APP_ICONS.databaseCloud,
   livestock: MOBILE_APP_ICONS.group,
@@ -307,11 +325,25 @@ export function AppIcon({
 
 export function SpeciesIcon({
   species,
+  sex,
   size = 18,
-}: IconProps & { species: Species }) {
+}: IconProps & { species: Species; sex?: LivestockSex | null }) {
   return (
     <Image
-      source={getSpeciesPngSource(species)}
+      source={getSpeciesPngSource(species, sex)}
+      style={{ width: size, height: size }}
+      resizeMode="contain"
+    />
+  );
+}
+
+export function SexIcon({
+  sex,
+  size = 16,
+}: IconProps & { sex?: LivestockSex | null }) {
+  return (
+    <Image
+      source={getSexPngSource(sex)}
       style={{ width: size, height: size }}
       resizeMode="contain"
     />

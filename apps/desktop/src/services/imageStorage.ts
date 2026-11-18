@@ -1,6 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { buildLivestockImageStem, generateId } from '@farmdb/core';
 
 export function isTauriEnvironment(): boolean {
   return (
@@ -10,11 +9,90 @@ export function isTauriEnvironment(): boolean {
 }
 
 /**
- * Opens the native OS file picker in Tauri and copies the selected image into
- * `$APPLOCALDATA/images/` via the Rust backend, returning the local file path.
+ * Downscales an image source into a compact WebP (or JPEG fallback) data URL
+ * so livestock photos stay lightweight for both local SQLite and Supabase Cloud DB sync.
+ */
+export function optimizeImageToDataUrl(
+  sourceUrl: string,
+  maxDimension = 480,
+  quality = 0.74
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (typeof document === 'undefined' || typeof Image === 'undefined') {
+      resolve(sourceUrl);
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const srcW = img.naturalWidth || img.width;
+        const srcH = img.naturalHeight || img.height;
+        if (!srcW || !srcH) {
+          resolve(sourceUrl);
+          return;
+        }
+        const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
+        const targetW = Math.max(1, Math.round(srcW * scale));
+        const targetH = Math.max(1, Math.round(srcH * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(sourceUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+
+        const webpUrl = canvas.toDataURL('image/webp', quality);
+        if (webpUrl.startsWith('data:image/webp')) {
+          resolve(webpUrl);
+          return;
+        }
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error('Failed to optimize image.'));
+      }
+    };
+    img.onerror = () => {
+      if (sourceUrl.startsWith('data:image/')) {
+        resolve(sourceUrl);
+      } else {
+        reject(new Error('Could not decode selected livestock image.'));
+      }
+    };
+    img.src = sourceUrl;
+  });
+}
+
+/**
+ * Reads an existing local image path via Tauri and compresses it into a portable
+ * optimized data URL suitable for Cloud DB synchronization.
+ */
+export async function convertLocalImageUriToOptimizedDataUrl(
+  imageUri: string
+): Promise<string | null> {
+  if (!isTauriEnvironment() || !imageUri || imageUri.startsWith('data:') || imageUri.startsWith('http')) {
+    return null;
+  }
+  try {
+    const rawDataUrl = await invoke<string>('read_image_file_as_data_url', {
+      filePath: imageUri,
+    });
+    return await optimizeImageToDataUrl(rawDataUrl, 480, 0.74);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Opens the native OS file picker in Tauri, reads the chosen photo, and optimizes it
+ * into a compact WebP/JPEG data URL (~15-35 KB) so it syncs reliably across Cloud DB & devices.
  */
 export async function pickAndSaveDesktopImage(
-  tagHint: string
+  _tagHint: string
 ): Promise<string | null> {
   if (!isTauriEnvironment()) {
     return null;
@@ -35,22 +113,23 @@ export async function pickAndSaveDesktopImage(
     return null;
   }
 
-  const fileStem = buildLivestockImageStem(tagHint, generateId());
-  return invoke<string>('import_livestock_image', {
-    sourcePath: selected,
-    fileStem,
+  const rawDataUrl = await invoke<string>('read_image_file_as_data_url', {
+    filePath: selected,
   });
+  return optimizeImageToDataUrl(rawDataUrl, 480, 0.74);
 }
 
 /**
- * Reads a browser File input into a Data URL for non-Tauri preview mode only.
+ * Reads and optimizes a browser File input into a compact Data URL for preview & cloud sync.
  */
 export function readBrowserPreviewImageFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        resolve(reader.result);
+        void optimizeImageToDataUrl(reader.result, 480, 0.74)
+          .then(resolve)
+          .catch(() => resolve(reader.result as string));
       } else {
         reject(new Error('Failed to read selected image file.'));
       }

@@ -183,6 +183,7 @@ describe('@farmdb/core phase 3 validation & analytics', () => {
         {
           id: 'c1',
           species: 'cow',
+          sex: 'female',
           tagNumber: 'COW-402',
           name: 'Bessie',
           breed: 'Holstein',
@@ -214,6 +215,7 @@ describe('@farmdb/core phase 3 validation & analytics', () => {
       {
         id: 'c1',
         species: 'cow',
+        sex: 'female',
         tagNumber: 'COW-101',
         name: 'Bessie',
         breed: 'Holstein',
@@ -228,6 +230,7 @@ describe('@farmdb/core phase 3 validation & analytics', () => {
       {
         id: 'g1',
         species: 'goat',
+        sex: 'female',
         tagNumber: 'GOAT-201',
         name: 'clover',
         breed: 'Saanen',
@@ -242,6 +245,7 @@ describe('@farmdb/core phase 3 validation & analytics', () => {
       {
         id: 'c2',
         species: 'cow',
+        sex: 'female',
         tagNumber: 'COW-102',
         name: 'Daisy',
         breed: 'Holstein',
@@ -379,6 +383,7 @@ describe('@farmdb/core phase 3 validation & analytics', () => {
       {
         id: 'c1',
         species: 'cow',
+        sex: 'female',
         tagNumber: 'COW-101',
         name: 'Bessie',
         breed: 'Holstein',
@@ -393,6 +398,7 @@ describe('@farmdb/core phase 3 validation & analytics', () => {
       {
         id: 'c2',
         species: 'cow',
+        sex: 'female',
         tagNumber: 'COW-102',
         name: 'Clover',
         breed: 'Jersey',
@@ -466,5 +472,108 @@ describe('@farmdb/core phase 3 validation & analytics', () => {
     expect(sortLivestockItems(animals, 'dob_desc').map((a) => a.id)).toEqual(['c2', 'c1']);
     expect(sortLivestockItems(animals, 'dob_asc').map((a) => a.id)).toEqual(['c1', 'c2']);
     expect(sortLivestockItems(animals, 'created_desc').map((a) => a.id)).toEqual(['c2', 'c1']);
+  });
+
+  it('computes gender split, cow vs bull counts, milking cohort, and sex filtering', () => {
+    const animals: Livestock[] = [
+      {
+        id: 'cow-1',
+        species: 'cow',
+        sex: 'female',
+        tagNumber: 'COW-10',
+        name: 'Daisy',
+        breed: 'Friesian',
+        dob: '2021-01-01',
+        imageUri: null,
+        sireId: null,
+        damId: null,
+        status: 'active',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: 'bull-1',
+        species: 'cow',
+        sex: 'male',
+        tagNumber: 'BULL-10',
+        name: 'Titan',
+        breed: 'Friesian',
+        dob: '2020-02-01',
+        imageUri: null,
+        sireId: null,
+        damId: null,
+        status: 'active',
+        createdAt: 2,
+        updatedAt: 2,
+      },
+      {
+        id: 'goat-1',
+        species: 'goat',
+        sex: 'female',
+        tagNumber: 'GOAT-10',
+        name: 'Nanny',
+        breed: 'Saanen',
+        dob: '2022-05-01',
+        imageUri: null,
+        sireId: null,
+        damId: null,
+        status: 'active',
+        createdAt: 3,
+        updatedAt: 3,
+      },
+      {
+        id: 'duck-1',
+        species: 'duck',
+        sex: 'female',
+        tagNumber: 'DUCK-10',
+        name: 'Quack',
+        breed: 'Pekin',
+        dob: '2024-03-01',
+        imageUri: null,
+        sireId: null,
+        damId: null,
+        status: 'active',
+        createdAt: 4,
+        updatedAt: 4,
+      },
+    ];
+
+    const records: ProductRecord[] = [
+      { id: 'm1', livestockId: 'cow-1', date: '2026-11-16', yieldAmount: 18, qualityNotes: null, createdAt: 1, updatedAt: 1 },
+      { id: 'm2', livestockId: 'goat-1', date: '2026-11-16', yieldAmount: 4, qualityNotes: null, createdAt: 2, updatedAt: 2 },
+    ];
+
+    const allReport = computeLivestockStatistics({
+      livestock: animals,
+      productRecords: records,
+      medicalRecords: [],
+      financialLogs: [],
+      timeframe: 'weeks',
+      todayIso: '2026-11-17',
+    });
+
+    expect(allReport.femaleCount).toBe(3);
+    expect(allReport.maleCount).toBe(1);
+    expect(allReport.cowsCount).toBe(1);
+    expect(allReport.bullsCount).toBe(1);
+    expect(allReport.milkingEligibleCount).toBe(2); // cow-1 + goat-1 (not bull-1 or duck-1)
+    expect(allReport.avgMilkPerMilkingFemale).toBe(11);
+    expect(allReport.sexBreakdown.find((s) => s.sex === 'female')?.milkLiters).toBe(22);
+
+    const bullsOnlyReport = computeLivestockStatistics({
+      livestock: animals,
+      productRecords: records,
+      medicalRecords: [],
+      financialLogs: [],
+      speciesFilter: 'cow',
+      sexFilter: 'male',
+      timeframe: 'weeks',
+      todayIso: '2026-11-17',
+    });
+
+    expect(bullsOnlyReport.totalAnimals).toBe(1);
+    expect(bullsOnlyReport.bullsCount).toBe(1);
+    expect(bullsOnlyReport.cowsCount).toBe(0);
+    expect(bullsOnlyReport.totalMilkLiters).toBe(0);
   });
 });

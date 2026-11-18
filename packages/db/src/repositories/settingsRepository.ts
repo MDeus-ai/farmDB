@@ -36,7 +36,12 @@ export class SettingsValidationError extends Error {
 
 export interface SettingsRepository {
   get(): Promise<FarmSettings>;
+  getUpdatedAt(): Promise<number>;
   update(input: Partial<FarmSettings>): Promise<FarmSettings>;
+  restoreSettings(
+    input: FarmSettings,
+    updatedAt?: number
+  ): Promise<FarmSettings>;
   reset(): Promise<FarmSettings>;
 }
 
@@ -181,8 +186,12 @@ export function createSettingsRepository(
   db: FarmDrizzleDb,
   events: DatabaseEventBus
 ): SettingsRepository {
-  async function persistSettings(validated: FarmSettings): Promise<FarmSettings> {
-    const now = Date.now();
+  async function persistSettings(
+    validated: FarmSettings,
+    options?: { updatedAt?: number; forceTimestamp?: boolean }
+  ): Promise<FarmSettings> {
+    const now = options?.updatedAt ?? Date.now();
+    const forceTimestamp = Boolean(options?.forceTimestamp);
     const keys = Object.keys(validated) as Array<keyof FarmSettings>;
 
     for (const key of keys) {
@@ -194,11 +203,13 @@ export function createSettingsRepository(
         .get();
 
       if (existing) {
-        await db
-          .update(farmSettings)
-          .set({ value, updatedAt: now })
-          .where(eq(farmSettings.key, key))
-          .run();
+        if (existing.value !== value || forceTimestamp) {
+          await db
+            .update(farmSettings)
+            .set({ value, updatedAt: now })
+            .where(eq(farmSettings.key, key))
+            .run();
+        }
       } else {
         await db
           .insert(farmSettings)
@@ -221,6 +232,18 @@ export function createSettingsRepository(
       return parseStoredSettings(rawMap);
     },
 
+    async getUpdatedAt(): Promise<number> {
+      const rows = await db.select().from(farmSettings);
+      let maxUpdatedAt = 0;
+      for (const row of rows) {
+        if (row.key === 'activeAccountId') continue;
+        if (row.updatedAt > maxUpdatedAt) {
+          maxUpdatedAt = row.updatedAt;
+        }
+      }
+      return maxUpdatedAt;
+    },
+
     async update(input: Partial<FarmSettings>): Promise<FarmSettings> {
       const current = await this.get();
       const merged: FarmSettings = {
@@ -237,6 +260,23 @@ export function createSettingsRepository(
       }
 
       return persistSettings(validation.data);
+    },
+
+    async restoreSettings(
+      input: FarmSettings,
+      updatedAt?: number
+    ): Promise<FarmSettings> {
+      const validation = validateFarmSettings(input);
+      if (!validation.ok || !validation.data) {
+        const msg =
+          Object.values(validation.errors).find(Boolean) ??
+          'Invalid farm settings.';
+        throw new SettingsValidationError(validation.errors, msg);
+      }
+      return persistSettings(validation.data, {
+        updatedAt: updatedAt ?? Date.now(),
+        forceTimestamp: true,
+      });
     },
 
     async reset(): Promise<FarmSettings> {

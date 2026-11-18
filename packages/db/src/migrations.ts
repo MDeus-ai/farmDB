@@ -223,4 +223,26 @@ export const FARMDB_MIGRATIONS: readonly SqlMigration[] = [
       `CREATE INDEX IF NOT EXISTS idx_cloud_sync_logs_created_at ON cloud_sync_logs (created_at);`,
     ],
   },
+  {
+    id: '0007_livestock_sex',
+    statements: [
+      `ALTER TABLE livestock ADD COLUMN sex TEXT NOT NULL DEFAULT 'female';`,
+      `CREATE INDEX IF NOT EXISTS idx_livestock_sex ON livestock (sex);`,
+      `UPDATE livestock
+       SET sex = 'male'
+       WHERE upper(tag_number) LIKE 'BULL-%'
+          OR upper(tag_number) LIKE 'RAM-%'
+          OR upper(tag_number) LIKE 'BUCK-%'
+          OR upper(tag_number) LIKE 'DRAKE-%'
+          OR id IN (SELECT DISTINCT sire_id FROM livestock WHERE sire_id IS NOT NULL);`,
+    ],
+  },
+  {
+    id: '0008_admin_cloud_credentials',
+    statements: [
+      `ALTER TABLE farm_accounts ADD COLUMN supabase_url TEXT;`,
+      `ALTER TABLE farm_accounts ADD COLUMN supabase_anon_key TEXT;`,
+      `ALTER TABLE farm_accounts ADD COLUMN cloud_workspace_id TEXT;`,
+    ],
+  },
 ];

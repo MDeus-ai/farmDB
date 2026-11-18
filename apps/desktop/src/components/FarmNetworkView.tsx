@@ -28,15 +28,15 @@ import {
   useDeleteFarmAccount,
   useFarmAccountList,
   useFarmSettings,
+  useJoinFarmNetwork,
   useRotateNetworkJoinKey,
-  useSwitchFarmAccount,
   useUpdateFarmAccount,
 } from '@farmdb/db';
 import { APP_ICONS } from '../assets/icons';
 import { ModernSelect } from './ModernSelect';
 
 interface FarmNetworkViewProps {
-  onOpenAuthPortal?: () => void;
+  onSignOut?: () => void;
 }
 
 function getAvatarIconSrc(avatar: FarmAccountAvatar): string {
@@ -53,19 +53,19 @@ function getAvatarIconSrc(avatar: FarmAccountAvatar): string {
   }
 }
 
-export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
+export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   const settingsQuery = useFarmSettings();
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
 
   const accountsQuery = useFarmAccountList({});
   const activeAccountQuery = useActiveFarmAccount();
 
-  const switchAccountMut = useSwitchFarmAccount();
   const createAccountMut = useCreateFarmAccount();
   const updateAccountMut = useUpdateFarmAccount();
   const deleteAccountMut = useDeleteFarmAccount();
   const rotateKeyMut = useRotateNetworkJoinKey();
   const acceptPendingMut = useAcceptPendingAccount();
+  const joinNetworkMut = useJoinFarmNetwork();
 
   const accounts = accountsQuery.data ?? [];
   const activeAccount = activeAccountQuery.data;
@@ -103,12 +103,18 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [isSeeding, setIsSeeding] = useState(false);
 
-  // Switch PIN Prompt Modal
-  const [pinPromptAccount, setPinPromptAccount] = useState<FarmAccount | null>(null);
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState<string | null>(null);
+  // Join Network via Key state (user or admin accounts)
+  const [joinModalOpen, setJoinModalOpen] = useState(false);
+  const [joinKeyInput, setJoinKeyInput] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
+
+  // Change Password / PIN state
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [currentPinInput, setCurrentPinInput] = useState('');
+  const [newPinInput, setNewPinInput] = useState('');
+  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
 
   // Add/Edit/Approve Account Modal
   const [accountModalOpen, setAccountModalOpen] = useState(false);
@@ -154,7 +160,9 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
     setAEmail(acc.email ?? '');
     setAPhone(acc.phone ?? '');
     setAAvatar(acc.avatarKey);
-    setAAccessCode(acc.accessCode ?? '');
+    setAAccessCode(
+      acc.id === activeAccount?.id ? (acc.accessCode ?? '') : ''
+    );
     setAStatus(approvePending ? 'active' : acc.status);
     setACanSyncCloud(acc.canSyncCloud);
     setAPermissions({ ...acc.permissions });
@@ -166,6 +174,16 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
     e.preventDefault();
     setAError(null);
     const enforcedPermissions: FarmAccountPermissions = aPermissions;
+    const isAdminEditingOtherExistingWithPin = Boolean(
+      editingAccount &&
+        editingAccount.id !== activeAccount?.id &&
+        editingAccount.accessCode &&
+        editingAccount.accessCode.trim().length > 0
+    );
+    if (!editingAccount && aRole !== 'admin' && aAccessCode.trim().length < 4) {
+      setAError('Please set a login PIN / passcode (4 to 32 characters) for this user account.');
+      return;
+    }
     try {
       if (editingAccount && approvingMode) {
         await acceptPendingMut.mutateAsync({
@@ -190,7 +208,9 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
             email: aEmail || null,
             phone: aPhone || null,
             avatarKey: aAvatar,
-            accessCode: aAccessCode || null,
+            ...(isAdminEditingOtherExistingWithPin
+              ? {}
+              : { accessCode: aAccessCode || null }),
             status: aStatus,
             canManageNetwork: Boolean(editingAccount.isPrimaryAdmin),
             canSyncCloud: aCanSyncCloud,
@@ -242,39 +262,70 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
     }
   }
 
-  async function handleTrySwitchAccount(acc: FarmAccount) {
+  async function handleJoinNetworkSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeAccount) return;
+    setJoinError(null);
     setErrorNotice(null);
-    if (acc.accessCode && acc.accessCode.trim().length > 0) {
-      setPinPromptAccount(acc);
-      setPinInput('');
-      setPinError(null);
+    const trimmed = joinKeyInput.trim();
+    if (!trimmed) {
+      setJoinError('Enter a Farm Network Join Key (FARM-XXXX or FDB1:...).');
       return;
     }
     try {
-      await switchAccountMut.mutateAsync({ accountId: acc.id });
+      const res = await joinNetworkMut.mutateAsync({
+        joinKey: trimmed,
+        accountId: activeAccount.id,
+      });
+      setJoinKeyInput('');
+      setJoinModalOpen(false);
       setStatusNotice(
-        `Switched active session to ${acc.displayName} (${formatAccountRoleLabel(acc.role)}).`
+        isAdminOrManager
+          ? `Connected ${activeAccount.displayName} to Farm Network "${res.farmName}"${res.syncedWithCloud ? ' (cloud sync linked)' : ''}.`
+          : `Joined Farm Network "${res.farmName}"${res.syncedWithCloud ? ' and synced with cloud' : ''}. Your membership request is now waiting for Admin approval.`
       );
     } catch (err) {
-      setErrorNotice(
-        err instanceof Error ? err.message : 'Unable to switch account.'
+      setJoinError(
+        err instanceof Error ? err.message : 'Unable to join Farm Network with that key.'
       );
     }
   }
 
-  async function handleSubmitPinSwitch(e: React.FormEvent) {
+  async function handleChangePasswordSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!pinPromptAccount) return;
-    setPinError(null);
+    if (!activeAccount) return;
+    setPasswordError(null);
+    setErrorNotice(null);
+    const hasExistingPin = Boolean(
+      activeAccount.accessCode && activeAccount.accessCode.trim().length > 0
+    );
+    if (hasExistingPin && currentPinInput !== activeAccount.accessCode) {
+      setPasswordError('Current password / PIN does not match your account.');
+      return;
+    }
+    const nextPin = newPinInput.trim();
+    if (nextPin.length < 4 || nextPin.length > 32) {
+      setPasswordError('New password / PIN must be between 4 and 32 characters.');
+      return;
+    }
+    if (nextPin !== confirmPinInput.trim()) {
+      setPasswordError('New password / PIN and confirmation do not match.');
+      return;
+    }
     try {
-      await switchAccountMut.mutateAsync({
-        accountId: pinPromptAccount.id,
-        accessCode: pinInput,
+      await updateAccountMut.mutateAsync({
+        id: activeAccount.id,
+        input: { accessCode: nextPin },
       });
-      setStatusNotice(`Signed in as ${pinPromptAccount.displayName}.`);
-      setPinPromptAccount(null);
+      setCurrentPinInput('');
+      setNewPinInput('');
+      setConfirmPinInput('');
+      setPasswordModalOpen(false);
+      setStatusNotice(`Updated login password / PIN for ${activeAccount.displayName}.`);
     } catch (err) {
-      setPinError(err instanceof Error ? err.message : 'Invalid PIN code.');
+      setPasswordError(
+        err instanceof Error ? err.message : 'Unable to update password / PIN.'
+      );
     }
   }
 
@@ -308,70 +359,6 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
     }
   }
 
-  async function handleSeedSampleNetwork() {
-    if (isSeeding) return;
-    setIsSeeding(true);
-    setErrorNotice(null);
-    setStatusNotice(null);
-    try {
-      const existingNames = new Set(
-        accounts.map((a) => a.displayName.trim().toLowerCase())
-      );
-
-      if (!existingNames.has('martha mukasa (family)')) {
-        await createAccountMut.mutateAsync({
-          displayName: 'Martha Mukasa (Family)',
-          role: 'family_member',
-          relationship: 'Spouse / Co-Manager',
-          email: 'martha@homestead.farm',
-          phone: '+256 772 880112',
-          avatarKey: 'farmerFemale',
-          canManageNetwork: false,
-          canSyncCloud: true,
-          status: 'active',
-        });
-      }
-
-      if (!existingNames.has('mr. kato (greenvalley partner)')) {
-        await createAccountMut.mutateAsync({
-          displayName: 'Mr. Kato (GreenValley Partner)',
-          role: 'external_owner',
-          relationship: 'External Bull & Cow Owner',
-          phone: '+256 772 310440',
-          avatarKey: 'peasant',
-          accessCode: '1234',
-          canManageNetwork: false,
-          canSyncCloud: true,
-          status: 'active',
-        });
-      }
-
-      if (!existingNames.has('david okello (pending join)')) {
-        await createAccountMut.mutateAsync({
-          displayName: 'David Okello (Pending Join)',
-          role: 'family_member',
-          relationship: 'Joined via Farm Join Key',
-          email: 'david.okello@homestead.farm',
-          phone: '+256 782 550911',
-          avatarKey: 'farmer',
-          canManageNetwork: false,
-          canSyncCloud: true,
-          status: 'pending',
-        });
-      }
-
-      setStatusNotice(
-        'Loaded sample Farm Network accounts including a pending join request for approval.'
-      );
-    } catch (err) {
-      setErrorNotice(
-        err instanceof Error ? err.message : 'Unable to seed Farm Network accounts.'
-      );
-    } finally {
-      setIsSeeding(false);
-    }
-  }
-
   return (
     <>
       <div className="page-header">
@@ -385,27 +372,32 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
         </div>
 
         <div className="row-actions">
-          {isAdminOrManager && accounts.length < 4 && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={isSeeding}
-              onClick={() => void handleSeedSampleNetwork()}
-            >
-              <img src={APP_ICONS.staff} alt="" className="app-icon-sm" />
-              {isSeeding ? 'Loading Sample...' : 'Load Sample Network'}
-            </button>
-          )}
-          {onOpenAuthPortal && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={onOpenAuthPortal}
-            >
-              <img src={APP_ICONS.farmer} alt="" className="app-icon-sm" />
-              Login / Sign Up
-            </button>
-          )}
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              setJoinKeyInput('');
+              setJoinError(null);
+              setJoinModalOpen(true);
+            }}
+          >
+            <img src={APP_ICONS.networking} alt="" className="app-icon-sm" />
+            Join Network
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              setCurrentPinInput('');
+              setNewPinInput('');
+              setConfirmPinInput('');
+              setPasswordError(null);
+              setPasswordModalOpen(true);
+            }}
+          >
+            <img src={APP_ICONS.settings} alt="" className="app-icon-sm" />
+            Change Password
+          </button>
           {isAdminOrManager && (
             <button
               type="button"
@@ -413,7 +405,17 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
               onClick={openAddAccountModal}
             >
               <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
-              Add Connected Account
+              Invite to Network
+            </button>
+          )}
+          {onSignOut && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={onSignOut}
+            >
+              <img src={APP_ICONS.farmer} alt="" className="app-icon-sm" />
+              Sign Out
             </button>
           )}
         </div>
@@ -518,7 +520,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
 
             <div className="join-key-box" style={{ flex: 2 }}>
               <span className="hr-sub-label">
-                Full Cloud Invitation Key (Cross-Device Supabase Share)
+                Full Cloud Key (Member Invites &amp; Cross-Device Admin Sign-In)
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
                 <input
@@ -534,7 +536,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                     onClick={() => {
                       void navigator.clipboard?.writeText(fullJoinKey);
                       setStatusNotice(
-                        'Copied Full Cloud Join Key! Any new or existing user can enter it on the Sign Up / Connect page.'
+                        'Copied Full Cloud Key! Use it to invite members or sign into your Admin account + cloud DB on another device.'
                       );
                     }}
                   >
@@ -689,14 +691,19 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                 </div>
 
                 <div className="hr-worker-actions">
-                  {!isCurrent && (
+                  {isCurrent && (
                     <button
                       type="button"
-                      className="btn btn-primary btn-sm"
-                      disabled={acc.status === 'suspended'}
-                      onClick={() => void handleTrySwitchAccount(acc)}
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => {
+                        setCurrentPinInput('');
+                        setNewPinInput('');
+                        setConfirmPinInput('');
+                        setPasswordError(null);
+                        setPasswordModalOpen(true);
+                      }}
                     >
-                      Switch Account
+                      Change Password
                     </button>
                   )}
                   {isAdminOrManager && acc.status === 'pending' && (
@@ -754,7 +761,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                   ? `Assign Privileges & Accept: ${editingAccount.displayName}`
                   : editingAccount
                     ? `Manage Account: ${editingAccount.displayName}`
-                    : 'Add Connected Farm Network Account'}
+                    : 'Invite Member to Farm Network'}
               </h2>
               <button
                 type="button"
@@ -799,9 +806,7 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                     }))}
                     onChange={(nextRole) => {
                       setARole(nextRole);
-                      if (!editingAccount || approvingMode) {
-                        setAPermissions(getDefaultPermissionsForRole(nextRole));
-                      }
+                      setAPermissions(getDefaultPermissionsForRole(nextRole));
                     }}
                   />
                 </div>
@@ -844,13 +849,38 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                   />
                 </div>
                 <div className="form-field">
-                  <label className="form-label">Switch PIN / Passcode</label>
-                  <input
-                    className="input"
-                    value={aAccessCode}
-                    onChange={(e) => setAAccessCode(e.target.value)}
-                    placeholder="Optional PIN"
-                  />
+                  <label className="form-label">
+                    {!editingAccount && aRole !== 'admin'
+                      ? 'Login PIN / Passcode *'
+                      : 'Login PIN / Passcode'}
+                  </label>
+                  {editingAccount &&
+                  editingAccount.id !== activeAccount?.id &&
+                  editingAccount.accessCode ? (
+                    <div
+                      className="rate-preview"
+                      style={{
+                        padding: '8px 10px',
+                        background: '#faf8f4',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)',
+                      }}
+                    >
+                      Login credentials are private to this user. Admins can update privileges or delete the account.
+                    </div>
+                  ) : (
+                    <input
+                      className="input"
+                      type="password"
+                      value={aAccessCode}
+                      onChange={(e) => setAAccessCode(e.target.value)}
+                      placeholder={
+                        !editingAccount && aRole !== 'admin'
+                          ? 'Required 4+ character passcode'
+                          : 'Optional 4+ character passcode'
+                      }
+                    />
+                  )}
                 </div>
                 <div className="form-field">
                   <label className="form-label">Account Status</label>
@@ -882,11 +912,11 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                   </div>
 
                   <div style={{ marginTop: 16 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                       <strong style={{ fontSize: '0.92rem' }}>
                         Module Access &amp; Edit Privileges
                       </strong>
-                      <div className="row-actions">
+                      <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
                         <button
                           type="button"
                           className="btn btn-secondary btn-sm"
@@ -894,7 +924,25 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                             setAPermissions(getDefaultPermissionsForRole(aRole))
                           }
                         >
-                          Reset to Role Defaults
+                          Role Defaults
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() =>
+                            setAPermissions(buildAllModulePermissions('full'))
+                          }
+                        >
+                          All Full
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() =>
+                            setAPermissions(buildAllModulePermissions('edit'))
+                          }
+                        >
+                          All Edit
                         </button>
                         <button
                           type="button"
@@ -903,7 +951,16 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
                             setAPermissions(buildAllModulePermissions('view'))
                           }
                         >
-                          All View-Only
+                          All View
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() =>
+                            setAPermissions(buildAllModulePermissions('none'))
+                          }
+                        >
+                          All Hidden
                         </button>
                       </div>
                     </div>
@@ -976,43 +1033,152 @@ export function FarmNetworkView({ onOpenAuthPortal }: FarmNetworkViewProps) {
         </div>
       )}
 
-      {/* PIN Switch Modal */}
-      {pinPromptAccount && (
+      {/* Join Network via Key Modal */}
+      {joinModalOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal-card" style={{ maxWidth: 380 }}>
+          <div className="modal-card" style={{ maxWidth: 460 }}>
             <div className="modal-header">
-              <h2 className="modal-title">Enter Access PIN</h2>
+              <h2 className="modal-title">Join Farm Network with Key</h2>
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
-                onClick={() => setPinPromptAccount(null)}
+                onClick={() => setJoinModalOpen(false)}
               >
                 <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
               </button>
             </div>
-            <form onSubmit={handleSubmitPinSwitch}>
-              <p style={{ margin: '0 0 10px', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-                Enter the passcode assigned to <strong>{pinPromptAccount.displayName}</strong>:
+            <form onSubmit={handleJoinNetworkSubmit}>
+              <p style={{ margin: '0 0 12px', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+                Enter the <strong>FARM-XXXX</strong> short code or full{' '}
+                <strong>FDB1:...</strong> Cloud Invitation Key provided by a Farm Administrator to link{' '}
+                <strong>{activeAccount?.displayName ?? 'your account'}</strong>.
               </p>
-              <input
-                className="input"
-                type="password"
-                value={pinInput}
-                onChange={(e) => setPinInput(e.target.value)}
-                placeholder="Enter PIN..."
-                autoFocus
-              />
-              {pinError && <p className="field-error" style={{ marginTop: 8 }}>{pinError}</p>}
+              <div className="form-field">
+                <label className="form-label" htmlFor="network-join-key-input">
+                  Farm Network Join Key *
+                </label>
+                <input
+                  id="network-join-key-input"
+                  className="input"
+                  value={joinKeyInput}
+                  onChange={(e) => setJoinKeyInput(e.target.value)}
+                  placeholder="Paste FARM-XXXX or FDB1:... Join Key"
+                  autoFocus
+                  required
+                />
+              </div>
+              {joinError && (
+                <p className="field-error" style={{ marginTop: 8 }}>
+                  {joinError}
+                </p>
+              )}
               <div className="modal-footer">
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setPinPromptAccount(null)}
+                  onClick={() => setJoinModalOpen(false)}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  Unlock &amp; Switch
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={joinNetworkMut.isPending}
+                >
+                  {joinNetworkMut.isPending ? 'Connecting...' : 'Join Network'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Change Password / PIN Modal */}
+      {passwordModalOpen && activeAccount && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-card" style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h2 className="modal-title">Change Password / PIN</h2>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setPasswordModalOpen(false)}
+              >
+                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+              </button>
+            </div>
+            <form onSubmit={handleChangePasswordSubmit}>
+              <p style={{ margin: '0 0 12px', fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                Updating sign-in credentials for{' '}
+                <strong>{activeAccount.displayName}</strong>.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {Boolean(activeAccount.accessCode && activeAccount.accessCode.trim()) && (
+                  <div className="form-field">
+                    <label className="form-label" htmlFor="current-pin-input">
+                      Current Password / PIN *
+                    </label>
+                    <input
+                      id="current-pin-input"
+                      className="input"
+                      type="password"
+                      value={currentPinInput}
+                      onChange={(e) => setCurrentPinInput(e.target.value)}
+                      placeholder="Enter current password / PIN"
+                      autoFocus
+                      required
+                    />
+                  </div>
+                )}
+                <div className="form-field">
+                  <label className="form-label" htmlFor="new-pin-input">
+                    New Password / PIN * (4–32 characters)
+                  </label>
+                  <input
+                    id="new-pin-input"
+                    className="input"
+                    type="password"
+                    value={newPinInput}
+                    onChange={(e) => setNewPinInput(e.target.value)}
+                    placeholder="Enter new password / PIN"
+                    autoFocus={!activeAccount.accessCode}
+                    required
+                  />
+                </div>
+                <div className="form-field">
+                  <label className="form-label" htmlFor="confirm-pin-input">
+                    Confirm New Password / PIN *
+                  </label>
+                  <input
+                    id="confirm-pin-input"
+                    className="input"
+                    type="password"
+                    value={confirmPinInput}
+                    onChange={(e) => setConfirmPinInput(e.target.value)}
+                    placeholder="Re-enter new password / PIN"
+                    required
+                  />
+                </div>
+              </div>
+              {passwordError && (
+                <p className="field-error" style={{ marginTop: 8 }}>
+                  {passwordError}
+                </p>
+              )}
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setPasswordModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={updateAccountMut.isPending}
+                >
+                  {updateAccountMut.isPending ? 'Saving...' : 'Save Password'}
                 </button>
               </div>
             </form>

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, BookOpen } from 'lucide-react';
 import {
   APP_SECTIONS,
+  canAccountEditModule,
   canAccountViewModule,
   DEFAULT_FARM_SETTINGS,
   formatAccountTierLabel,
@@ -17,6 +18,9 @@ import {
   useFarmDb,
   useFarmSettings,
   useFarmSummary,
+  useLivestockList,
+  useTriggerCloudSync,
+  useUpdateLivestock,
   type AlertNotificationPayload,
   type FarmDbContextValue,
   type SqlDriver,
@@ -27,12 +31,19 @@ import {
   createTauriSqliteController,
   type TauriSqlController,
 } from './db/tauriDriver';
+import { convertLocalImageUriToOptimizedDataUrl } from './services/imageStorage';
 import { dispatchDesktopNotification } from './services/notifications';
 import { AlertsView } from './components/AlertsView';
 import { AuthPortalView } from './components/AuthPortalView';
 import { AnimalQuickPreviewProvider } from './components/AnimalQuickPreviewModal';
 import { BackupView } from './components/BackupView';
+import {
+  DesktopTitlebar,
+  getSectionIconSrc,
+  type DesktopTitlebarProps,
+} from './components/DesktopTitlebar';
 import { FamilyTreeView } from './components/FamilyTreeView';
+import { FarmHoverHintOverlay } from './components/FarmHoverHint';
 import { FarmNetworkView } from './components/FarmNetworkView';
 import { FarmStatisticsView } from './components/FarmStatisticsView';
 import { FinancialView } from './components/FinancialView';
@@ -49,35 +60,6 @@ function isRunningInsideTauri(): boolean {
     typeof window !== 'undefined' &&
     '__TAURI_INTERNALS__' in (window as unknown as Record<string, unknown>)
   );
-}
-
-function getSectionIconSrc(id: AppSectionId): string {
-  switch (id) {
-    case 'livestock':
-      return APP_ICONS.group;
-    case 'ownerships':
-      return APP_ICONS.ownership;
-    case 'family_tree':
-      return APP_ICONS.tree;
-    case 'production':
-      return APP_ICONS.milkBottle;
-    case 'medical':
-      return APP_ICONS.syringe;
-    case 'financial':
-      return APP_ICONS.budget;
-    case 'alerts':
-      return APP_ICONS.notification;
-    case 'hr':
-      return APP_ICONS.staff;
-    case 'statistics':
-      return APP_ICONS.livestockGroup;
-    case 'network':
-      return APP_ICONS.network;
-    case 'backup':
-      return APP_ICONS.databaseCloud;
-    case 'settings':
-      return APP_ICONS.settings;
-  }
 }
 
 function getSectionIcon(id: AppSectionId, label: string) {
@@ -98,21 +80,78 @@ function DesktopShell({
   const [activeSection, setActiveSection] = useState<AppSectionId>('livestock');
   const [familyFocusAnimalId, setFamilyFocusAnimalId] = useState<string | null>(null);
   const [authPortalOpen, setAuthPortalOpen] = useState(false);
+  const [isSignedOut, setIsSignedOut] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  function handleSignOut() {
+    setIsSignedOut(true);
+    setAuthPortalOpen(true);
+  }
   const [dueBanners, setDueBanners] = useState<AlertNotificationPayload[]>([]);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const { driverKind } = useFarmDb();
   const summaryQuery = useFarmSummary();
   const settingsQuery = useFarmSettings();
   const activeAccountQuery = useActiveFarmAccount();
+  const livestockListQuery = useLivestockList({});
+  const updateLivestockMut = useUpdateLivestock();
+  const cloudSyncMut = useTriggerCloudSync();
+  const migratedPhotoIdsRef = useRef<Set<string>>(new Set());
   const summary = summaryQuery.data;
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
   const activeAccount = activeAccountQuery.data;
+
+  useEffect(() => {
+    if (!isRunningInsideTauri()) return;
+    if (!canAccountEditModule(activeAccount, 'livestock')) return;
+    const rows = livestockListQuery.data;
+    if (!rows || rows.length === 0) return;
+
+    const pending = rows.filter(
+      (a) =>
+        a.imageUri &&
+        !a.imageUri.startsWith('data:') &&
+        !a.imageUri.startsWith('http') &&
+        !a.imageUri.startsWith('blob:') &&
+        !migratedPhotoIdsRef.current.has(a.id)
+    );
+    if (pending.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      for (const animal of pending) {
+        if (cancelled || !animal.imageUri) break;
+        migratedPhotoIdsRef.current.add(animal.id);
+        const optimized = await convertLocalImageUriToOptimizedDataUrl(animal.imageUri);
+        if (optimized && !cancelled) {
+          try {
+            await updateLivestockMut.mutateAsync({
+              id: animal.id,
+              input: { imageUri: optimized },
+            });
+          } catch {
+            // Skip silently if locked or permission changed
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [livestockListQuery.data, activeAccount, updateLivestockMut]);
 
   useEffect(() => {
     const root = document.documentElement;
     root.dataset.fontScale = settings.fontScale;
     root.dataset.uiDensity = settings.uiDensity;
   }, [settings.fontScale, settings.uiDensity]);
+
+  useEffect(() => {
+    if (!syncFeedback) return;
+    const timer = window.setTimeout(() => setSyncFeedback(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [syncFeedback]);
 
   const dispatcher = useMemo(
     () => ({
@@ -132,6 +171,12 @@ function DesktopShell({
   useCloudAutoSyncWorker(settings, {
     canSyncAccount:
       isAdminAccount(activeAccount) || Boolean(activeAccount?.canSyncCloud),
+    onSynced: (result) => {
+      if (result.ok) {
+        const moved = result.recordsPushed + result.recordsPulled;
+        setSyncFeedback(moved > 0 ? `Synced (${moved})` : 'Up to date');
+      }
+    },
   });
 
   const visibleSections = useMemo(
@@ -150,21 +195,6 @@ function DesktopShell({
     () => visibleSections.filter((s) => s.id !== 'settings'),
     [visibleSections]
   );
-
-  if (authPortalOpen || activeAccount?.status === 'pending') {
-    return (
-      <div
-        data-font-scale={settings.fontScale}
-        data-ui-density={settings.uiDensity}
-      >
-        <AuthPortalView
-          canCancel={activeAccount?.status !== 'pending'}
-          onSuccessEnterApp={() => setAuthPortalOpen(false)}
-          onCancelToApp={() => setAuthPortalOpen(false)}
-        />
-      </div>
-    );
-  }
 
   function getCountForSection(id: AppSectionId): number | null {
     if (!summary) {
@@ -201,17 +231,91 @@ function DesktopShell({
     }
   }
 
+  async function handleTitlebarCloudSync() {
+    try {
+      const result = await cloudSyncMut.mutateAsync('bidirectional');
+      if (result.ok) {
+        const moved = result.recordsPushed + result.recordsPulled;
+        setSyncFeedback(moved > 0 ? `Synced (${moved})` : 'Up to date');
+      } else {
+        setSyncFeedback('Sync issue');
+      }
+    } catch {
+      setSyncFeedback('Sync failed');
+    }
+  }
+
+  const isPendingGate = activeAccount?.status === 'pending';
+  const showAuthPortal = authPortalOpen || isPendingGate;
+
+  const titlebarProps: DesktopTitlebarProps = {
+    activeSection,
+    sectionCount: getCountForSection(activeSection),
+    authPortalOpen: showAuthPortal,
+    settings,
+    activeAccount,
+    driverKind,
+    openAlertCount: summary?.openAlertCount ?? 0,
+    isSyncing: cloudSyncMut.isPending,
+    syncFeedback,
+    onTriggerCloudSync: isPendingGate
+      ? undefined
+      : () => {
+          void handleTitlebarCloudSync();
+        },
+    onOpenAlerts:
+      !isPendingGate && canAccountViewModule(activeAccount, 'alerts')
+        ? () => {
+            setAuthPortalOpen(false);
+            setActiveSection('alerts');
+          }
+        : undefined,
+    onOpenSettings:
+      !isPendingGate && canAccountViewModule(activeAccount, 'settings')
+        ? () => {
+            setAuthPortalOpen(false);
+            setActiveSection('settings');
+          }
+        : undefined,
+    onOpenAccountPortal:
+      !isPendingGate && !showAuthPortal
+        ? () => setActiveSection('network')
+        : undefined,
+  };
+
+  if (showAuthPortal) {
+    return (
+      <div
+        className="desktop-window-frame"
+        data-font-scale={settings.fontScale}
+        data-ui-density={settings.uiDensity}
+      >
+        <DesktopTitlebar {...titlebarProps} />
+        <AuthPortalView
+          canCancel={!isPendingGate && !isSignedOut}
+          onSuccessEnterApp={() => {
+            setIsSignedOut(false);
+            setAuthPortalOpen(false);
+          }}
+          onCancelToApp={() => setAuthPortalOpen(false)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
-      className="app-shell"
+      className="desktop-window-frame"
       data-font-scale={settings.fontScale}
       data-ui-density={settings.uiDensity}
     >
+      <DesktopTitlebar {...titlebarProps} />
+      <div className="app-shell">
       <aside className="sidebar">
         <div>
           <div className="brand">
             <div className="brand-mark">
-              <img src={APP_ICONS.barn} alt="farmDB barn logo" />
+              <img src={APP_ICONS.field} alt="farmDB logo" />
             </div>
             <div>
               <p className="brand-title">farmDB</p>
@@ -276,18 +380,8 @@ function DesktopShell({
             <button
               type="button"
               className="sidebar-account-btn"
-              onClick={() => {
-                if (isAdminAccount(activeAccount)) {
-                  setActiveSection('network');
-                } else {
-                  setAuthPortalOpen(true);
-                }
-              }}
-              title={
-                isAdminAccount(activeAccount)
-                  ? 'Manage Farm Network accounts & join keys'
-                  : 'Switch account or enter an Admin Join Key'
-              }
+              onClick={() => setActiveSection('network')}
+              title="Open Farm Network, Join Keys & Password settings"
             >
               <img
                 src={
@@ -323,10 +417,10 @@ function DesktopShell({
             <button
               type="button"
               className="sidebar-auth-btn"
-              onClick={() => setAuthPortalOpen(true)}
+              onClick={handleSignOut}
             >
               <img src={APP_ICONS.farmer} alt="" className="app-icon-sm" />
-              <span>Login / Sign Up</span>
+              <span>Sign Out</span>
             </button>
           </div>
         </div>
@@ -382,7 +476,22 @@ function DesktopShell({
           </div>
         )}
 
-        {activeSection === 'livestock' ? (
+        {visibleSections.length === 0 ? (
+          <div className="card">
+            <h2 className="card-section-title">No Modules Assigned</h2>
+            <p style={{ color: 'var(--text-muted)' }}>
+              This account currently has all modules set to Hidden. Ask your Farm Admin to grant
+              module access or switch accounts.
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleSignOut}
+            >
+              Sign Out
+            </button>
+          </div>
+        ) : activeSection === 'livestock' ? (
           <LivestockView
             onOpenFamilyTree={(animalId) => {
               setFamilyFocusAnimalId(animalId);
@@ -406,11 +515,12 @@ function DesktopShell({
         ) : activeSection === 'statistics' ? (
           <FarmStatisticsView />
         ) : activeSection === 'network' ? (
-          <FarmNetworkView onOpenAuthPortal={() => setAuthPortalOpen(true)} />
+          <FarmNetworkView onSignOut={handleSignOut} />
         ) : activeSection === 'backup' ? (
           <BackupView sqlController={sqlController} />
         ) : (
           <SettingsView
+            sqlController={sqlController}
             onOpenBackup={() => setActiveSection('backup')}
             onOpenTutorial={() => setTutorialOpen(true)}
           />
@@ -423,6 +533,7 @@ function DesktopShell({
         activeSection={activeSection}
         onClose={() => setTutorialOpen(false)}
       />
+      </div>
     </div>
   );
 }
@@ -469,17 +580,23 @@ export default function App() {
 
   if (initError) {
     return (
-      <div style={{ padding: 32 }}>
-        <h1>Database Initialization Error</h1>
-        <p>{initError}</p>
+      <div className="desktop-window-frame">
+        <DesktopTitlebar minimal statusLabel="Database Initialization Error" />
+        <div style={{ padding: 32, overflow: 'auto', flex: 1 }}>
+          <h1>Database Initialization Error</h1>
+          <p>{initError}</p>
+        </div>
       </div>
     );
   }
 
   if (!driver && !previewSession) {
     return (
-      <div style={{ padding: 32, color: '#5d675f' }}>
-        Initializing local farmDB SQLite engine...
+      <div className="desktop-window-frame">
+        <DesktopTitlebar minimal statusLabel="Starting Offline Ledger..." />
+        <div style={{ padding: 32, color: '#5d675f', flex: 1 }}>
+          Initializing local farmDB SQLite engine...
+        </div>
       </div>
     );
   }
@@ -488,6 +605,7 @@ export default function App() {
     <FarmDbProvider driver={driver ?? undefined} session={previewSession ?? undefined}>
       <AnimalQuickPreviewProvider>
         <DesktopShell sqlController={sqlController} />
+        <FarmHoverHintOverlay />
       </AnimalQuickPreviewProvider>
     </FarmDbProvider>
   );

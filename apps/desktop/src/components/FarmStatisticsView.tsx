@@ -20,10 +20,13 @@ import {
   DEFAULT_FARM_SETTINGS,
   formatCompactAxisNumber,
   formatCurrency,
+  formatSexLabel,
   formatSpeciesLabel,
   getVolumeUnitShortLabel,
+  LIVESTOCK_SEXES,
   SPECIES_LIST,
   STATISTICS_TIMEFRAME_OPTIONS,
+  type LivestockSex,
   type Species,
   type StatisticsTimeframe,
 } from '@farmdb/core';
@@ -35,7 +38,7 @@ import {
   useOwnershipList,
   useProductRecordList,
 } from '@farmdb/db';
-import { APP_ICONS, getSpeciesPngIcon } from '../assets/icons';
+import { APP_ICONS, getSexPngIcon, getSpeciesPngIcon } from '../assets/icons';
 import {
   computeDesktopCategoryYAxis,
   computeDesktopNumericYAxisWidth,
@@ -64,9 +67,22 @@ function formatAgeMonthsSummary(avgMonths: number | null): string {
   return rem === 0 ? `${years} yr${years === 1 ? '' : 's'}` : `${years}y ${rem}m`;
 }
 
+type StatsSpeciesFilter =
+  | 'all'
+  | 'cow'
+  | 'bull'
+  | 'cattle'
+  | Exclude<Species, 'cow'>;
+
 export function FarmStatisticsView() {
-  const [speciesFilter, setSpeciesFilter] = useState<Species | 'all'>('all');
+  const [speciesFilter, setSpeciesFilter] = useState<StatsSpeciesFilter>('all');
+  const [sexFilter, setSexFilter] = useState<LivestockSex | 'all'>('all');
   const [timeframe, setTimeframe] = useState<StatisticsTimeframe>('14d');
+
+  const querySpecies: Species | 'all' =
+    speciesFilter === 'bull' || speciesFilter === 'cattle' || speciesFilter === 'cow'
+      ? 'cow'
+      : speciesFilter;
 
   const settingsQuery = useFarmSettings();
   const livestockQuery = useLivestockList({});
@@ -88,7 +104,8 @@ export function FarmStatisticsView() {
         medicalRecords: medicalQuery.data ?? [],
         financialLogs: financialQuery.data ?? [],
         ownerships: ownershipQuery.data ?? [],
-        speciesFilter,
+        speciesFilter: querySpecies,
+        sexFilter,
         timeframe,
       }),
     [
@@ -97,7 +114,8 @@ export function FarmStatisticsView() {
       medicalQuery.data,
       financialQuery.data,
       ownershipQuery.data,
-      speciesFilter,
+      querySpecies,
+      sexFilter,
       timeframe,
     ]
   );
@@ -194,11 +212,14 @@ export function FarmStatisticsView() {
     [report.ageCohorts]
   );
 
-  const speciesFilterOptions = useMemo<ModernSelectOption<Species | 'all'>[]>(
+  const speciesFilterOptions = useMemo<ModernSelectOption<StatsSpeciesFilter>[]>(
     () => [
       { value: 'all', label: 'All Species', iconSrc: APP_ICONS.group },
-      ...SPECIES_LIST.map((sp) => ({
-        value: sp,
+      { value: 'cow', label: 'Cow', iconSrc: getSpeciesPngIcon('cow', 'female') },
+      { value: 'bull', label: 'Bull', iconSrc: getSpeciesPngIcon('cow', 'male') },
+      { value: 'cattle', label: 'Cattle (All)', iconSrc: APP_ICONS.herd },
+      ...SPECIES_LIST.filter((sp) => sp !== 'cow').map((sp) => ({
+        value: sp as StatsSpeciesFilter,
         label: formatSpeciesLabel(sp),
         iconSrc: getSpeciesPngIcon(sp),
       })),
@@ -206,8 +227,24 @@ export function FarmStatisticsView() {
     []
   );
 
+  const sexFilterOptions = useMemo<ModernSelectOption<LivestockSex | 'all'>[]>(
+    () => [
+      { value: 'all', label: 'All Sexes', iconSrc: APP_ICONS.group },
+      ...LIVESTOCK_SEXES.map((sx) => ({
+        value: sx,
+        label: formatSexLabel(sx),
+        iconSrc: getSexPngIcon(sx),
+      })),
+    ],
+    []
+  );
+
   const avgMilkPerAnimalDisplay = convertLitersToDisplayVolume(
     report.avgMilkPerAnimal,
+    volumeUnit
+  );
+  const avgMilkPerMilkingFemaleDisplay = convertLitersToDisplayVolume(
+    report.avgMilkPerMilkingFemale,
     volumeUnit
   );
   const totalMilkDisplay = convertLitersToDisplayVolume(
@@ -227,7 +264,29 @@ export function FarmStatisticsView() {
             ariaLabel="Filter statistics by species"
             value={speciesFilter}
             options={speciesFilterOptions}
-            onChange={setSpeciesFilter}
+            onChange={(next) => {
+              setSpeciesFilter(next);
+              if (next === 'cow') {
+                setSexFilter('female');
+              } else if (next === 'bull') {
+                setSexFilter('male');
+              } else {
+                setSexFilter('all');
+              }
+            }}
+          />
+          <ModernSelect
+            ariaLabel="Filter statistics by sex"
+            value={sexFilter}
+            options={sexFilterOptions}
+            onChange={(nextSex) => {
+              setSexFilter(nextSex);
+              if (speciesFilter === 'cow' || speciesFilter === 'bull' || speciesFilter === 'cattle') {
+                setSpeciesFilter(
+                  nextSex === 'male' ? 'bull' : nextSex === 'female' ? 'cow' : 'cattle'
+                );
+              }
+            }}
           />
           <div className="segmented-group" role="group" aria-label="Trend window">
             {STATISTICS_TIMEFRAME_OPTIONS.map((opt) => (
@@ -257,12 +316,46 @@ export function FarmStatisticsView() {
         </div>
 
         <div className="stat-card">
+          <p className="stat-label">Gender &amp; Cattle Split</p>
+          <p
+            className="stat-value"
+            style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <img src={APP_ICONS.female} alt="Female" style={{ width: 17, height: 17, objectFit: 'contain' }} />
+              {report.femaleCount}
+            </span>
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 500 }}>/</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <img src={APP_ICONS.male} alt="Male" style={{ width: 17, height: 17, objectFit: 'contain' }} />
+              {report.maleCount}
+            </span>
+          </p>
+          <p
+            className="page-subtitle"
+            style={{ fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              <img src={APP_ICONS.cow} alt="" style={{ width: 13, height: 13, objectFit: 'contain' }} />
+              {report.cowsCount} Cow{report.cowsCount === 1 ? '' : 's'}
+            </span>
+            <span>·</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              <img src={APP_ICONS.bull} alt="" style={{ width: 13, height: 13, objectFit: 'contain' }} />
+              {report.bullsCount} Bull{report.bullsCount === 1 ? '' : 's'}
+            </span>
+          </p>
+        </div>
+
+        <div className="stat-card">
           <p className="stat-label">Cumulative Milk Output</p>
           <p className="stat-value">
             {totalMilkDisplay.toFixed(1)} {volumeShort}
           </p>
           <p className="page-subtitle" style={{ fontSize: '0.78rem' }}>
-            Avg {avgMilkPerAnimalDisplay.toFixed(1)} {volumeShort} / milking animal
+            {report.milkingEligibleCount > 0
+              ? `Avg ${avgMilkPerMilkingFemaleDisplay.toFixed(1)} ${volumeShort} / milking female (${report.milkingEligibleCount} active)`
+              : `Avg ${avgMilkPerAnimalDisplay.toFixed(1)} ${volumeShort} / milking animal`}
           </p>
         </div>
 
@@ -641,7 +734,81 @@ export function FarmStatisticsView() {
         </div>
       </div>
 
-      {/* Row 4: Monthly Profit & Loss + Species Matrix */}
+      {/* Row 4: Herd Gender & Cattle Composition */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="chart-header">
+          <div>
+            <h2 className="card-section-title" style={{ marginBottom: 0 }}>
+              Gender &amp; Dairy-Eligibility Mix
+            </h2>
+          </div>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <img src={APP_ICONS.female} alt="" className="app-icon-sm" />
+            <img src={APP_ICONS.male} alt="" className="app-icon-sm" />
+          </div>
+        </div>
+
+        <div className="split-grid" style={{ gap: 14 }}>
+          {report.sexBreakdown.map((sx) => {
+            const isFemale = sx.sex === 'female';
+            const fillColor = isFemale ? '#b83b72' : '#1e5f8a';
+            const milkDisp = convertLitersToDisplayVolume(sx.milkLiters, volumeUnit);
+            return (
+              <div
+                key={sx.sex}
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 12,
+                  padding: '12px 14px',
+                  background: isFemale ? 'rgba(184, 59, 114, 0.04)' : 'rgba(30, 95, 138, 0.04)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontWeight: 700 }}>
+                    <img
+                      src={getSexPngIcon(sx.sex)}
+                      alt={sx.label}
+                      style={{ width: 18, height: 18, objectFit: 'contain' }}
+                    />
+                    {sx.label}
+                  </span>
+                  <span style={{ fontWeight: 700, color: fillColor }}>
+                    {sx.count} ({sx.sharePercent}%)
+                  </span>
+                </div>
+                <div
+                  style={{
+                    height: 8,
+                    borderRadius: 999,
+                    background: 'var(--border)',
+                    overflow: 'hidden',
+                    margin: '10px 0 8px',
+                  }}
+                >
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${Math.min(100, sx.sharePercent)}%`,
+                      background: fillColor,
+                      borderRadius: 999,
+                    }}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)', flexWrap: 'wrap', gap: 6 }}>
+                  <span>{sx.activeCount} active in herd</span>
+                  <span>
+                    {isFemale
+                      ? `${milkDisp.toFixed(1)} ${volumeShort} logged (${report.milkingEligibleCount} milking females)`
+                      : 'Non-milking cohort'}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Row 5: Species Matrix */}
       <div className="card">
         <div className="chart-header">
           <div>
@@ -675,11 +842,18 @@ export function FarmStatisticsView() {
                     <td>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
                         <img
-                          src={getSpeciesPngIcon(row.species)}
+                          src={getSpeciesPngIcon(
+                            row.species,
+                            sexFilter === 'male' ? 'male' : 'female'
+                          )}
                           alt=""
                           className="app-icon-sm"
                         />
-                        {row.label}
+                        {row.species === 'cow' && sexFilter === 'male'
+                          ? 'Bull'
+                          : row.species === 'cow' && sexFilter === 'all'
+                            ? `Cattle (${report.cowsCount} Cow · ${report.bullsCount} Bull)`
+                            : row.label}
                       </span>
                     </td>
                     <td>{row.totalCount}</td>

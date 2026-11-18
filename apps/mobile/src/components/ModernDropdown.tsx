@@ -48,6 +48,7 @@ interface ModernDropdownProps<T extends string = string> {
   placeholder?: string;
   searchable?: boolean;
   compact?: boolean;
+  disabled?: boolean;
   accessibilityLabel?: string;
 }
 
@@ -188,6 +189,7 @@ export function ModernDropdown<T extends string = string>({
   placeholder = 'Select...',
   searchable = false,
   compact = false,
+  disabled = false,
   accessibilityLabel,
 }: ModernDropdownProps<T>) {
   const ui = useUiScale();
@@ -226,9 +228,11 @@ export function ModernDropdown<T extends string = string>({
     <>
       <Pressable
         accessibilityLabel={accessibilityLabel ?? title}
+        disabled={disabled}
         style={[
           styles.trigger,
           compact && styles.triggerCompact,
+          disabled && { opacity: 0.55 },
           {
             minHeight: compact ? ui.chipHeight : ui.controlHeight,
             borderRadius: compact ? 18 : Math.max(10, ui.radius - 2),
@@ -237,6 +241,7 @@ export function ModernDropdown<T extends string = string>({
           },
         ]}
         onPress={() => {
+          if (disabled) return;
           setQuery('');
           setPreviewValue(null);
           setOpen(true);

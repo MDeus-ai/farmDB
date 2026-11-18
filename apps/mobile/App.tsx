@@ -117,7 +117,13 @@ function getTabIconName(id: AppSectionId): AppIconName {
 function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
   const [activeSection, setActiveSection] = useState<AppSectionId>('livestock');
   const [authPortalOpen, setAuthPortalOpen] = useState(false);
+  const [isSignedOut, setIsSignedOut] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  const handleSignOut = useCallback(() => {
+    setIsSignedOut(true);
+    setAuthPortalOpen(true);
+  }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerProgress = useRef(new Animated.Value(0)).current;
   const [familyFocusAnimalId, setFamilyFocusAnimalId] = useState<string | null>(null);
@@ -251,9 +257,12 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
       <>
         <StatusBar style="dark" />
         <AuthPortalView
-          canCancel={activeAccount?.status !== 'pending'}
+          canCancel={!isSignedOut && activeAccount?.status !== 'pending'}
           onCancelToApp={() => setAuthPortalOpen(false)}
-          onSuccessEnterApp={() => setAuthPortalOpen(false)}
+          onSuccessEnterApp={() => {
+            setIsSignedOut(false);
+            setAuthPortalOpen(false);
+          }}
         />
       </>
     );
@@ -294,9 +303,9 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
           </Pressable>
 
           <Pressable
-            onPress={() => setAuthPortalOpen(true)}
+            onPress={() => setActiveSection('network')}
             style={styles.headerAccountTrigger}
-            accessibilityLabel="Switch account or sign in"
+            accessibilityLabel="Open Farm Network and Account"
             hitSlop={4}
           >
             <View
@@ -372,7 +381,58 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
       ) : null}
 
       <View style={styles.body}>
-        {activeSection === 'livestock' ? (
+        {visibleSections.length === 0 ? (
+          <View
+            style={{
+              margin: ui.contentPadding,
+              padding: ui.space(20),
+              borderRadius: ui.radius,
+              backgroundColor: FARMDB_COLORS.surface,
+              borderWidth: 1,
+              borderColor: FARMDB_COLORS.border,
+              gap: ui.space(10),
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: FARMDB_FONTS.bold,
+                fontSize: ui.font(17),
+                color: FARMDB_COLORS.text,
+              }}
+            >
+              No Modules Assigned
+            </Text>
+            <Text
+              style={{
+                fontFamily: FARMDB_FONTS.regular,
+                fontSize: ui.font(13),
+                color: FARMDB_COLORS.textMuted,
+              }}
+            >
+              This account currently has all modules set to Hidden. Ask your Farm Admin to grant module access or switch accounts.
+            </Text>
+            <Pressable
+              style={{
+                backgroundColor: FARMDB_COLORS.accent,
+                borderRadius: 10,
+                paddingHorizontal: ui.space(14),
+                paddingVertical: ui.space(10),
+                alignSelf: 'flex-start',
+              }}
+              onPress={handleSignOut}
+            >
+              <Text
+                style={{
+                  fontFamily: FARMDB_FONTS.bold,
+                  fontSize: ui.font(13),
+                  color: '#ffffff',
+                }}
+              >
+                Sign Out
+              </Text>
+            </Pressable>
+          </View>
+        ) : activeSection === 'livestock' ? (
           <LivestockListView
             onOpenFamilyTree={(animalId) => {
               setFamilyFocusAnimalId(animalId);
@@ -396,13 +456,14 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
         ) : activeSection === 'statistics' ? (
           <FarmStatisticsView />
         ) : activeSection === 'network' ? (
-          <FarmNetworkView onOpenAuthPortal={() => setAuthPortalOpen(true)} />
+          <FarmNetworkView onSignOut={handleSignOut} />
         ) : activeSection === 'backup' ? (
           <BackupView sqlController={sqlController} />
         ) : (
           <SettingsView
+            sqlController={sqlController}
             onOpenBackup={() => setActiveSection('backup')}
-            onOpenAuthPortal={() => setAuthPortalOpen(true)}
+            onSignOut={handleSignOut}
             onOpenTutorial={() => setTutorialOpen(true)}
           />
         )}
@@ -594,7 +655,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
             <SafeAreaView style={styles.drawerSafe} edges={['top', 'left', 'bottom']}>
               <View style={styles.drawerBrand}>
                 <View style={styles.drawerBrandMark}>
-                  <AppIcon name="barn" size={24} />
+                  <AppIcon name="field" size={24} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={[styles.drawerBrandTitle, { fontSize: ui.font(17) }]}>
@@ -725,6 +786,27 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
                     </View>
                   </Pressable>
                 ) : null}
+
+                <Pressable
+                  style={[
+                    styles.drawerNavItem,
+                    { minHeight: Math.max(40, ui.chipHeight + 2), paddingVertical: ui.space(8) },
+                  ]}
+                  onPress={() => closeDrawer(() => handleSignOut())}
+                >
+                  <View style={styles.drawerNavLeft}>
+                    <AppIcon name="farmer" size={ui.font(18)} color="#b7e4c7" />
+                    <Text
+                      style={[
+                        styles.drawerNavText,
+                        { fontSize: ui.font(14), color: '#e6f2ec' },
+                      ]}
+                      numberOfLines={2}
+                    >
+                      Sign Out
+                    </Text>
+                  </View>
+                </Pressable>
               </View>
             </SafeAreaView>
           </Animated.View>

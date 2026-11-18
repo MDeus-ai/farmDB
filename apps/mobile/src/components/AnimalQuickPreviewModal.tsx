@@ -19,9 +19,11 @@ import {
   buildAnimalPedigree,
   formatAnimalAge,
   formatDisplayDate,
+  formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
   formatVolume,
+  isFemaleMilkProducingAnimal,
 } from '@farmdb/core';
 import {
   useAlertList,
@@ -31,7 +33,7 @@ import {
   useProductRecordList,
 } from '@farmdb/db';
 import { FARMDB_COLORS, FARMDB_FONTS, useUiScale } from '../theme/uiScale';
-import { AppIcon, SpeciesIcon, StatusIcon } from './FarmIcons';
+import { AppIcon, SexIcon, SpeciesIcon, StatusIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { ImageLightboxOverlay } from './ImageLightboxModal';
 
@@ -172,6 +174,7 @@ function MobileAnimalQuickPreviewModal({
                     <View style={styles.heroPlaceholder}>
                       <SpeciesIcon
                         species={animal.species}
+                        sex={animal.sex}
                         size={ui.font(38)}
                         color={FARMDB_COLORS.accent}
                       />
@@ -185,9 +188,10 @@ function MobileAnimalQuickPreviewModal({
                       </Text>
                     </View>
                     <View style={[styles.statusRow, { flexWrap: 'wrap', flexShrink: 1 }]}>
+                      <SexIcon sex={animal.sex} size={ui.font(13)} />
                       <StatusIcon status={animal.status} size={ui.font(14)} />
                       <Text style={[styles.statusText, { fontSize: ui.font(12), flexShrink: 1 }]}>
-                        {formatSpeciesLabel(animal.species)} · {formatStatusLabel(animal.status)}
+                        {formatSpeciesLabel(animal.species, animal.sex)} · {formatSexLabel(animal.sex)} · {formatStatusLabel(animal.status)}
                       </Text>
                     </View>
                   </View>
@@ -263,7 +267,11 @@ function MobileAnimalQuickPreviewModal({
                     >
                       <Text style={[styles.factLabel, { fontSize: ui.font(11) }]}>Milk / Care</Text>
                       <Text style={[styles.factValue, { fontSize: ui.font(13) }]}>
-                        {formatVolume(totalYield, ui.settings.volumeUnit)} · {medicalRecords.length}m · {openAlerts.length}a
+                        {isFemaleMilkProducingAnimal(animal)
+                          ? formatVolume(totalYield, ui.settings.volumeUnit)
+                          : animal.sex === 'male'
+                            ? 'N/A (Male)'
+                            : 'N/A'} · {medicalRecords.length}m · {openAlerts.length}a
                       </Text>
                     </View>
                   </View>

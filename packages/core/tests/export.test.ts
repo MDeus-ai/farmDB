@@ -29,6 +29,7 @@ describe('@farmdb/core phase 5 export & snapshot', () => {
         {
           id: 'c1',
           species: 'cow',
+          sex: 'female',
           tagNumber: 'COW-402',
           name: 'Bessie, Jr.',
           breed: 'Holstein',
@@ -109,6 +110,7 @@ describe('@farmdb/core phase 5 export & snapshot', () => {
       alerts: [],
     });
     const migrated = parseFarmSnapshotJson(legacyJson);
+    expect(migrated.livestock[0]?.sex).toBe('female');
     expect(migrated.livestock[0]?.sireId).toBeNull();
     expect(migrated.livestock[0]?.damId).toBeNull();
     expect(migrated.settings).toEqual({

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import {
   DEFAULT_FARM_SETTINGS,
+  describeModuleAccessLevel,
   filterAndSortRecordsByDate,
   formatCurrency,
   formatDisplayDate,
@@ -21,6 +22,7 @@ import {
   useFarmSettings,
   useLivestockList,
   useMedicalRecordList,
+  useModulePermissions,
 } from '@farmdb/db';
 import { APP_ICONS } from '../assets/icons';
 import { buildAnimalSelectOption } from '../utils/animalOptions';
@@ -53,6 +55,7 @@ export function MedicalView() {
   );
 
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('medical');
 
   const animalOptions = useMemo<ModernSelectOption<string>[]>(
     () =>
@@ -192,6 +195,11 @@ export function MedicalView() {
         <div>
           <h1 className="page-title">Medical History</h1>
         </div>
+        {(!canEdit || !canDelete) && (
+          <span className="status-pill status-sold">
+            {describeModuleAccessLevel(accessLevel)}
+          </span>
+        )}
       </div>
 
       <div className="stats-grid">
@@ -220,7 +228,11 @@ export function MedicalView() {
       <div className="split-grid">
         <div className="card">
           <h2 className="card-section-title">Log Medical Record</h2>
-          {animals.length === 0 ? (
+          {!canEdit ? (
+            <p style={{ color: 'var(--text-muted)', marginBottom: 0 }}>
+              View-Only Access: Your account can inspect treatment history, but cannot add new medical entries.
+            </p>
+          ) : animals.length === 0 ? (
             <p style={{ color: 'var(--text-muted)', marginBottom: 0 }}>
               Register an animal in <strong>Herd Registry</strong> first to
               record treatments.
@@ -439,48 +451,50 @@ export function MedicalView() {
                             : 'On-farm care'}{' '}
                           · Cost: {formatCurrency(rec.cost, currency)}
                         </span>
-                        <div className="row-actions">
-                          {confirmDeleteId === rec.id ? (
-                            <>
+                        {canDelete && (
+                          <div className="row-actions">
+                            {confirmDeleteId === rec.id ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn btn-danger btn-sm"
+                                  onClick={() => {
+                                    setConfirmDeleteId(null);
+                                    void deleteMutation.mutateAsync(rec.id);
+                                  }}
+                                  disabled={deleteMutation.isPending}
+                                >
+                                  <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                                  Confirm
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                >
+                                  <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
                               <button
                                 type="button"
                                 className="btn btn-danger btn-sm"
                                 onClick={() => {
-                                  setConfirmDeleteId(null);
-                                  void deleteMutation.mutateAsync(rec.id);
+                                  if (settings.confirmBeforeDelete) {
+                                    setConfirmDeleteId(rec.id);
+                                  } else {
+                                    void deleteMutation.mutateAsync(rec.id);
+                                  }
                                 }}
                                 disabled={deleteMutation.isPending}
+                                aria-label="Delete medical record"
                               >
-                                <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                                Confirm
+                                <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
                               </button>
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => setConfirmDeleteId(null)}
-                              >
-                                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn btn-danger btn-sm"
-                              onClick={() => {
-                                if (settings.confirmBeforeDelete) {
-                                  setConfirmDeleteId(rec.id);
-                                } else {
-                                  void deleteMutation.mutateAsync(rec.id);
-                                }
-                              }}
-                              disabled={deleteMutation.isPending}
-                              aria-label="Delete medical record"
-                            >
-                              <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
-                            </button>
-                          )}
-                        </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

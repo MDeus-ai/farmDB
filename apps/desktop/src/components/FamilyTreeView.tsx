@@ -1,28 +1,33 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   analyzeBreedingPair,
   buildAnimalPedigree,
   buildHerdLineageOverview,
   DEFAULT_FARM_SETTINGS,
+  describeModuleAccessLevel,
   formatAnimalAge,
+  formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
   formatVolume,
   getEligibleParentCandidates,
   SPECIES_LIST,
+  type FontScale,
   type LineageAnimalNode,
   type Livestock,
+  type PedigreeTree,
   type Species,
 } from '@farmdb/core';
 import {
-  useCreateLivestock,
   useFarmSettings,
   useLivestockList,
+  useModulePermissions,
   useProductRecordList,
   useUpdateLivestock,
 } from '@farmdb/db';
 import {
   APP_ICONS,
+  getSexPngIcon,
   getSpeciesPngIcon,
   getStatusPngIcon,
 } from '../assets/icons';
@@ -33,6 +38,220 @@ import { FileTabs } from './FileTabs';
 import { ModernSelect, type ModernSelectOption } from './ModernSelect';
 
 type TreeSubView = 'pedigree' | 'dynasties' | 'kinship';
+type PedigreeDisplayMode = 'pedigree' | 'graph';
+
+interface GraphColumnHeader {
+  key: string;
+  genTag: string;
+  title: string;
+  x: number;
+  width: number;
+}
+
+interface GraphNodeEntry {
+  key: string;
+  node: LineageAnimalNode;
+  roleLabel: string;
+  isFocal: boolean;
+  x: number;
+  y: number;
+}
+
+interface GraphEdgeEntry {
+  key: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  tone: 'sire' | 'dam' | 'offspring';
+}
+
+function getFontScaleMultiplier(fontScale: FontScale): number {
+  switch (fontScale) {
+    case 'small':
+      return 0.94;
+    case 'large':
+      return 1.14;
+    case 'xlarge':
+      return 1.26;
+    default:
+      return 1;
+  }
+}
+
+function buildSimplifiedGraphLayout(
+  pedigree: PedigreeTree,
+  fontScale: FontScale = 'medium'
+): {
+  columns: GraphColumnHeader[];
+  nodes: GraphNodeEntry[];
+  edges: GraphEdgeEntry[];
+  width: number;
+  height: number;
+  nodeW: number;
+  nodeH: number;
+} {
+  const mult = getFontScaleMultiplier(fontScale);
+  const nodeW = Math.round(238 * mult);
+  const nodeH = Math.round(112 * mult);
+  const colGap = Math.round(74 * mult);
+  const rowGap = Math.round(26 * mult);
+  const padX = 28;
+  const headerH = Math.round(46 * mult);
+  const padBottom = 28;
+
+  type ColumnSpec = {
+    key: string;
+    genTag: string;
+    title: string;
+    items: Array<{ node: LineageAnimalNode; roleLabel: string; isFocal: boolean }>;
+  };
+  const rawColumns: ColumnSpec[] = [];
+
+  const gpItems: ColumnSpec['items'] = [];
+  if (pedigree.paternalGrandsire) gpItems.push({ node: pedigree.paternalGrandsire, roleLabel: 'Pat. Grandsire', isFocal: false });
+  if (pedigree.paternalGranddam) gpItems.push({ node: pedigree.paternalGranddam, roleLabel: 'Pat. Granddam', isFocal: false });
+  if (pedigree.maternalGrandsire) gpItems.push({ node: pedigree.maternalGrandsire, roleLabel: 'Mat. Grandsire', isFocal: false });
+  if (pedigree.maternalGranddam) gpItems.push({ node: pedigree.maternalGranddam, roleLabel: 'Mat. Granddam', isFocal: false });
+  if (gpItems.length > 0) {
+    rawColumns.push({
+      key: 'gen-2',
+      genTag: 'Gen −2',
+      title: 'Grandparents',
+      items: gpItems,
+    });
+  }
+
+  const parentItems: ColumnSpec['items'] = [];
+  if (pedigree.sire) parentItems.push({ node: pedigree.sire, roleLabel: 'Sire (Father)', isFocal: false });
+  if (pedigree.dam) parentItems.push({ node: pedigree.dam, roleLabel: 'Dam (Mother)', isFocal: false });
+  if (parentItems.length > 0) {
+    rawColumns.push({
+      key: 'gen-1',
+      genTag: 'Gen −1',
+      title: 'Parents',
+      items: parentItems,
+    });
+  }
+
+  rawColumns.push({
+    key: 'gen-0',
+    genTag: 'Gen 0',
+    title: 'Selected Animal',
+    items: [{ node: pedigree.focal, roleLabel: 'Selected', isFocal: true }],
+  });
+
+  if (pedigree.directOffspring.length > 0) {
+    rawColumns.push({
+      key: 'gen+1',
+      genTag: 'Gen +1',
+      title: 'Direct Offspring',
+      items: pedigree.directOffspring.map((child) => ({
+        node: child,
+        roleLabel: child.sireId === pedigree.focal.animal.id ? 'Offspring (Sire)' : 'Offspring (Dam)',
+        isFocal: false,
+      })),
+    });
+  }
+
+  if (pedigree.grandOffspring.length > 0) {
+    const seenGc = new Set<string>();
+    const gcItems: ColumnSpec['items'] = [];
+    for (const gc of pedigree.grandOffspring) {
+      if (!seenGc.has(gc.animal.animal.id)) {
+        seenGc.add(gc.animal.animal.id);
+        gcItems.push({ node: gc.animal, roleLabel: 'Grand-Offspring', isFocal: false });
+      }
+    }
+    if (gcItems.length > 0) {
+      rawColumns.push({
+        key: 'gen+2',
+        genTag: 'Gen +2',
+        title: 'Grand-Offspring',
+        items: gcItems,
+      });
+    }
+  }
+
+  const maxRows = Math.max(1, ...rawColumns.map((col) => col.items.length));
+  const width = Math.max(
+    680,
+    padX * 2 + rawColumns.length * nodeW + Math.max(0, rawColumns.length - 1) * colGap
+  );
+  const contentHeight = maxRows * nodeH + Math.max(0, maxRows - 1) * rowGap;
+  const height = Math.max(290, headerH + contentHeight + padBottom);
+
+  const columns: GraphColumnHeader[] = [];
+  const nodes: GraphNodeEntry[] = [];
+  const coordByAnimalId = new Map<string, GraphNodeEntry>();
+
+  rawColumns.forEach((col, colIndex) => {
+    const colHeight = col.items.length * nodeH + Math.max(0, col.items.length - 1) * rowGap;
+    const availableHeight = height - headerH - padBottom;
+    const startY = headerH + Math.max(0, Math.round((availableHeight - colHeight) / 2));
+    const x = padX + colIndex * (nodeW + colGap);
+
+    columns.push({
+      key: col.key,
+      genTag: col.genTag,
+      title: col.title,
+      x,
+      width: nodeW,
+    });
+
+    col.items.forEach((item, rowIndex) => {
+      const y = startY + rowIndex * (nodeH + rowGap);
+      const entry: GraphNodeEntry = {
+        key: `${colIndex}-${item.node.animal.id}-${rowIndex}`,
+        node: item.node,
+        roleLabel: item.roleLabel,
+        isFocal: item.isFocal,
+        x,
+        y,
+      };
+      nodes.push(entry);
+      if (!coordByAnimalId.has(item.node.animal.id)) {
+        coordByAnimalId.set(item.node.animal.id, entry);
+      }
+    });
+  });
+
+  const edges: GraphEdgeEntry[] = [];
+  const edgeKeys = new Set<string>();
+  const addEdge = (
+    parentId: string | null | undefined,
+    childNode: GraphNodeEntry,
+    tone: 'sire' | 'dam' | 'offspring'
+  ) => {
+    if (!parentId) return;
+    const parentNode = coordByAnimalId.get(parentId);
+    if (!parentNode || parentNode.x >= childNode.x) return;
+    const k = `${parentNode.node.animal.id}->${childNode.node.animal.id}-${tone}`;
+    if (edgeKeys.has(k)) return;
+    edgeKeys.add(k);
+    edges.push({
+      key: k,
+      fromX: parentNode.x + nodeW,
+      fromY: parentNode.y + Math.round(nodeH / 2),
+      toX: childNode.x,
+      toY: childNode.y + Math.round(nodeH / 2),
+      tone,
+    });
+  };
+
+  for (const nodeEntry of nodes) {
+    const { animal, sireId, damId } = nodeEntry.node;
+    const isDescendant =
+      animal.id !== pedigree.focal.animal.id &&
+      (sireId === pedigree.focal.animal.id ||
+        damId === pedigree.focal.animal.id ||
+        pedigree.grandOffspring.some((g) => g.animal.animal.id === animal.id));
+    addEdge(sireId, nodeEntry, isDescendant ? 'offspring' : 'sire');
+    addEdge(damId, nodeEntry, isDescendant ? 'offspring' : 'dam');
+  }
+
+  return { columns, nodes, edges, width, height, nodeW, nodeH };
+}
 
 interface FamilyTreeViewProps {
   initialAnimalId?: string | null;
@@ -46,8 +265,8 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
   const livestockQuery = useLivestockList({});
   const productQuery = useProductRecordList({});
   const settingsQuery = useFarmSettings();
-  const createMutation = useCreateLivestock();
   const updateMutation = useUpdateLivestock();
+  const { canEdit, accessLevel } = useModulePermissions('family_tree');
 
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
   const allLivestock = livestockQuery.data ?? [];
@@ -55,9 +274,71 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
 
   const [speciesFilter, setSpeciesFilter] = useState<Species | 'all'>('all');
   const [subView, setSubView] = useState<TreeSubView>('pedigree');
+  const [treeDisplayMode, setTreeDisplayMode] = useState<PedigreeDisplayMode>('pedigree');
   const [focalId, setFocalId] = useState<string>('');
   const [trailIds, setTrailIds] = useState<string[]>([]);
   const [showLinkPanel, setShowLinkPanel] = useState(false);
+
+  const treeCanvasRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef({
+    active: false,
+    moved: false,
+    suppressNextClick: false,
+    startX: 0,
+    startY: 0,
+    scrollLeft: 0,
+    scrollTop: 0,
+  });
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
+
+  function handleCanvasMouseDown(e: MouseEvent<HTMLDivElement>) {
+    if (e.button !== 0 || !treeCanvasRef.current) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('input, select, textarea, a, .animal-eye-btn, .pedigree-display-toggle')) {
+      return;
+    }
+    dragStateRef.current = {
+      active: true,
+      moved: false,
+      suppressNextClick: false,
+      startX: e.clientX,
+      startY: e.clientY,
+      scrollLeft: treeCanvasRef.current.scrollLeft,
+      scrollTop: treeCanvasRef.current.scrollTop,
+    };
+    setIsDraggingCanvas(true);
+  }
+
+  function handleCanvasMouseMove(e: MouseEvent<HTMLDivElement>) {
+    const state = dragStateRef.current;
+    if (!state.active || !treeCanvasRef.current) return;
+    const dx = e.clientX - state.startX;
+    const dy = e.clientY - state.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      state.moved = true;
+    }
+    treeCanvasRef.current.scrollLeft = state.scrollLeft - dx;
+    treeCanvasRef.current.scrollTop = state.scrollTop - dy;
+  }
+
+  function endCanvasDrag() {
+    const state = dragStateRef.current;
+    if (!state.active) return;
+    if (state.moved) {
+      state.suppressNextClick = true;
+    }
+    state.active = false;
+    state.moved = false;
+    setIsDraggingCanvas(false);
+  }
+
+  function handleCanvasClickCapture(e: MouseEvent<HTMLDivElement>) {
+    if (dragStateRef.current.suppressNextClick) {
+      dragStateRef.current.suppressNextClick = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
 
   const [draftSireId, setDraftSireId] = useState<string>('');
   const [draftDamId, setDraftDamId] = useState<string>('');
@@ -133,6 +414,14 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
     () =>
       focalId ? buildAnimalPedigree(focalId, allLivestock, allProducts) : null,
     [focalId, allLivestock, allProducts]
+  );
+
+  const simplifiedGraph = useMemo(
+    () =>
+      pedigree
+        ? buildSimplifiedGraphLayout(pedigree, settings.fontScale)
+        : null,
+    [pedigree, settings.fontScale]
   );
 
   useEffect(() => {
@@ -264,7 +553,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
   );
 
   async function handleSaveParentLinks() {
-    if (!pedigree) return;
+    if (!pedigree || !canEdit) return;
     setLinkError(null);
     setLinkSuccess(null);
     try {
@@ -284,7 +573,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
   }
 
   async function handleAttachChild() {
-    if (!pedigree || !draftChildId) return;
+    if (!pedigree || !draftChildId || !canEdit) return;
     setLinkError(null);
     setLinkSuccess(null);
     try {
@@ -304,107 +593,6 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
     }
   }
 
-  async function handleSeedSampleLineage() {
-    setLinkError(null);
-    setLinkSuccess(null);
-
-    const existingByTag = new Map(allLivestock.map((a) => [a.tagNumber, a]));
-
-    async function ensureAnimal(spec: {
-      tagNumber: string;
-      name: string;
-      breed: string;
-      dob: string;
-      sireTag?: string;
-      damTag?: string;
-    }): Promise<Livestock> {
-      const existing = existingByTag.get(spec.tagNumber);
-      const targetSireId = spec.sireTag
-        ? (existingByTag.get(spec.sireTag)?.id ?? null)
-        : null;
-      const targetDamId = spec.damTag
-        ? (existingByTag.get(spec.damTag)?.id ?? null)
-        : null;
-
-      if (existing) {
-        const needsUpdate =
-          (!existing.sireId && targetSireId) || (!existing.damId && targetDamId);
-        if (needsUpdate) {
-          const updated = await updateMutation.mutateAsync({
-            id: existing.id,
-            input: {
-              sireId: existing.sireId ?? targetSireId,
-              damId: existing.damId ?? targetDamId,
-            },
-          });
-          existingByTag.set(updated.tagNumber, updated);
-          return updated;
-        }
-        return existing;
-      }
-
-      const created = await createMutation.mutateAsync({
-        species: 'cow',
-        tagNumber: spec.tagNumber,
-        name: spec.name,
-        breed: spec.breed,
-        dob: spec.dob,
-        status: 'active',
-        sireId: targetSireId,
-        damId: targetDamId,
-      });
-      existingByTag.set(created.tagNumber, created);
-      return created;
-    }
-
-    const bullTitan = await ensureAnimal({
-      tagNumber: 'BULL-101',
-      name: 'Titan',
-      breed: 'Holstein',
-      dob: '2019-04-10',
-    });
-    await ensureAnimal({
-      tagNumber: 'COW-318',
-      name: 'Willow',
-      breed: 'Ayrshire',
-      dob: '2020-03-18',
-    });
-    await ensureAnimal({
-      tagNumber: 'BULL-108',
-      name: 'Orion',
-      breed: 'Jersey',
-      dob: '2020-07-12',
-    });
-    const bessie = await ensureAnimal({
-      tagNumber: 'COW-402',
-      name: 'Bessie',
-      breed: 'Holstein',
-      dob: '2022-03-14',
-      sireTag: 'BULL-101',
-      damTag: 'COW-318',
-    });
-    await ensureAnimal({
-      tagNumber: 'COW-409',
-      name: 'Daisy',
-      breed: 'Jersey',
-      dob: '2022-09-02',
-      sireTag: 'BULL-108',
-      damTag: 'COW-318',
-    });
-    await ensureAnimal({
-      tagNumber: 'COW-512',
-      name: 'Clover',
-      breed: 'Holstein',
-      dob: '2024-06-21',
-      sireTag: 'BULL-108',
-      damTag: 'COW-402',
-    });
-
-    setFocalId(bessie.id || bullTitan.id);
-    setSubView('pedigree');
-    setLinkSuccess('Sample 3-generation family tree linked in local SQLite.');
-  }
-
   function renderPedigreeCard(
     node: LineageAnimalNode | null,
     roleTitle: string,
@@ -418,7 +606,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
             <span className="pedigree-role-badge">{roleTitle}</span>
           </div>
           <p className="pedigree-empty-label">Unknown / Founder Line</p>
-          {variant === 'parent' && pedigree && (
+          {variant === 'parent' && pedigree && canEdit && (
             <button
               type="button"
               className="btn btn-secondary btn-sm"
@@ -476,8 +664,8 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
           ) : (
             <div className={`pedigree-avatar-empty ${isFocal ? 'is-focal' : ''}`}>
               <img
-                src={getSpeciesPngIcon(node.animal.species)}
-                alt={node.animal.species}
+                src={getSpeciesPngIcon(node.animal.species, node.animal.sex)}
+                alt={formatSpeciesLabel(node.animal.species, node.animal.sex)}
                 style={{ width: isFocal ? 30 : 22, height: isFocal ? 30 : 22, objectFit: 'contain' }}
               />
             </div>
@@ -486,13 +674,21 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="pedigree-name-row" style={{ justifyContent: 'space-between' }}>
               <span className="tag-chip">{node.animal.tagNumber}</span>
+              <span className={`sex-pill is-compact sex-${node.animal.sex}`} style={{ gap: 4 }}>
+                <img
+                  src={getSexPngIcon(node.animal.sex)}
+                  alt=""
+                  style={{ width: 11, height: 11, objectFit: 'contain' }}
+                />
+                {formatSexLabel(node.animal.sex)}
+              </span>
               <AnimalEyeButton livestockId={node.animal.id} />
             </div>
             <strong className="pedigree-animal-name">
               {getAnimalDisplayName(node.animal)}
             </strong>
             <div className="pedigree-animal-meta">
-              {node.animal.breed ?? formatSpeciesLabel(node.animal.species)} ·{' '}
+              {node.animal.breed ?? formatSpeciesLabel(node.animal.species, node.animal.sex)} ·{' '}
               {formatAnimalAge(node.animal.dob)}
             </div>
           </div>
@@ -530,7 +726,12 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
         </div>
 
         <div className="row-actions">
-          {pedigree && (
+          {!canEdit && (
+            <span className="permission-badge is-readonly">
+              {describeModuleAccessLevel(accessLevel)}
+            </span>
+          )}
+          {pedigree && canEdit && (
             <button
               type="button"
               className={`btn btn-sm ${showLinkPanel ? 'btn-primary' : 'btn-secondary'}`}
@@ -538,19 +739,6 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
             >
               <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
               {showLinkPanel ? 'Hide Link Editor' : 'Link Parents & Calves'}
-            </button>
-          )}
-          {overview.parentChildBondsCount === 0 && (
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={() => void handleSeedSampleLineage()}
-              disabled={createMutation.isPending || updateMutation.isPending}
-            >
-              <img src={APP_ICONS.tree} alt="" className="app-icon-sm" />
-              {allLivestock.length === 0
-                ? 'Load Sample Family Tree'
-                : 'Link Sample Family Tree'}
             </button>
           )}
         </div>
@@ -670,17 +858,9 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
             <p style={{ margin: 0, fontWeight: 700, fontSize: '1.05rem' }}>
               No livestock records yet
             </p>
-            <div className="empty-actions">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => void handleSeedSampleLineage()}
-                disabled={createMutation.isPending}
-              >
-                <img src={APP_ICONS.tree} alt="" className="app-icon-sm" />
-                Load 3-Generation Sample Herd
-              </button>
-            </div>
+            <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+              Add animals in Herd Registry to map pedigrees, dynasties, and breeding kinship.
+            </p>
           </div>
         ) : subView === 'pedigree' ? (
           !pedigree ? (
@@ -689,7 +869,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
             </div>
           ) : (
             <div className="family-tree-workspace">
-              {showLinkPanel && (
+              {showLinkPanel && canEdit && (
                 <div className="lineage-editor-panel">
                   <div className="lineage-editor-head">
                     <div>
@@ -800,22 +980,215 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                 </div>
               )}
 
-              {/* Visual Pedigree & Progeny Tree Diagram */}
-              <div className="family-tree-canvas">
-                <div className="pedigree-summary-ribbon">
-                  <span>
-                    <strong>{pedigree.totalAncestorsCount}</strong> tracked ancestor(s) ({pedigree.ancestorGenerationDepth} gen back)
-                  </span>
-                  <span>·</span>
-                  <span>
-                    <strong>{pedigree.totalDescendantsCount}</strong> tracked descendant(s) ({pedigree.descendantGenerationDepth} gen forward)
-                  </span>
-                  <span>·</span>
-                  <span>
-                    <strong>{pedigree.fullSiblings.length + pedigree.halfSiblings.length}</strong> sibling(s)
-                  </span>
+              {/* Visual Pedigree & Progeny Tree Diagram (Drag with Left-Click to Pan) */}
+              <div
+                ref={treeCanvasRef}
+                className={`family-tree-canvas is-pannable ${isDraggingCanvas ? 'is-dragging' : ''}`}
+                onMouseDown={handleCanvasMouseDown}
+                onMouseMove={handleCanvasMouseMove}
+                onMouseUp={endCanvasDrag}
+                onMouseLeave={endCanvasDrag}
+                onClickCapture={handleCanvasClickCapture}
+              >
+                <div className="pedigree-summary-ribbon" style={{ justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+                    <span>
+                      <strong>{pedigree.totalAncestorsCount}</strong> tracked ancestor(s) ({pedigree.ancestorGenerationDepth} gen back)
+                    </span>
+                    <span>·</span>
+                    <span>
+                      <strong>{pedigree.totalDescendantsCount}</strong> tracked descendant(s) ({pedigree.descendantGenerationDepth} gen forward)
+                    </span>
+                    <span>·</span>
+                    <span>
+                      <strong>{pedigree.fullSiblings.length + pedigree.halfSiblings.length}</strong> sibling(s)
+                    </span>
+                  </div>
+
+                  <div
+                    className="segmented-group pedigree-display-toggle"
+                    role="group"
+                    aria-label="Pedigree view mode"
+                    style={{ padding: 3 }}
+                  >
+                    <button
+                      type="button"
+                      className={`segmented-btn ${treeDisplayMode === 'pedigree' ? 'active' : ''}`}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem' }}
+                      onClick={() => setTreeDisplayMode('pedigree')}
+                    >
+                      Pedigree Tree
+                    </button>
+                    <button
+                      type="button"
+                      className={`segmented-btn ${treeDisplayMode === 'graph' ? 'active' : ''}`}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem' }}
+                      onClick={() => setTreeDisplayMode('graph')}
+                    >
+                      Simplified Graph
+                    </button>
+                  </div>
                 </div>
 
+                {treeDisplayMode === 'graph' && simplifiedGraph ? (
+                  <div className="pedigree-graph-wrap">
+                    <div className="pedigree-graph-legend">
+                      <span className="pedigree-graph-legend-item">
+                        <span className="pedigree-graph-legend-dot is-sire" />
+                        Paternal (Sire) Line
+                      </span>
+                      <span className="pedigree-graph-legend-item">
+                        <span className="pedigree-graph-legend-dot is-dam" />
+                        Maternal (Dam) Line
+                      </span>
+                      <span className="pedigree-graph-legend-item">
+                        <span className="pedigree-graph-legend-dot is-offspring" />
+                        Descendant Line
+                      </span>
+                      <span className="pedigree-graph-legend-hint">
+                        Drag canvas to pan · Click any animal card to focus
+                      </span>
+                    </div>
+
+                    <div
+                      className="pedigree-graph-stage"
+                      style={{
+                        width: simplifiedGraph.width,
+                        height: simplifiedGraph.height,
+                      }}
+                    >
+                      <svg
+                        width={simplifiedGraph.width}
+                        height={simplifiedGraph.height}
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        {simplifiedGraph.edges.map((edge) => {
+                          const midX = Math.round((edge.fromX + edge.toX) / 2);
+                          const d = `M ${edge.fromX} ${edge.fromY} C ${midX} ${edge.fromY}, ${midX} ${edge.toY}, ${edge.toX} ${edge.toY}`;
+                          const strokeColor =
+                            edge.tone === 'offspring'
+                              ? '#1b4332'
+                              : edge.tone === 'sire'
+                                ? '#2d6a4f'
+                                : '#9c6644';
+                          return (
+                            <g key={edge.key}>
+                              <path
+                                d={d}
+                                fill="none"
+                                stroke={strokeColor}
+                                strokeWidth={2.4}
+                                strokeLinecap="round"
+                                opacity={0.86}
+                              />
+                              <circle
+                                cx={edge.fromX}
+                                cy={edge.fromY}
+                                r={3}
+                                fill="#ffffff"
+                                stroke={strokeColor}
+                                strokeWidth={1.8}
+                              />
+                              <circle
+                                cx={edge.toX}
+                                cy={edge.toY}
+                                r={3.8}
+                                fill={strokeColor}
+                              />
+                            </g>
+                          );
+                        })}
+                      </svg>
+
+                      {simplifiedGraph.columns.map((col) => (
+                        <div
+                          key={col.key}
+                          className={`pedigree-graph-col-header ${col.key === 'gen-0' ? 'is-focal' : ''}`}
+                          style={{ left: col.x, width: col.width }}
+                        >
+                          <span className="pedigree-graph-col-gen">{col.genTag}</span>
+                          <span className="pedigree-graph-col-title">{col.title}</span>
+                        </div>
+                      ))}
+
+                      {simplifiedGraph.nodes.map((entry) => {
+                        const thumb = resolveDesktopImageSrc(entry.node.animal.imageUri);
+                        return (
+                          <div
+                            key={entry.key}
+                            role="button"
+                            tabIndex={0}
+                            className={`pedigree-graph-node ${entry.isFocal ? 'is-focal' : ''}`}
+                            style={{
+                              left: entry.x,
+                              top: entry.y,
+                              width: simplifiedGraph.nodeW,
+                              minHeight: simplifiedGraph.nodeH,
+                            }}
+                            onClick={() => focusAnimal(entry.node.animal.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                focusAnimal(entry.node.animal.id);
+                              }
+                            }}
+                          >
+                            <div className="pedigree-graph-node-top">
+                              <span className="pedigree-graph-role">{entry.roleLabel}</span>
+                              <div className="pedigree-graph-top-right">
+                                <span
+                                  className={`sex-pill is-compact sex-${entry.node.animal.sex}`}
+                                  title={formatSexLabel(entry.node.animal.sex)}
+                                >
+                                  <img
+                                    src={getSexPngIcon(entry.node.animal.sex)}
+                                    alt={formatSexLabel(entry.node.animal.sex)}
+                                    style={{ width: 12, height: 12, objectFit: 'contain' }}
+                                  />
+                                </span>
+                                <AnimalEyeButton livestockId={entry.node.animal.id} size={13} />
+                              </div>
+                            </div>
+                            <div className="pedigree-graph-node-mid">
+                              <img
+                                src={thumb ?? getSpeciesPngIcon(entry.node.animal.species, entry.node.animal.sex)}
+                                alt=""
+                                style={{
+                                  width: 30,
+                                  height: 30,
+                                  borderRadius: thumb ? 8 : 0,
+                                  objectFit: thumb ? 'cover' : 'contain',
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div className="pedigree-graph-node-name">
+                                  {getAnimalDisplayName(entry.node.animal)}
+                                </div>
+                                <div className="pedigree-graph-node-sub">
+                                  <span className="pedigree-graph-tag-inline">
+                                    {entry.node.animal.tagNumber}
+                                  </span>
+                                  <span>·</span>
+                                  <span>{formatStatusLabel(entry.node.animal.status)}</span>
+                                </div>
+                                {entry.node.animal.breed ? (
+                                  <div className="pedigree-graph-node-breed">
+                                    {entry.node.animal.breed}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
                 <div className="pedigree-columns">
                   {/* Column 1: Grandparents (Gen -2) */}
                   <div className="pedigree-stage">
@@ -989,6 +1362,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                     )}
                   </div>
                 </div>
+                )}
               </div>
 
               {/* Extended Family Relationships below diagram */}
@@ -1018,7 +1392,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                           }}
                         >
                           <img
-                            src={getSpeciesPngIcon(sib.animal.species)}
+                            src={getSpeciesPngIcon(sib.animal.species, sib.animal.sex)}
                             alt=""
                             className="app-icon-md"
                           />
@@ -1051,7 +1425,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                           }}
                         >
                           <img
-                            src={getSpeciesPngIcon(entry.animal.animal.species)}
+                            src={getSpeciesPngIcon(entry.animal.animal.species, entry.animal.animal.sex)}
                             alt=""
                             className="app-icon-md"
                           />
@@ -1101,7 +1475,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                           }}
                         >
                           <img
-                            src={getSpeciesPngIcon(cp.partner.animal.species)}
+                            src={getSpeciesPngIcon(cp.partner.animal.species, cp.partner.animal.sex)}
                             alt=""
                             className="app-icon-md"
                           />
@@ -1136,16 +1510,6 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
               <p style={{ margin: 0, fontWeight: 700 }}>
                 No connected herd bloodlines yet
               </p>
-              <div className="empty-actions">
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={() => void handleSeedSampleLineage()}
-                >
-                  <img src={APP_ICONS.tree} alt="" className="app-icon-sm" />
-                  Link Sample Family Tree
-                </button>
-              </div>
             </div>
           ) : (
             <div className="dynasty-grid">
@@ -1336,7 +1700,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                           }}
                         >
                           <img
-                            src={getSpeciesPngIcon(anc.animal.species)}
+                            src={getSpeciesPngIcon(anc.animal.species, anc.animal.sex)}
                             alt=""
                             className="app-icon-sm"
                           />

@@ -52,6 +52,8 @@ describe('@farmdb/db migrations and repositories', () => {
       '0004_livestock_lineage',
       '0005_human_resources',
       '0006_ownerships_network_cloud',
+      '0007_livestock_sex',
+      '0008_admin_cloud_credentials',
     ]);
 
     const second = await runMigrations(driver);
@@ -176,6 +178,22 @@ describe('@farmdb/db migrations and repositories', () => {
       tagNumber: 'COW-500',
       name: 'Meadow',
     });
+    expect(cow.sex).toBe('female');
+
+    const bull = await session.livestock.create({
+      tagNumber: 'BULL-500',
+      name: 'Titan',
+      sex: 'male',
+    });
+    expect(bull.sex).toBe('male');
+
+    await expect(
+      session.production.create({
+        livestockId: bull.id,
+        date: '2026-11-16',
+        yieldAmount: 12,
+      })
+    ).rejects.toThrow(/male/i);
 
     const settings = await session.settings.update({
       defaultMilkRatePerLiter: 0.8,
@@ -517,6 +535,12 @@ describe('@farmdb/db migrations and repositories', () => {
     expect(joinRes.account.status).toBe('pending');
     expect((await session.network.getActiveAccount()).id).toBe(joinRes.account.id);
 
+    // Pending account cannot self-approve or manage network accounts
+    await expect(
+      session.network.acceptPendingAccount(joinRes.account.id, { role: 'manager' })
+    ).rejects.toThrow(/permission/i);
+
+    await session.network.switchActiveAccount('owner-admin');
     const approved = await session.network.acceptPendingAccount(joinRes.account.id, {
       role: 'manager',
       permissions: { livestock: 'full', financial: 'view' },
@@ -535,6 +559,107 @@ describe('@farmdb/db migrations and repositories', () => {
       '4321'
     );
     expect(switched.id).toBe(partnerAccount.id);
+
+    // View-only & edit-only RBAC guards enforced at session repository layer
+    await expect(
+      session.ownerships.create({
+        livestockId: bull.id,
+        ownerName: partnerAccount.displayName,
+        ownershipCategory: 'breeding_loan_in',
+      })
+    ).rejects.toThrow(/permission/i);
+    await expect(session.livestock.remove(bull.id)).rejects.toThrow(/permission/i);
+
+    // Edit-only permission on medical allows create/update, but blocks delete
+    const partnerMed = await session.medical.create({
+      livestockId: bull.id,
+      date: '2026-11-10',
+      condition: 'Routine Checkup',
+      treatment: 'Routine Vitamin B Boost',
+    });
+    expect(partnerMed.record.treatment).toBe('Routine Vitamin B Boost');
+    await expect(session.medical.remove(partnerMed.record.id)).rejects.toThrow(/permission/i);
+
+    // Tightened RBAC checks: family_tree vs livestock isolation + settings/network protections
+    await session.network.switchActiveAccount('owner-admin');
+    const damCow = await session.livestock.create({
+      species: 'cow',
+      sex: 'female',
+      tagNumber: 'COW-DAM-1',
+      name: 'Willow',
+    });
+    const calfCow = await session.livestock.create({
+      species: 'cow',
+      sex: 'female',
+      tagNumber: 'COW-CALF-1',
+      name: 'Clover',
+    });
+
+    const registryEditorAccount = await session.network.createAccount({
+      displayName: 'Grace (Registry Editor)',
+      role: 'staff_viewer',
+      accessCode: '5678',
+      permissions: {
+        livestock: 'full',
+        family_tree: 'view',
+        settings: 'view',
+        backup: 'view',
+      },
+    });
+    const lineageEditorAccount = await session.network.createAccount({
+      displayName: 'Peter (Lineage Archivist)',
+      role: 'staff_viewer',
+      accessCode: '6789',
+      permissions: {
+        livestock: 'view',
+        family_tree: 'edit',
+      },
+    });
+
+    // Account with livestock=full, family_tree=view CAN edit animal fields, CANNOT edit lineage or escalate privileges
+    await session.network.switchActiveAccount(registryEditorAccount.id, '5678');
+    const renamedCalf = await session.livestock.update(calfCow.id, { name: 'Clover II' });
+    expect(renamedCalf.name).toBe('Clover II');
+    await expect(
+      session.livestock.update(calfCow.id, { sireId: bull.id })
+    ).rejects.toThrow(/family_tree/i);
+    await expect(
+      session.livestock.create({
+        species: 'cow',
+        sex: 'female',
+        tagNumber: 'COW-CALF-2',
+        damId: damCow.id,
+      })
+    ).rejects.toThrow(/family_tree/i);
+    await expect(
+      session.settings.update({ farmName: 'Hijacked Farm' })
+    ).rejects.toThrow(/permission/i);
+    await expect(
+      session.network.createAccount({ displayName: 'Rogue Admin', role: 'admin' })
+    ).rejects.toThrow(/administrator permission/i);
+    await expect(
+      session.network.updateAccount(registryEditorAccount.id, { role: 'admin' })
+    ).rejects.toThrow(/privileges/i);
+    // Self-service password / profile change still permitted
+    const selfUpdated = await session.network.updateAccount(registryEditorAccount.id, {
+      accessCode: '9999',
+    });
+    expect(selfUpdated.accessCode).toBe('9999');
+
+    // Account with livestock=view, family_tree=edit CAN link lineage via Family Tree, CANNOT alter Herd Registry fields
+    await session.network.switchActiveAccount(lineageEditorAccount.id, '6789');
+    const linkedCalf = await session.livestock.update(calfCow.id, {
+      sireId: bull.id,
+      damId: damCow.id,
+    });
+    expect(linkedCalf.sireId).toBe(bull.id);
+    expect(linkedCalf.damId).toBe(damCow.id);
+    await expect(
+      session.livestock.update(calfCow.id, { name: 'Forbidden Rename' })
+    ).rejects.toThrow(/livestock/i);
+
+    // Switch back to primary Admin for full-access creation and cascade delete
+    await session.network.switchActiveAccount('owner-admin');
 
     const ownership = await session.ownerships.create({
       livestockId: bull.id,
@@ -565,9 +690,29 @@ describe('@farmdb/db migrations and repositories', () => {
     });
 
     const remoteSnapshot = await session.backup.exportSnapshot();
+    expect(remoteSnapshot.settingsUpdatedAt).toBeGreaterThan(0);
+    remoteSnapshot.settings = {
+      ...remoteSnapshot.settings,
+      farmName: 'Cloud Synced Farm',
+      currencySymbol: 'KES',
+    };
+    remoteSnapshot.settingsUpdatedAt = Date.now() + 60000;
+    remoteSnapshot.cloudSyncLogs = [
+      ...(remoteSnapshot.cloudSyncLogs ?? []),
+      {
+        id: 'log-cloud-1',
+        direction: 'push',
+        status: 'success',
+        recordsPulled: 0,
+        recordsPushed: 4,
+        summary: 'Synced from cloud snapshot',
+        createdAt: 9000,
+      },
+    ];
     remoteSnapshot.livestock.push({
       id: 'duck-remote-1',
       species: 'duck',
+      sex: 'female',
       tagNumber: 'DUCK-01',
       name: 'Mallory',
       breed: 'Pekin',
@@ -605,11 +750,12 @@ describe('@farmdb/db migrations and repositories', () => {
 
     try {
       // Standalone non-network User Account cannot access cloud sync
+      await session.network.switchActiveAccount(partnerAccount.id, '4321');
       const blockedSync = await session.network.syncWithSupabase('bidirectional');
       expect(blockedSync.ok).toBe(false);
       expect(blockedSync.message).toMatch(/Join Key/i);
 
-      // Admin Account syncs normally
+      // Admin Account syncs normally & pulls shared settings + sync logs while keeping local session & URL
       await session.network.switchActiveAccount('owner-admin');
       const syncRes = await session.network.syncWithSupabase('bidirectional');
       expect(syncRes.ok).toBe(true);
@@ -623,8 +769,69 @@ describe('@farmdb/db migrations and repositories', () => {
       expect(syncRes.recordsPulled).toBeGreaterThanOrEqual(1);
       const pulledDuck = await session.livestock.getByTagNumber('DUCK-01');
       expect(pulledDuck?.species).toBe('duck');
+      const syncedSettings = await session.settings.get();
+      expect(syncedSettings.farmName).toBe('Cloud Synced Farm');
+      expect(syncedSettings.currencySymbol).toBe('KES');
+      expect(syncedSettings.supabaseUrl).toBe('https://farmdb-test.supabase.co');
+      expect((await session.network.getActiveAccount()).id).toBe('owner-admin');
       const logs = await session.network.listSyncLogs(10);
       expect(logs[0]?.status).toBe('success');
+      expect(logs.some((l) => l.id === 'log-cloud-1')).toBe(true);
+
+      // Admin account stores Supabase credentials & a fresh second device can sign in + pull cloud DB via recoverAdminFromCloud
+      const adminAfterPush = await session.network.getAccountById('owner-admin');
+      expect(adminAfterPush?.supabaseUrl).toBe('https://farmdb-test.supabase.co');
+      expect(adminAfterPush?.supabaseAnonKey).toBe('sb_publishable_test_key');
+      expect(adminAfterPush?.cloudWorkspaceId).toBe('ws-test-1');
+
+      // Set Admin PIN on remote snapshot to verify PIN check during second-device recovery
+      const cloudSnapForDeviceB = await session.backup.exportSnapshot();
+      cloudSnapForDeviceB.farmAccounts = (cloudSnapForDeviceB.farmAccounts ?? []).map(
+        (acc) =>
+          acc.id === 'owner-admin'
+            ? { ...acc, accessCode: '2468', email: 'owner@farm.ug' }
+            : acc
+      );
+
+      const { driver: driverB, raw: rawB } = createNodeSqliteDriver(':memory:');
+      await runMigrations(driverB);
+      const sessionB = createFarmDbSession(driverB);
+      globalThis.fetch = (async () =>
+        new Response(
+          JSON.stringify([
+            {
+              workspace_id: 'ws-test-1',
+              farm_name: 'Cloud Synced Farm',
+              snapshot: cloudSnapForDeviceB,
+              updated_at: '2026-11-18T12:00:00Z',
+            },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )) as typeof fetch;
+
+      await expect(
+        sessionB.network.recoverAdminFromCloud({
+          supabaseUrl: 'https://farmdb-test.supabase.co',
+          supabaseAnonKey: 'sb_publishable_test_key',
+          cloudWorkspaceId: 'ws-test-1',
+          email: 'owner@farm.ug',
+          accessCode: '0000',
+        })
+      ).rejects.toThrow(/Incorrect Admin password/i);
+
+      const recovered = await sessionB.network.recoverAdminFromCloud({
+        supabaseUrl: 'https://farmdb-test.supabase.co',
+        supabaseAnonKey: 'sb_publishable_test_key',
+        cloudWorkspaceId: 'ws-test-1',
+        email: 'owner@farm.ug',
+        accessCode: '2468',
+      });
+      expect(recovered.account.id).toBe('owner-admin');
+      expect(recovered.account.supabaseUrl).toBe('https://farmdb-test.supabase.co');
+      expect(recovered.account.supabaseAnonKey).toBe('sb_publishable_test_key');
+      expect((await sessionB.livestock.getByTagNumber('DUCK-01'))?.name).toBe('Mallory');
+      expect((await sessionB.settings.get()).supabaseUrl).toBe('https://farmdb-test.supabase.co');
+      rawB.close();
     } finally {
       globalThis.fetch = originalFetch;
     }

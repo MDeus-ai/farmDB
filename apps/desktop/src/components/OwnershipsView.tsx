@@ -19,7 +19,6 @@ import {
 } from '@farmdb/core';
 import {
   useActiveFarmAccount,
-  useCreateLivestock,
   useCreateOwnership,
   useDeleteOwnership,
   useFarmAccountList,
@@ -42,13 +41,6 @@ interface OwnershipsViewProps {
   onOpenNetwork?: () => void;
 }
 
-function addDays(iso: string, delta: number): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  const dt = new Date(Date.UTC(y!, m! - 1, d!));
-  dt.setUTCDate(dt.getUTCDate() + delta);
-  return dt.toISOString().slice(0, 10);
-}
-
 export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
   const settingsQuery = useFarmSettings();
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
@@ -67,7 +59,6 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
   const createMut = useCreateOwnership();
   const updateMut = useUpdateOwnership();
   const deleteMut = useDeleteOwnership();
-  const createLivestockMut = useCreateLivestock();
 
   const allOwnerships = ownershipsQuery.data ?? [];
   const allLivestock = livestockQuery.data ?? [];
@@ -80,7 +71,6 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
-  const [isSeeding, setIsSeeding] = useState(false);
 
   // Modal State
   const [modalOpen, setModalOpen] = useState(false);
@@ -278,128 +268,6 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
     setStatusNotice(`Deleted ownership record for ${row.ownerName}.`);
   }
 
-  async function handleSeedSampleOwnerships() {
-    if (isSeeding) return;
-    setIsSeeding(true);
-    setErrorNotice(null);
-    setStatusNotice(null);
-
-    try {
-      const animalsByTag = new Map(
-        allLivestock.map((a) => [a.tagNumber.toUpperCase(), a])
-      );
-
-      async function ensureAnimal(input: {
-        species: 'cow' | 'goat' | 'sheep' | 'duck' | 'other';
-        tagNumber: string;
-        name: string;
-        breed: string;
-        status?: 'active' | 'sold';
-      }): Promise<Livestock> {
-        const found = animalsByTag.get(input.tagNumber.toUpperCase());
-        if (found) return found;
-        const created = await createLivestockMut.mutateAsync({
-          species: input.species,
-          tagNumber: input.tagNumber,
-          name: input.name,
-          breed: input.breed,
-          status: input.status ?? 'active',
-        });
-        animalsByTag.set(created.tagNumber.toUpperCase(), created);
-        return created;
-      }
-
-      const studBull = await ensureAnimal({
-        species: 'cow',
-        tagNumber: 'EXT-BULL-12',
-        name: 'Kiboko',
-        breed: 'Fresian Stud',
-      });
-      const soldCow = await ensureAnimal({
-        species: 'cow',
-        tagNumber: 'SLD-COW-88',
-        name: 'Marigold',
-        breed: 'Guernsey',
-        status: 'sold',
-      });
-      const boardedDuck = await ensureAnimal({
-        species: 'duck',
-        tagNumber: 'EXT-DUCK-04',
-        name: 'Quackers',
-        breed: 'Muscovy',
-      });
-
-      const existingKeys = new Set(
-        allOwnerships.map(
-          (o) => `${o.livestockId}:${o.ownerName.trim().toLowerCase()}`
-        )
-      );
-
-      if (
-        !existingKeys.has(
-          `${studBull.id}:neighbouring greenvalley ranch (mr. kato)`
-        )
-      ) {
-        await createMut.mutateAsync({
-          livestockId: studBull.id,
-          ownerName: 'Neighbouring GreenValley Ranch (Mr. Kato)',
-          ownerContact: '+256 772 310440',
-          ownershipCategory: 'breeding_loan_in',
-          sharePercentage: 100,
-          purpose: 'Brought in for seasonal bull breeding service across 12 cows',
-          startDate: addDays(todayIso, -20),
-          expectedEndDate: addDays(todayIso, 40),
-          boardingFee: currency === 'UGX' ? 180000 : 95,
-          status: 'active',
-          notes: 'Paddock B isolated overnight; return arranged with trailer.',
-        });
-      }
-
-      if (!existingKeys.has(`${soldCow.id}:sarah namono (buyer)`)) {
-        await createMut.mutateAsync({
-          livestockId: soldCow.id,
-          ownerName: 'Sarah Namono (Buyer)',
-          ownerContact: '+256 701 662801',
-          ownershipCategory: 'sold_retained',
-          sharePercentage: 100,
-          purpose: 'Sold last week — remaining on farm until buyer transport arrives',
-          startDate: addDays(todayIso, -5),
-          expectedEndDate: addDays(todayIso, 7),
-          boardingFee: currency === 'UGX' ? 40000 : 25,
-          status: 'active',
-          notes: 'Exclude from farm-owned asset valuation.',
-        });
-      }
-
-      if (!existingKeys.has(`${boardedDuck.id}:uncle joseph ssemakula`)) {
-        await createMut.mutateAsync({
-          livestockId: boardedDuck.id,
-          ownerName: 'Uncle Joseph Ssemakula',
-          ownerContact: '+256 782 119044',
-          ownershipCategory: 'co_owned',
-          sharePercentage: 50,
-          purpose: '50/50 family flock share & temporary pond care',
-          startDate: addDays(todayIso, -45),
-          boardingFee: 0,
-          status: 'active',
-          notes: 'Family shared custody agreement.',
-        });
-      }
-
-      setStatusNotice(
-        'Loaded sample animal ownerships, breeding loans, and sold-retained records.'
-      );
-    } catch (err) {
-      setErrorNotice(
-        err instanceof Error
-          ? err.message
-          : 'Failed to load sample ownership records.'
-      );
-    } finally {
-      setIsSeeding(false);
-    }
-  }
-
   return (
     <>
       <div className="page-header">
@@ -413,17 +281,6 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
         </div>
 
         <div className="row-actions">
-          {canEdit && allOwnerships.length < 3 && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={isSeeding}
-              onClick={() => void handleSeedSampleOwnerships()}
-            >
-              <img src={APP_ICONS.livestockGroup} alt="" className="app-icon-sm" />
-              {isSeeding ? 'Loading Sample...' : 'Load Sample Ownerships'}
-            </button>
-          )}
           {onOpenNetwork && (
             <button
               type="button"
@@ -550,15 +407,6 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
                     Record Animal Ownership
                   </button>
                 )}
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={isSeeding}
-                  onClick={() => void handleSeedSampleOwnerships()}
-                >
-                  <img src={APP_ICONS.livestockGroup} alt="" className="app-icon-sm" />
-                  {isSeeding ? 'Loading Sample...' : 'Load Sample Ownerships'}
-                </button>
               </div>
             )}
           </div>
@@ -631,7 +479,7 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
                               <img
                                 src={
                                   animal
-                                    ? getSpeciesPngIcon(animal.species)
+                                    ? getSpeciesPngIcon(animal.species, animal.sex)
                                     : APP_ICONS.livestockGroup
                                 }
                                 alt=""
@@ -784,7 +632,7 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
                           <img
                             src={
                               animal
-                                ? getSpeciesPngIcon(animal.species)
+                                ? getSpeciesPngIcon(animal.species, animal.sex)
                                 : APP_ICONS.livestockGroup
                             }
                             alt=""

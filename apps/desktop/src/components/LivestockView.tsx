@@ -2,31 +2,36 @@ import { useMemo, useState } from 'react';
 import { LayoutGrid, List, Search } from 'lucide-react';
 import {
   DEFAULT_FARM_SETTINGS,
+  describeModuleAccessLevel,
   formatAnimalAge,
   formatDisplayDate,
   formatOwnershipCategoryLabel,
+  formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
   getPrimaryOwnershipByLivestockMap,
+  LIVESTOCK_SEXES,
   LIVESTOCK_STATUSES,
   sortLivestockItems,
   SPECIES_LIST,
   type Livestock,
   type LivestockFilter,
+  type LivestockSex,
   type LivestockSortOption,
   type LivestockStatus,
   type Species,
 } from '@farmdb/core';
 import {
-  useCreateLivestock,
   useDeleteLivestock,
   useFarmSettings,
   useFarmSummary,
   useLivestockList,
+  useModulePermissions,
   useOwnershipList,
 } from '@farmdb/db';
 import {
   APP_ICONS,
+  getSexPngIcon,
   getSpeciesPngIcon,
   getStatusPngIcon,
 } from '../assets/icons';
@@ -43,8 +48,10 @@ interface LivestockViewProps {
 }
 
 export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
+  type SpeciesFilterChoice = 'all' | 'cattle' | 'cow' | 'bull' | 'goat' | 'sheep' | 'duck' | 'other';
   const [search, setSearch] = useState('');
-  const [species, setSpecies] = useState<Species | 'all'>('all');
+  const [speciesChoice, setSpeciesChoice] = useState<SpeciesFilterChoice>('all');
+  const [sexFilter, setSexFilter] = useState<LivestockSex | 'all'>('all');
   const [status, setStatus] = useState<LivestockStatus | 'all'>('active');
   const [sortBy, setSortBy] = useState<LivestockSortOption>('updated');
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
@@ -55,17 +62,22 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
 
   const settingsQuery = useFarmSettings();
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('livestock');
+
+  const querySpecies: Species | 'all' =
+    speciesChoice === 'cattle' || speciesChoice === 'bull' || speciesChoice === 'cow'
+      ? 'cow'
+      : speciesChoice;
 
   const filter: LivestockFilter = useMemo(
-    () => ({ search, species, status }),
-    [search, species, status]
+    () => ({ search, species: querySpecies, sex: sexFilter, status }),
+    [search, querySpecies, sexFilter, status]
   );
 
   const listQuery = useLivestockList(filter);
   const allForTagsQuery = useLivestockList({});
   const ownershipsQuery = useOwnershipList({ status: 'active' });
   const summaryQuery = useFarmSummary();
-  const createMutation = useCreateLivestock();
   const deleteMutation = useDeleteLivestock();
 
   const ownershipByAnimal = useMemo(
@@ -85,11 +97,14 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
 
   const summary = summaryQuery.data;
 
-  const speciesOptions = useMemo<ModernSelectOption<Species | 'all'>[]>(
+  const speciesOptions = useMemo<ModernSelectOption<SpeciesFilterChoice>[]>(
     () => [
       { value: 'all', label: 'All Species', iconSrc: APP_ICONS.group },
-      ...SPECIES_LIST.map((sp) => ({
-        value: sp,
+      { value: 'cow', label: 'Cow', iconSrc: getSpeciesPngIcon('cow', 'female') },
+      { value: 'bull', label: 'Bull', iconSrc: getSpeciesPngIcon('cow', 'male') },
+      { value: 'cattle', label: 'Cattle (All)', iconSrc: APP_ICONS.herd },
+      ...SPECIES_LIST.filter((sp) => sp !== 'cow').map((sp) => ({
+        value: sp as SpeciesFilterChoice,
         label: formatSpeciesLabel(sp),
         iconSrc: getSpeciesPngIcon(sp),
       })),
@@ -109,6 +124,18 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
     []
   );
 
+  const sexFilterOptions = useMemo<ModernSelectOption<LivestockSex | 'all'>[]>(
+    () => [
+      { value: 'all', label: 'All Sexes', iconSrc: APP_ICONS.group },
+      ...LIVESTOCK_SEXES.map((sx) => ({
+        value: sx,
+        label: formatSexLabel(sx),
+        iconSrc: getSexPngIcon(sx),
+      })),
+    ],
+    []
+  );
+
   const sortOptions = useMemo<ModernSelectOption<LivestockSortOption>[]>(
     () => [
       { value: 'updated', label: 'Recently Updated', iconSrc: APP_ICONS.sync },
@@ -121,79 +148,6 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
     ],
     []
   );
-
-  async function handleSeedSample() {
-    const existingByTag = new Map(
-      (allForTagsQuery.data ?? []).map((item) => [item.tagNumber, item.id])
-    );
-
-    async function ensureSampleAnimal(input: {
-      tagNumber: string;
-      name: string;
-      breed: string;
-      dob: string;
-      sireTag?: string;
-      damTag?: string;
-    }) {
-      const alreadyId = existingByTag.get(input.tagNumber);
-      if (alreadyId) return alreadyId;
-      const created = await createMutation.mutateAsync({
-        species: 'cow',
-        tagNumber: input.tagNumber,
-        name: input.name,
-        breed: input.breed,
-        dob: input.dob,
-        status: 'active',
-        sireId: input.sireTag ? (existingByTag.get(input.sireTag) ?? null) : null,
-        damId: input.damTag ? (existingByTag.get(input.damTag) ?? null) : null,
-      });
-      existingByTag.set(created.tagNumber, created.id);
-      return created.id;
-    }
-
-    await ensureSampleAnimal({
-      tagNumber: 'BULL-101',
-      name: 'Titan',
-      breed: 'Holstein',
-      dob: '2019-04-10',
-    });
-    await ensureSampleAnimal({
-      tagNumber: 'COW-318',
-      name: 'Willow',
-      breed: 'Ayrshire',
-      dob: '2020-03-18',
-    });
-    await ensureSampleAnimal({
-      tagNumber: 'BULL-108',
-      name: 'Orion',
-      breed: 'Jersey',
-      dob: '2020-07-12',
-    });
-    await ensureSampleAnimal({
-      tagNumber: 'COW-402',
-      name: 'Bessie',
-      breed: 'Holstein',
-      dob: '2022-03-14',
-      sireTag: 'BULL-101',
-      damTag: 'COW-318',
-    });
-    await ensureSampleAnimal({
-      tagNumber: 'COW-409',
-      name: 'Daisy',
-      breed: 'Jersey',
-      dob: '2022-09-02',
-      sireTag: 'BULL-108',
-      damTag: 'COW-318',
-    });
-    await ensureSampleAnimal({
-      tagNumber: 'COW-512',
-      name: 'Clover',
-      breed: 'Holstein',
-      dob: '2024-06-21',
-      sireTag: 'BULL-108',
-      damTag: 'COW-402',
-    });
-  }
 
   async function handleDelete(item: Livestock) {
     if (settings.confirmBeforeDelete && confirmDeleteId !== item.id) {
@@ -217,17 +171,26 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
           <h1 className="page-title">Herd Registry</h1>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => {
-            setEditing(null);
-            setModalOpen(true);
-          }}
-        >
-          <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
-          Add Livestock
-        </button>
+        <div className="row-actions">
+          {(!canEdit || !canDelete) && (
+            <span className="status-pill status-sold">
+              {describeModuleAccessLevel(accessLevel)}
+            </span>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setEditing(null);
+                setModalOpen(true);
+              }}
+            >
+              <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
+              Add Livestock
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="stats-grid">
@@ -265,9 +228,40 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
 
           <ModernSelect
             ariaLabel="Filter by species"
-            value={species}
+            value={speciesChoice}
             options={speciesOptions}
-            onChange={setSpecies}
+            onChange={(nextChoice) => {
+              setSpeciesChoice(nextChoice);
+              if (nextChoice === 'cow') {
+                setSexFilter('female');
+              } else if (nextChoice === 'bull') {
+                setSexFilter('male');
+              } else if (nextChoice === 'cattle' || nextChoice === 'all') {
+                setSexFilter('all');
+              }
+            }}
+          />
+
+          <ModernSelect
+            ariaLabel="Filter by sex"
+            value={sexFilter}
+            options={sexFilterOptions}
+            onChange={(nextSex) => {
+              setSexFilter(nextSex);
+              if (
+                speciesChoice === 'cow' ||
+                speciesChoice === 'bull' ||
+                speciesChoice === 'cattle'
+              ) {
+                setSpeciesChoice(
+                  nextSex === 'male'
+                    ? 'bull'
+                    : nextSex === 'female'
+                      ? 'cow'
+                      : 'cattle'
+                );
+              }
+            }}
           />
 
           <ModernSelect
@@ -311,36 +305,27 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
             <p style={{ margin: 0, fontWeight: 600 }}>
               No livestock found.
             </p>
-            <div className="empty-actions">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  setEditing(null);
-                  setModalOpen(true);
-                }}
-              >
-                <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
-                Add First Animal
-              </button>
-              {(summary?.totalLivestock ?? 0) === 0 && (
+            {canEdit && (
+              <div className="empty-actions">
                 <button
                   type="button"
-                  className="btn btn-secondary"
-                  onClick={handleSeedSample}
-                  disabled={createMutation.isPending}
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setEditing(null);
+                    setModalOpen(true);
+                  }}
                 >
-                  <img src={APP_ICONS.farmer} alt="" className="app-icon-sm" />
-                  Load Sample Herd
+                  <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
+                  Add First Animal
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         ) : viewMode === 'grid' ? (
           <div className="herd-grid">
             {items.map((item) => {
               const imageSrc = resolveDesktopImageSrc(item.imageUri);
-              const spIcon = getSpeciesPngIcon(item.species);
+              const spIcon = getSpeciesPngIcon(item.species, item.sex);
               const own = ownershipByAnimal.get(item.id);
               const showOwnershipTag = own && own.ownershipCategory !== 'farm_owned';
               return (
@@ -355,7 +340,7 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
                     ) : (
                       <img
                         src={spIcon}
-                        alt={item.species}
+                        alt={formatSpeciesLabel(item.species, item.sex)}
                         style={{ width: 54, height: 54, objectFit: 'contain' }}
                       />
                     )}
@@ -370,8 +355,14 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
                     <strong style={{ fontSize: '1.02rem' }}>
                       {item.name ?? 'Unnamed Animal'}
                     </strong>
-                    <span style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
-                      {formatSpeciesLabel(item.species)}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+                      {formatSpeciesLabel(item.species, item.sex)} ·
+                      <img
+                        src={getSexPngIcon(item.sex)}
+                        alt=""
+                        style={{ width: 13, height: 13, objectFit: 'contain' }}
+                      />
+                      {formatSexLabel(item.sex)}
                       {item.breed ? ` · ${item.breed}` : ''} · Age: {formatAnimalAge(item.dob)}
                     </span>
                     {showOwnershipTag && (
@@ -389,9 +380,9 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
             <table>
               <thead>
                 <tr>
-                  <th>Animal</th>
-                  <th>Species</th>
-                  <th>Breed</th>
+                      <th>Animal</th>
+                      <th>Species / Sex</th>
+                      <th>Breed</th>
                   <th>DOB / Age</th>
                   <th>Status</th>
                   <th>Actions</th>
@@ -419,7 +410,7 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
                           ) : (
                             <div className="animal-thumb-placeholder">
                               <img
-                                src={getSpeciesPngIcon(item.species)}
+                                src={getSpeciesPngIcon(item.species, item.sex)}
                                 alt=""
                                 style={{ width: 22, height: 22, objectFit: 'contain' }}
                               />
@@ -439,14 +430,24 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
                         </div>
                       </td>
                       <td>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <img
-                            src={getSpeciesPngIcon(item.species)}
-                            alt=""
-                            className="app-icon-sm"
-                          />
-                          {formatSpeciesLabel(item.species)}
-                        </span>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <img
+                              src={getSpeciesPngIcon(item.species, item.sex)}
+                              alt=""
+                              className="app-icon-sm"
+                            />
+                            {formatSpeciesLabel(item.species, item.sex)}
+                          </span>
+                          <span className={`sex-pill sex-${item.sex}`} style={{ gap: 5 }}>
+                            <img
+                              src={getSexPngIcon(item.sex)}
+                              alt=""
+                              style={{ width: 13, height: 13, objectFit: 'contain' }}
+                            />
+                            {formatSexLabel(item.sex)}
+                          </span>
+                        </div>
                       </td>
                       <td>{item.breed ?? '—'}</td>
                       <td>
@@ -464,50 +465,59 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
                         </span>
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
-                        <div className="row-actions">
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => {
-                              setEditing(item);
-                              setModalOpen(true);
-                            }}
-                            aria-label={`Edit ${item.tagNumber}`}
-                          >
-                            <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
-                          </button>
-                          {confirmDeleteId === item.id ? (
-                            <>
-                              <button
-                                type="button"
-                                className="btn btn-danger btn-sm"
-                                onClick={() => void handleDelete(item)}
-                                disabled={deleteMutation.isPending}
-                              >
-                                <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                                Confirm
-                              </button>
+                        {(canEdit || canDelete) ? (
+                          <div className="row-actions">
+                            {canEdit && (
                               <button
                                 type="button"
                                 className="btn btn-secondary btn-sm"
-                                onClick={() => setConfirmDeleteId(null)}
+                                onClick={() => {
+                                  setEditing(item);
+                                  setModalOpen(true);
+                                }}
+                                aria-label={`Edit ${item.tagNumber}`}
                               >
-                                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
-                                Cancel
+                                <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
                               </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn btn-danger btn-sm"
-                              onClick={() => void handleDelete(item)}
-                              disabled={deleteMutation.isPending}
-                              aria-label={`Delete ${item.tagNumber}`}
-                            >
-                              <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
-                            </button>
-                          )}
-                        </div>
+                            )}
+                            {canDelete &&
+                              (confirmDeleteId === item.id ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="btn btn-danger btn-sm"
+                                    onClick={() => void handleDelete(item)}
+                                    disabled={deleteMutation.isPending}
+                                  >
+                                    <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                                    Confirm
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => setConfirmDeleteId(null)}
+                                  >
+                                    <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn-danger btn-sm"
+                                  onClick={() => void handleDelete(item)}
+                                  disabled={deleteMutation.isPending}
+                                  aria-label={`Delete ${item.tagNumber}`}
+                                >
+                                  <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                                </button>
+                              ))}
+                          </div>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                            View only
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

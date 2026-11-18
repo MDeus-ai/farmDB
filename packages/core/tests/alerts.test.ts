@@ -79,6 +79,7 @@ describe('@farmdb/core phase 4 medical & alerts', () => {
     const cow: Livestock = {
       id: 'c1',
       species: 'cow',
+      sex: 'female',
       tagNumber: 'COW-402',
       name: 'Bessie',
       breed: 'Holstein',
@@ -110,5 +111,13 @@ describe('@farmdb/core phase 4 medical & alerts', () => {
     const formatted = formatAlertNotificationContent(dueAlert, cow);
     expect(formatted.title).toBe('farmDB Alert · Cow #COW-402 (Bessie)');
     expect(formatted.body).toBe('Due for vaccination — Annual FMD booster');
+
+    const bullFormatted = formatAlertNotificationContent(dueAlert, {
+      ...cow,
+      tagNumber: 'BULL-101',
+      name: 'Titan',
+      sex: 'male',
+    });
+    expect(bullFormatted.title).toBe('farmDB Alert · Bull #BULL-101 (Titan)');
   });
 });

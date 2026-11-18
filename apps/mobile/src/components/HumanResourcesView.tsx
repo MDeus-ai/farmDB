@@ -36,6 +36,7 @@ import {
   type WorkerPaymentStatus,
   type WorkerStatus,
   type WorkerTask,
+  describeModuleAccessLevel,
   type WorkerTaskPriority,
   type WorkerTaskStatus,
 } from '@farmdb/core';
@@ -52,6 +53,7 @@ import {
   useUpdateWorkerPayment,
   useUpdateWorkerTask,
   useWorkerList,
+  useModulePermissions,
   useWorkerPaymentList,
   useWorkerTaskList,
 } from '@farmdb/db';
@@ -92,6 +94,7 @@ function getUrgencyLabel(daysUntil: number): string {
 export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) {
   const ui = useUiScale();
   const { settings } = ui;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('hr');
   const currency = settings.currencySymbol;
   const leadDays = settings.paymentAlertLeadDays;
   const todayIso = getTodayIsoDate();
@@ -129,7 +132,6 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
   const [confirmDeletePaymentId, setConfirmDeletePaymentId] = useState<string | null>(null);
   const [confirmDeleteTaskId, setConfirmDeleteTaskId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [isSeeding, setIsSeeding] = useState(false);
 
   // Worker Modal
   const [workerModalOpen, setWorkerModalOpen] = useState(false);
@@ -451,128 +453,6 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
     }
   }
 
-  async function handleSeedSample() {
-    if (isSeeding) return;
-    setIsSeeding(true);
-    setNotice(null);
-    try {
-      const existingNames = new Map(
-        allWorkers.map((w) => [w.name.trim().toLowerCase(), w])
-      );
-
-      async function ensureWorker(input: {
-        name: string;
-        role: string;
-        phone: string;
-        responsibilities: string;
-        salaryAmount: number;
-        payFrequency: WorkerPayFrequency;
-        nextPaymentDueDate: string;
-        status: WorkerStatus;
-        hireDate: string;
-      }): Promise<FarmWorker> {
-        const found = existingNames.get(input.name.trim().toLowerCase());
-        if (found) return found;
-        const created = await createWorkerMut.mutateAsync(input);
-        existingNames.set(input.name.trim().toLowerCase(), created);
-        return created;
-      }
-
-      const samuel = await ensureWorker({
-        name: 'Samuel Kiptoo',
-        role: 'Lead Herdsman',
-        phone: '+256 772 410220',
-        responsibilities: 'Morning & evening milking, calving checks, parlor prep',
-        salaryAmount: currency === 'UGX' ? 450000 : 420,
-        payFrequency: 'monthly',
-        nextPaymentDueDate: addDays(todayIso, Math.max(0, Math.min(2, leadDays))),
-        status: 'active',
-        hireDate: addDays(todayIso, -180),
-      });
-
-      const grace = await ensureWorker({
-        name: 'Grace Namukasa',
-        role: 'Calf & Dairy Assistant',
-        phone: '+256 701 884319',
-        responsibilities: 'Calf feeding, milk tank sanitation, health logs',
-        salaryAmount: currency === 'UGX' ? 320000 : 300,
-        payFrequency: 'monthly',
-        nextPaymentDueDate: addDays(todayIso, 10),
-        status: 'active',
-        hireDate: addDays(todayIso, -95),
-      });
-
-      const peter = await ensureWorker({
-        name: 'Peter Omondi',
-        role: 'Pasture & Feed Attendant',
-        phone: '+256 783 905411',
-        responsibilities: 'Silage mixing, paddock fencing checks, water troughs',
-        salaryAmount: currency === 'UGX' ? 95000 : 120,
-        payFrequency: 'weekly',
-        nextPaymentDueDate: addDays(todayIso, -1),
-        status: 'active',
-        hireDate: addDays(todayIso, -45),
-      });
-
-      const existingPaymentKeys = new Set(
-        allPayments.map((p) => `${p.workerId}:${p.periodLabel ?? ''}`)
-      );
-      if (!existingPaymentKeys.has(`${peter.id}:Weekly Wages (Pending)`)) {
-        await createPaymentMut.mutateAsync({
-          input: {
-            workerId: peter.id,
-            amount: peter.salaryAmount,
-            dueDate: addDays(todayIso, -1),
-            status: 'pending',
-            periodLabel: 'Weekly Wages (Pending)',
-          },
-        });
-      }
-
-      const existingTaskKeys = new Set(
-        allTasks.map((t) => `${t.workerId}:${t.title.trim().toLowerCase()}`)
-      );
-      if (
-        !existingTaskKeys.has(
-          `${samuel.id}:inspect milking pulsators & afternoon yield check`
-        )
-      ) {
-        await createTaskMut.mutateAsync({
-          workerId: samuel.id,
-          livestockId: activeLivestock[0]?.id ?? null,
-          title: 'Inspect milking pulsators & afternoon yield check',
-          priority: 'high',
-          status: 'in_progress',
-          dueDate: todayIso,
-        });
-      }
-
-      if (
-        !existingTaskKeys.has(
-          `${grace.id}:sterilize calf feeding pails & prepare colostrum`
-        )
-      ) {
-        await createTaskMut.mutateAsync({
-          workerId: grace.id,
-          title: 'Sterilize calf feeding pails & prepare colostrum',
-          priority: 'medium',
-          status: 'pending',
-          dueDate: addDays(todayIso, 1),
-        });
-      }
-
-      setNotice('Loaded sample farm workers, salaries & tasks.');
-    } catch (err) {
-      setNotice(
-        err instanceof Error
-          ? `Could not load sample data: ${err.message}`
-          : 'Could not load sample data.'
-      );
-    } finally {
-      setIsSeeding(false);
-    }
-  }
-
   return (
     <FarmScrollView
       dockAware
@@ -680,45 +560,63 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
           </View>
         </View>
 
-        <View style={[styles.actionRow, { gap: ui.space(8) }]}>
-          <Pressable
-            style={[styles.primaryBtn, { minHeight: ui.chipHeight, minWidth: 92, paddingVertical: ui.space(6) }]}
-            onPress={openAddWorker}
+        {canEdit ? (
+          <View style={[styles.actionRow, { gap: ui.space(8) }]}>
+            <Pressable
+              style={[styles.primaryBtn, { minHeight: ui.chipHeight, minWidth: 92, paddingVertical: ui.space(6) }]}
+              onPress={openAddWorker}
+            >
+              <AppIcon name="plus" size={ui.font(14)} />
+              <Text style={[styles.primaryBtnText, { fontSize: ui.font(12) }]}>
+                Worker
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                allWorkers.length === 0 && styles.disabledBtn,
+                { minHeight: ui.chipHeight, minWidth: 82, paddingVertical: ui.space(6) },
+              ]}
+              disabled={allWorkers.length === 0}
+              onPress={() => openPayModal()}
+            >
+              <AppIcon name="income" size={ui.font(14)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                Pay
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                allWorkers.length === 0 && styles.disabledBtn,
+                { minHeight: ui.chipHeight, minWidth: 82, paddingVertical: ui.space(6) },
+              ]}
+              disabled={allWorkers.length === 0}
+              onPress={() => openTaskModal()}
+            >
+              <AppIcon name="note" size={ui.font(14)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                Task
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View
+            style={{
+              alignSelf: 'flex-start',
+              paddingHorizontal: ui.space(10),
+              paddingVertical: ui.space(6),
+              borderRadius: 999,
+              backgroundColor: '#f3efe4',
+              borderWidth: 1,
+              borderColor: FARMDB_COLORS.border,
+            }}
           >
-            <AppIcon name="plus" size={ui.font(14)} />
-            <Text style={[styles.primaryBtnText, { fontSize: ui.font(12) }]}>
-              Worker
+            <Text style={{ fontFamily: FARMDB_FONTS.bold, fontSize: ui.font(11), color: FARMDB_COLORS.textMuted }}>
+              {describeModuleAccessLevel(accessLevel)}
             </Text>
-          </Pressable>
-          <Pressable
-            style={[
-              styles.secondaryBtn,
-              allWorkers.length === 0 && styles.disabledBtn,
-              { minHeight: ui.chipHeight, minWidth: 82, paddingVertical: ui.space(6) },
-            ]}
-            disabled={allWorkers.length === 0}
-            onPress={() => openPayModal()}
-          >
-            <AppIcon name="income" size={ui.font(14)} />
-            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
-              Pay
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[
-              styles.secondaryBtn,
-              allWorkers.length === 0 && styles.disabledBtn,
-              { minHeight: ui.chipHeight, minWidth: 82, paddingVertical: ui.space(6) },
-            ]}
-            disabled={allWorkers.length === 0}
-            onPress={() => openTaskModal()}
-          >
-            <AppIcon name="note" size={ui.font(14)} />
-            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
-              Task
-            </Text>
-          </Pressable>
-        </View>
+          </View>
+        )}
       </View>
 
       {notice ? (
@@ -753,20 +651,22 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                   {formatDisplayDate(item.dueDate, settings.dateFormat)}
                 </Text>
               </View>
-              <Pressable
-                style={[styles.payQuickBtn, { minHeight: Math.max(32, ui.chipHeight - 2), paddingVertical: ui.space(5) }]}
-                onPress={() => {
-                  if (item.payment) {
-                    void handleQuickMarkPaid(item.payment, item.worker);
-                  } else {
-                    openPayModal(item.worker);
-                  }
-                }}
-              >
-                <Text style={[styles.payQuickBtnText, { fontSize: ui.font(11) }]}>
-                  {item.payment ? 'Mark Paid' : 'Pay Now'}
-                </Text>
-              </Pressable>
+              {canEdit ? (
+                <Pressable
+                  style={[styles.payQuickBtn, { minHeight: Math.max(32, ui.chipHeight - 2), paddingVertical: ui.space(5) }]}
+                  onPress={() => {
+                    if (item.payment) {
+                      void handleQuickMarkPaid(item.payment, item.worker);
+                    } else {
+                      openPayModal(item.worker);
+                    }
+                  }}
+                >
+                  <Text style={[styles.payQuickBtnText, { fontSize: ui.font(11) }]}>
+                    {item.payment ? 'Mark Paid' : 'Pay Now'}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           ))}
         </View>
@@ -790,15 +690,6 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
           <Text style={[styles.emptyTitle, { fontSize: ui.font(16) }]}>
             No workers yet
           </Text>
-          <Pressable
-            style={[styles.sampleBtn, { minHeight: ui.controlHeight }]}
-            onPress={() => void handleSeedSample()}
-            disabled={isSeeding}
-          >
-            <Text style={[styles.sampleBtnText, { fontSize: ui.font(13) }]}>
-              {isSeeding ? 'Loading Sample...' : 'Load Sample Staff & Tasks'}
-            </Text>
-          </Pressable>
         </View>
       ) : tab === 'staff' ? (
         <View style={{ gap: ui.space(10) }}>
@@ -893,56 +784,64 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                   </View>
                 </View>
 
-                <View style={[styles.cardActionsRow, { gap: ui.space(8) }]}>
-                  <Pressable
-                    style={[styles.payQuickBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                    onPress={() => openPayModal(worker)}
-                  >
-                    <Text style={[styles.payQuickBtnText, { fontSize: ui.font(11) }]}>
-                      Pay Salary
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                    onPress={() => openTaskModal(worker)}
-                  >
-                    <Text style={[styles.chipActionText, { fontSize: ui.font(11) }]}>
-                      + Task ({openTasks})
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                    onPress={() => openEditWorker(worker)}
-                  >
-                    <AppIcon name="edit" size={ui.font(13)} />
-                  </Pressable>
-                  {confirmDeleteWorkerId === worker.id ? (
-                    <Pressable
-                      style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                      onPress={() => {
-                        setConfirmDeleteWorkerId(null);
-                        void deleteWorkerMut.mutateAsync(worker.id);
-                      }}
-                    >
-                      <Text style={[styles.dangerChipText, { fontSize: ui.font(11) }]}>
-                        Confirm
-                      </Text>
-                    </Pressable>
-                  ) : (
-                    <Pressable
-                      style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                      onPress={() => {
-                        if (settings.confirmBeforeDelete) {
-                          setConfirmDeleteWorkerId(worker.id);
-                        } else {
-                          void deleteWorkerMut.mutateAsync(worker.id);
-                        }
-                      }}
-                    >
-                      <AppIcon name="trash" size={ui.font(13)} />
-                    </Pressable>
-                  )}
-                </View>
+                {canEdit || canDelete ? (
+                  <View style={[styles.cardActionsRow, { gap: ui.space(8) }]}>
+                    {canEdit ? (
+                      <>
+                        <Pressable
+                          style={[styles.payQuickBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                          onPress={() => openPayModal(worker)}
+                        >
+                          <Text style={[styles.payQuickBtnText, { fontSize: ui.font(11) }]}>
+                            Pay Salary
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                          onPress={() => openTaskModal(worker)}
+                        >
+                          <Text style={[styles.chipActionText, { fontSize: ui.font(11) }]}>
+                            + Task ({openTasks})
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                          onPress={() => openEditWorker(worker)}
+                        >
+                          <AppIcon name="edit" size={ui.font(13)} />
+                        </Pressable>
+                      </>
+                    ) : null}
+                    {canDelete ? (
+                      confirmDeleteWorkerId === worker.id ? (
+                        <Pressable
+                          style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                          onPress={() => {
+                            setConfirmDeleteWorkerId(null);
+                            void deleteWorkerMut.mutateAsync(worker.id);
+                          }}
+                        >
+                          <Text style={[styles.dangerChipText, { fontSize: ui.font(11) }]}>
+                            Confirm
+                          </Text>
+                        </Pressable>
+                      ) : (
+                        <Pressable
+                          style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                          onPress={() => {
+                            if (settings.confirmBeforeDelete) {
+                              setConfirmDeleteWorkerId(worker.id);
+                            } else {
+                              void deleteWorkerMut.mutateAsync(worker.id);
+                            }
+                          }}
+                        >
+                          <AppIcon name="trash" size={ui.font(13)} />
+                        </Pressable>
+                      )
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             );
           })}
@@ -1000,50 +899,58 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                       : `Pending · Due ${formatDisplayDate(payment.dueDate, settings.dateFormat)} (${getUrgencyLabel(daysLeft)})`}
                   </Text>
 
-                  <View style={[styles.cardActionsRow, { gap: ui.space(8) }]}>
-                    {payment.status === 'pending' ? (
-                      <Pressable
-                        style={[styles.payQuickBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                        onPress={() => void handleQuickMarkPaid(payment, worker)}
-                      >
-                        <Text style={[styles.payQuickBtnText, { fontSize: ui.font(11) }]}>
-                          Mark Paid
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                    <Pressable
-                      style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                      onPress={() => openPayModal(worker, payment)}
-                    >
-                      <AppIcon name="edit" size={ui.font(13)} />
-                    </Pressable>
-                    {confirmDeletePaymentId === payment.id ? (
-                      <Pressable
-                        style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                        onPress={() => {
-                          setConfirmDeletePaymentId(null);
-                          void deletePaymentMut.mutateAsync(payment.id);
-                        }}
-                      >
-                        <Text style={[styles.dangerChipText, { fontSize: ui.font(11) }]}>
-                          Confirm
-                        </Text>
-                      </Pressable>
-                    ) : (
-                      <Pressable
-                        style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                        onPress={() => {
-                          if (settings.confirmBeforeDelete) {
-                            setConfirmDeletePaymentId(payment.id);
-                          } else {
-                            void deletePaymentMut.mutateAsync(payment.id);
-                          }
-                        }}
-                      >
-                        <AppIcon name="trash" size={ui.font(13)} />
-                      </Pressable>
-                    )}
-                  </View>
+                  {canEdit || canDelete ? (
+                    <View style={[styles.cardActionsRow, { gap: ui.space(8) }]}>
+                      {canEdit ? (
+                        <>
+                          {payment.status === 'pending' ? (
+                            <Pressable
+                              style={[styles.payQuickBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                              onPress={() => void handleQuickMarkPaid(payment, worker)}
+                            >
+                              <Text style={[styles.payQuickBtnText, { fontSize: ui.font(11) }]}>
+                                Mark Paid
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                          <Pressable
+                            style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                            onPress={() => openPayModal(worker, payment)}
+                          >
+                            <AppIcon name="edit" size={ui.font(13)} />
+                          </Pressable>
+                        </>
+                      ) : null}
+                      {canDelete ? (
+                        confirmDeletePaymentId === payment.id ? (
+                          <Pressable
+                            style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                            onPress={() => {
+                              setConfirmDeletePaymentId(null);
+                              void deletePaymentMut.mutateAsync(payment.id);
+                            }}
+                          >
+                            <Text style={[styles.dangerChipText, { fontSize: ui.font(11) }]}>
+                              Confirm
+                            </Text>
+                          </Pressable>
+                        ) : (
+                          <Pressable
+                            style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                            onPress={() => {
+                              if (settings.confirmBeforeDelete) {
+                                setConfirmDeletePaymentId(payment.id);
+                              } else {
+                                void deletePaymentMut.mutateAsync(payment.id);
+                              }
+                            }}
+                          >
+                            <AppIcon name="trash" size={ui.font(13)} />
+                          </Pressable>
+                        )
+                      ) : null}
+                    </View>
+                  ) : null}
                 </View>
               );
             })
@@ -1107,84 +1014,92 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                     </Text>
                   ) : null}
 
-                  <View style={[styles.cardActionsRow, { gap: ui.space(8) }]}>
-                    {task.status === 'pending' ? (
-                      <Pressable
-                        style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                        onPress={() =>
-                          void updateTaskMut.mutateAsync({
-                            id: task.id,
-                            input: { status: 'in_progress' },
-                          })
-                        }
-                      >
-                        <Text style={[styles.chipActionText, { fontSize: ui.font(11) }]}>
-                          Start
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                    {task.status !== 'completed' ? (
-                      <Pressable
-                        style={[styles.payQuickBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                        onPress={() =>
-                          void updateTaskMut.mutateAsync({
-                            id: task.id,
-                            input: { status: 'completed' },
-                          })
-                        }
-                      >
-                        <Text style={[styles.payQuickBtnText, { fontSize: ui.font(11) }]}>
-                          Complete
-                        </Text>
-                      </Pressable>
-                    ) : (
-                      <Pressable
-                        style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                        onPress={() =>
-                          void updateTaskMut.mutateAsync({
-                            id: task.id,
-                            input: { status: 'pending' },
-                          })
-                        }
-                      >
-                        <Text style={[styles.chipActionText, { fontSize: ui.font(11) }]}>
-                          Reopen
-                        </Text>
-                      </Pressable>
-                    )}
-                    <Pressable
-                      style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                      onPress={() => openTaskModal(worker, task)}
-                    >
-                      <AppIcon name="edit" size={ui.font(13)} />
-                    </Pressable>
-                    {confirmDeleteTaskId === task.id ? (
-                      <Pressable
-                        style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                        onPress={() => {
-                          setConfirmDeleteTaskId(null);
-                          void deleteTaskMut.mutateAsync(task.id);
-                        }}
-                      >
-                        <Text style={[styles.dangerChipText, { fontSize: ui.font(11) }]}>
-                          Confirm
-                        </Text>
-                      </Pressable>
-                    ) : (
-                      <Pressable
-                        style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
-                        onPress={() => {
-                          if (settings.confirmBeforeDelete) {
-                            setConfirmDeleteTaskId(task.id);
-                          } else {
-                            void deleteTaskMut.mutateAsync(task.id);
-                          }
-                        }}
-                      >
-                        <AppIcon name="trash" size={ui.font(13)} />
-                      </Pressable>
-                    )}
-                  </View>
+                  {canEdit || canDelete ? (
+                    <View style={[styles.cardActionsRow, { gap: ui.space(8) }]}>
+                      {canEdit ? (
+                        <>
+                          {task.status === 'pending' ? (
+                            <Pressable
+                              style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                              onPress={() =>
+                                void updateTaskMut.mutateAsync({
+                                  id: task.id,
+                                  input: { status: 'in_progress' },
+                                })
+                              }
+                            >
+                              <Text style={[styles.chipActionText, { fontSize: ui.font(11) }]}>
+                                Start
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                          {task.status !== 'completed' ? (
+                            <Pressable
+                              style={[styles.payQuickBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                              onPress={() =>
+                                void updateTaskMut.mutateAsync({
+                                  id: task.id,
+                                  input: { status: 'completed' },
+                                })
+                              }
+                            >
+                              <Text style={[styles.payQuickBtnText, { fontSize: ui.font(11) }]}>
+                                Complete
+                              </Text>
+                            </Pressable>
+                          ) : (
+                            <Pressable
+                              style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                              onPress={() =>
+                                void updateTaskMut.mutateAsync({
+                                  id: task.id,
+                                  input: { status: 'pending' },
+                                })
+                              }
+                            >
+                              <Text style={[styles.chipActionText, { fontSize: ui.font(11) }]}>
+                                Reopen
+                              </Text>
+                            </Pressable>
+                          )}
+                          <Pressable
+                            style={[styles.chipActionBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                            onPress={() => openTaskModal(worker, task)}
+                          >
+                            <AppIcon name="edit" size={ui.font(13)} />
+                          </Pressable>
+                        </>
+                      ) : null}
+                      {canDelete ? (
+                        confirmDeleteTaskId === task.id ? (
+                          <Pressable
+                            style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                            onPress={() => {
+                              setConfirmDeleteTaskId(null);
+                              void deleteTaskMut.mutateAsync(task.id);
+                            }}
+                          >
+                            <Text style={[styles.dangerChipText, { fontSize: ui.font(11) }]}>
+                              Confirm
+                            </Text>
+                          </Pressable>
+                        ) : (
+                          <Pressable
+                            style={[styles.dangerChipBtn, { minHeight: Math.max(32, ui.chipHeight - 2) }]}
+                            onPress={() => {
+                              if (settings.confirmBeforeDelete) {
+                                setConfirmDeleteTaskId(task.id);
+                              } else {
+                                void deleteTaskMut.mutateAsync(task.id);
+                              }
+                            }}
+                          >
+                            <AppIcon name="trash" size={ui.font(13)} />
+                          </Pressable>
+                        )
+                      ) : null}
+                    </View>
+                  ) : null}
                 </View>
               );
             })
@@ -1679,14 +1594,6 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontFamily: FARMDB_FONTS.bold, color: FARMDB_COLORS.darkHeader },
   emptySub: { fontFamily: FARMDB_FONTS.regular, color: FARMDB_COLORS.textMuted, textAlign: 'center' },
-  sampleBtn: {
-    marginTop: 6,
-    backgroundColor: FARMDB_COLORS.accentSoft,
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    justifyContent: 'center',
-  },
-  sampleBtnText: { fontFamily: FARMDB_FONTS.bold, color: FARMDB_COLORS.accentHover },
   modalSafe: { flex: 1, backgroundColor: FARMDB_COLORS.bg },
   modalHeader: {
     flexDirection: 'row',

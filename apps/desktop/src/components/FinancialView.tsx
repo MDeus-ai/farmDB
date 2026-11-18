@@ -15,6 +15,7 @@ import {
   computeFinancialSummary,
   CURRENCY_OPTIONS,
   DEFAULT_FARM_SETTINGS,
+  describeModuleAccessLevel,
   filterAndSortRecordsByDate,
   FINANCIAL_CATEGORIES,
   FINANCIAL_PERIOD_BUCKETS,
@@ -34,6 +35,7 @@ import {
   useFarmSettings,
   useFinancialLogList,
   useLivestockList,
+  useModulePermissions,
   useUpdateFarmSettings,
 } from '@farmdb/db';
 import { APP_ICONS, getCurrencyFlagIcon } from '../assets/icons';
@@ -59,6 +61,7 @@ export function FinancialView() {
   const livestockQuery = useLivestockList({});
   const settingsQuery = useFarmSettings();
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('financial');
   const updateSettingsMutation = useUpdateFarmSettings();
   const allLogsQuery = useFinancialLogList({});
   const filteredLogsQuery = useFinancialLogList({
@@ -209,17 +212,26 @@ export function FinancialView() {
           <h1 className="page-title">Financial Ledger</h1>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => {
-            setEditing(null);
-            setModalOpen(true);
-          }}
-        >
-          <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
-          Add Transaction
-        </button>
+        <div className="row-actions">
+          {(!canEdit || !canDelete) && (
+            <span className="status-pill status-sold">
+              {describeModuleAccessLevel(accessLevel)}
+            </span>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setEditing(null);
+                setModalOpen(true);
+              }}
+            >
+              <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
+              Add Transaction
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="stats-grid">
@@ -332,6 +344,11 @@ export function FinancialView() {
             <img src={APP_ICONS.settings} alt="" className="app-icon-md" />
           </div>
 
+          {!canEdit ? (
+            <p style={{ color: 'var(--text-muted)', margin: '0 0 14px', fontSize: '0.88rem' }}>
+              View-Only Access: Milk price ({formatCurrency(settings.defaultMilkRatePerLiter, currency)}/L) and currency changes are disabled for your account.
+            </p>
+          ) : (
           <form onSubmit={handleSaveSettings} className="settings-form">
             <div className="form-grid">
               <div className="form-field">
@@ -396,6 +413,7 @@ export function FinancialView() {
               )}
             </div>
           </form>
+          )}
 
           <div className="detail-facts" style={{ marginTop: 16, marginBottom: 0 }}>
             <div className="detail-fact">
@@ -533,59 +551,68 @@ export function FinancialView() {
                       </td>
                       <td>{log.notes ?? '—'}</td>
                       <td>
-                        <div className="row-actions">
-                            <button
-                              type="button"
-                              className="btn btn-secondary btn-sm"
-                              onClick={() => {
-                                setEditing(log);
-                                setModalOpen(true);
-                              }}
-                              aria-label="Edit financial entry"
-                            >
-                              <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
-                            </button>
-                          {confirmDeleteId === log.id ? (
-                            <>
-                              <button
-                                type="button"
-                                className="btn btn-danger btn-sm"
-                                onClick={() => {
-                                  setConfirmDeleteId(null);
-                                  void deleteMutation.mutateAsync(log.id);
-                                }}
-                                disabled={deleteMutation.isPending}
-                              >
-                                <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                                Confirm
-                              </button>
+                        {(canEdit || canDelete) ? (
+                          <div className="row-actions">
+                            {canEdit && (
                               <button
                                 type="button"
                                 className="btn btn-secondary btn-sm"
-                                onClick={() => setConfirmDeleteId(null)}
+                                onClick={() => {
+                                  setEditing(log);
+                                  setModalOpen(true);
+                                }}
+                                aria-label="Edit financial entry"
                               >
-                                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
-                                Cancel
+                                <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
                               </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn btn-danger btn-sm"
-                              onClick={() => {
-                                if (settings.confirmBeforeDelete) {
-                                  setConfirmDeleteId(log.id);
-                                } else {
-                                  void deleteMutation.mutateAsync(log.id);
-                                }
-                              }}
-                              disabled={deleteMutation.isPending}
-                              aria-label="Delete financial entry"
-                            >
-                              <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
-                            </button>
-                          )}
-                        </div>
+                            )}
+                            {canDelete &&
+                              (confirmDeleteId === log.id ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="btn btn-danger btn-sm"
+                                    onClick={() => {
+                                      setConfirmDeleteId(null);
+                                      void deleteMutation.mutateAsync(log.id);
+                                    }}
+                                    disabled={deleteMutation.isPending}
+                                  >
+                                    <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                                    Confirm
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => setConfirmDeleteId(null)}
+                                  >
+                                    <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn-danger btn-sm"
+                                  onClick={() => {
+                                    if (settings.confirmBeforeDelete) {
+                                      setConfirmDeleteId(log.id);
+                                    } else {
+                                      void deleteMutation.mutateAsync(log.id);
+                                    }
+                                  }}
+                                  disabled={deleteMutation.isPending}
+                                  aria-label="Delete financial entry"
+                                >
+                                  <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                                </button>
+                              ))}
+                          </div>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                            View only
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

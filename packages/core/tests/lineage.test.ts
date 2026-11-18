@@ -15,6 +15,7 @@ function makeAnimal(
 ): Livestock {
   return {
     species: 'cow',
+    sex: partial.tagNumber.startsWith('BULL-') ? 'male' : 'female',
     name: null,
     breed: 'Holstein',
     dob: '2022-01-01',
@@ -245,5 +246,9 @@ describe('@farmdb/core lineage & herd family tree', () => {
     const safeOutcrossReport = analyzeBreedingPair('a-focal', 'a-mate', herd, records);
     expect(safeOutcrossReport?.riskLevel).toBe('safe');
     expect(safeOutcrossReport?.relationshipPercent).toBe(0);
+
+    const sameSexReport = analyzeBreedingPair('a-focal', 'a-outcross', herd, records);
+    expect(sameSexReport?.riskLevel).toBe('high');
+    expect(sameSexReport?.relationshipLabel).toBe('Same-Sex Pair (Cannot Breed)');
   });
 });

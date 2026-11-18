@@ -4,6 +4,7 @@ import {
   computeHrSummary,
   daysUntilDate,
   DEFAULT_FARM_SETTINGS,
+  describeModuleAccessLevel,
   formatCurrency,
   formatDisplayDate,
   formatPayFrequencyLabel,
@@ -38,6 +39,7 @@ import {
   useFarmSettings,
   useLivestockList,
   useMarkWorkerPaymentPaid,
+  useModulePermissions,
   useUpdateWorker,
   useUpdateWorkerPayment,
   useUpdateWorkerTask,
@@ -76,6 +78,7 @@ function getUrgencyLabel(daysUntil: number): string {
 export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) {
   const settingsQuery = useFarmSettings();
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('hr');
   const currency = settings.currencySymbol;
   const leadDays = settings.paymentAlertLeadDays;
   const todayIso = getTodayIsoDate();
@@ -116,8 +119,6 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
   const [confirmDeletePaymentId, setConfirmDeletePaymentId] = useState<string | null>(null);
   const [confirmDeleteTaskId, setConfirmDeleteTaskId] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
-  const [seedError, setSeedError] = useState<string | null>(null);
-  const [isSeeding, setIsSeeding] = useState(false);
 
   // Worker Modal State
   const [workerModalOpen, setWorkerModalOpen] = useState(false);
@@ -462,6 +463,7 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
   }
 
   async function handleDeleteWorker(w: FarmWorker) {
+    if (!canDelete) return;
     if (settings.confirmBeforeDelete && confirmDeleteWorkerId !== w.id) {
       setConfirmDeleteWorkerId(w.id);
       return;
@@ -472,6 +474,7 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
   }
 
   async function handleDeletePayment(p: WorkerPayment) {
+    if (!canDelete) return;
     if (settings.confirmBeforeDelete && confirmDeletePaymentId !== p.id) {
       setConfirmDeletePaymentId(p.id);
       return;
@@ -481,186 +484,13 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
   }
 
   async function handleDeleteTask(t: WorkerTask) {
+    if (!canDelete) return;
     if (settings.confirmBeforeDelete && confirmDeleteTaskId !== t.id) {
       setConfirmDeleteTaskId(t.id);
       return;
     }
     setConfirmDeleteTaskId(null);
     await deleteTaskMut.mutateAsync(t.id);
-  }
-
-  async function handleSeedSampleHr() {
-    if (isSeeding) return;
-    setIsSeeding(true);
-    setSeedError(null);
-    setStatusNotice(null);
-
-    try {
-      const existingByName = new Map(
-        allWorkers.map((w) => [w.name.trim().toLowerCase(), w])
-      );
-
-      async function ensureSampleWorker(input: {
-        name: string;
-        role: string;
-        phone: string;
-        responsibilities: string;
-        salaryAmount: number;
-        payFrequency: WorkerPayFrequency;
-        nextPaymentDueDate: string;
-        status: WorkerStatus;
-        hireDate: string;
-      }): Promise<{ worker: FarmWorker; created: boolean }> {
-        const found = existingByName.get(input.name.trim().toLowerCase());
-        if (found) {
-          return { worker: found, created: false };
-        }
-        const created = await createWorkerMut.mutateAsync(input);
-        existingByName.set(input.name.trim().toLowerCase(), created);
-        return { worker: created, created: true };
-      }
-
-      const samuelRes = await ensureSampleWorker({
-        name: 'Samuel Kiptoo',
-        role: 'Lead Herdsman',
-        phone: '+256 772 410220',
-        responsibilities:
-          'Morning & evening parlor milking, calving supervision, breeding heat checks',
-        salaryAmount: currency === 'UGX' ? 450000 : 420,
-        payFrequency: 'monthly',
-        nextPaymentDueDate: addDays(todayIso, Math.max(0, Math.min(2, leadDays))),
-        status: 'active',
-        hireDate: addDays(todayIso, -180),
-      });
-
-      const graceRes = await ensureSampleWorker({
-        name: 'Grace Namukasa',
-        role: 'Dairy & Calf Specialist',
-        phone: '+256 701 884319',
-        responsibilities:
-          'Calf feeding, milk cooling tank sanitation, colostrum & medical logs',
-        salaryAmount: currency === 'UGX' ? 320000 : 300,
-        payFrequency: 'monthly',
-        nextPaymentDueDate: addDays(todayIso, 10),
-        status: 'active',
-        hireDate: addDays(todayIso, -95),
-      });
-
-      const peterRes = await ensureSampleWorker({
-        name: 'Peter Omondi',
-        role: 'Pasture & Feed Attendant',
-        phone: '+256 783 905411',
-        responsibilities:
-          'Silage mixing, paddock fencing checks, clean water trough maintenance',
-        salaryAmount: currency === 'UGX' ? 95000 : 120,
-        payFrequency: 'weekly',
-        nextPaymentDueDate: addDays(todayIso, -1),
-        status: 'active',
-        hireDate: addDays(todayIso, -45),
-      });
-
-      const existingPaymentKeys = new Set(
-        allPayments.map((p) => `${p.workerId}:${p.periodLabel ?? ''}`)
-      );
-      if (
-        !existingPaymentKeys.has(`${peterRes.worker.id}:Weekly Wages (Pending)`)
-      ) {
-        await createPaymentMut.mutateAsync({
-          input: {
-            workerId: peterRes.worker.id,
-            amount: peterRes.worker.salaryAmount,
-            dueDate: addDays(todayIso, -1),
-            status: 'pending',
-            periodLabel: 'Weekly Wages (Pending)',
-            notes: 'Due from yesterday shift schedule',
-          },
-        });
-      }
-
-      if (
-        !existingPaymentKeys.has(`${samuelRes.worker.id}:Prior Month Salary`)
-      ) {
-        await createPaymentMut.mutateAsync({
-          input: {
-            workerId: samuelRes.worker.id,
-            amount: samuelRes.worker.salaryAmount,
-            dueDate: addDays(todayIso, -28),
-            paidDate: addDays(todayIso, -28),
-            status: 'paid',
-            periodLabel: 'Prior Month Salary',
-            notes: 'Settled in full',
-          },
-          options: {
-            autoRecordExpense: settings.autoRecordPayrollExpenseByDefault,
-            advanceWorkerDueDate: false,
-          },
-        });
-      }
-
-      const existingTaskKeys = new Set(
-        allTasks.map((t) => `${t.workerId}:${t.title.trim().toLowerCase()}`)
-      );
-      const sampleAnimalId = activeLivestock[0]?.id ?? null;
-
-      if (
-        !existingTaskKeys.has(
-          `${samuelRes.worker.id}:inspect milking pulsators & afternoon yield check`
-        )
-      ) {
-        await createTaskMut.mutateAsync({
-          workerId: samuelRes.worker.id,
-          livestockId: sampleAnimalId,
-          title: 'Inspect milking pulsators & afternoon yield check',
-          description: 'Verify vacuum pressure and log afternoon milk volume.',
-          priority: 'high',
-          status: 'in_progress',
-          dueDate: todayIso,
-        });
-      }
-
-      if (
-        !existingTaskKeys.has(
-          `${graceRes.worker.id}:prepare evening calf formula & sterilize feeding pails`
-        )
-      ) {
-        await createTaskMut.mutateAsync({
-          workerId: graceRes.worker.id,
-          livestockId: sampleAnimalId,
-          title: 'Prepare evening calf formula & sterilize feeding pails',
-          description: 'Check body temperature and appetite for youngstock.',
-          priority: 'medium',
-          status: 'pending',
-          dueDate: addDays(todayIso, 1),
-        });
-      }
-
-      if (
-        !existingTaskKeys.has(
-          `${peterRes.worker.id}:repair east paddock wire gate latch`
-        )
-      ) {
-        await createTaskMut.mutateAsync({
-          workerId: peterRes.worker.id,
-          title: 'Repair East Paddock wire gate latch',
-          description: 'Tighten tension wire and refill mineral lick blocks.',
-          priority: 'low',
-          status: 'completed',
-          dueDate: addDays(todayIso, -1),
-        });
-      }
-
-      setStatusNotice(
-        'Loaded sample farm staff, pending salaries, and allocated tasks.'
-      );
-    } catch (err) {
-      setSeedError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to load sample staff and tasks.'
-      );
-    } finally {
-      setIsSeeding(false);
-    }
   }
 
   return (
@@ -676,58 +506,43 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
         </div>
 
         <div className="row-actions">
-          {allWorkers.length < 3 && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={isSeeding}
-              onClick={() => void handleSeedSampleHr()}
-            >
-              <img src={APP_ICONS.staff} alt="" className="app-icon-sm" />
-              {isSeeding ? 'Loading Sample...' : 'Load Sample Staff & Tasks'}
-            </button>
+          {(!canEdit || !canDelete) && (
+            <span className="status-pill status-sold">
+              {describeModuleAccessLevel(accessLevel)}
+            </span>
           )}
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={openAddWorker}
-          >
-            <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
-            Add Worker
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={allWorkers.length === 0}
-            onClick={() => openPayModal()}
-          >
-            <img src={APP_ICONS.money} alt="" className="app-icon-sm" />
-            Pay / Log Salary
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={allWorkers.length === 0}
-            onClick={() => openTaskModal()}
-          >
-            <img src={APP_ICONS.copyWriting} alt="" className="app-icon-sm" />
-            Assign Task
-          </button>
+          {canEdit && (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={openAddWorker}
+              >
+                <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
+                Add Worker
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={allWorkers.length === 0}
+                onClick={() => openPayModal()}
+              >
+                <img src={APP_ICONS.money} alt="" className="app-icon-sm" />
+                Pay / Log Salary
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={allWorkers.length === 0}
+                onClick={() => openTaskModal()}
+              >
+                <img src={APP_ICONS.copyWriting} alt="" className="app-icon-sm" />
+                Assign Task
+              </button>
+            </>
+          )}
         </div>
       </div>
-
-      {seedError && (
-        <div className="notice-banner" role="alert">
-          <span>Sample data loader error: {seedError}</span>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={() => setSeedError(null)}
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
 
       {statusNotice && (
         <div className="alert-toast-banner" role="status">
@@ -791,20 +606,22 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={() => {
-                    if (item.payment) {
-                      void handleMarkPaidQuick(item.payment, item.worker);
-                    } else {
-                      openPayModal(item.worker);
-                    }
-                  }}
-                >
-                  <img src={APP_ICONS.money} alt="" className="app-icon-sm" />
-                  {item.payment ? 'Mark Paid' : 'Pay Now'}
-                </button>
+                {canEdit && (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => {
+                      if (item.payment) {
+                        void handleMarkPaidQuick(item.payment, item.worker);
+                      } else {
+                        openPayModal(item.worker);
+                      }
+                    }}
+                  >
+                    <img src={APP_ICONS.money} alt="" className="app-icon-sm" />
+                    {item.payment ? 'Mark Paid' : 'Pay Now'}
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -882,21 +699,14 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
             <p style={{ margin: 0, fontWeight: 700, fontSize: '1.04rem' }}>
               No farm workers added yet
             </p>
-            <div className="empty-actions">
-              <button type="button" className="btn btn-primary" onClick={openAddWorker}>
-                <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
-                Add First Worker
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => void handleSeedSampleHr()}
-                disabled={isSeeding}
-              >
-                <img src={APP_ICONS.staff} alt="" className="app-icon-sm" />
-                {isSeeding ? 'Loading Sample Staff...' : 'Load Sample Staff & Tasks'}
-              </button>
-            </div>
+            {canEdit && (
+              <div className="empty-actions">
+                <button type="button" className="btn btn-primary" onClick={openAddWorker}>
+                  <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
+                  Add First Worker
+                </button>
+              </div>
+            )}
           </div>
         ) : tab === 'staff' ? (
           <>
@@ -997,48 +807,55 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                         </div>
                       </div>
 
-                      <div className="hr-worker-actions">
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm"
-                          onClick={() => openPayModal(worker)}
-                        >
-                          <img src={APP_ICONS.money} alt="" className="app-icon-sm" />
-                          Pay Salary
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openTaskModal(worker)}
-                        >
-                          <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
-                          Task
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openEditWorker(worker)}
-                        >
-                          <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
-                        </button>
-                        {confirmDeleteWorkerId === worker.id ? (
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-sm"
-                            onClick={() => void handleDeleteWorker(worker)}
-                          >
-                            Confirm
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-sm"
-                            onClick={() => void handleDeleteWorker(worker)}
-                          >
-                            <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
-                          </button>
-                        )}
-                      </div>
+                      {(canEdit || canDelete) && (
+                        <div className="hr-worker-actions">
+                          {canEdit && (
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-primary btn-sm"
+                                onClick={() => openPayModal(worker)}
+                              >
+                                <img src={APP_ICONS.money} alt="" className="app-icon-sm" />
+                                Pay Salary
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => openTaskModal(worker)}
+                              >
+                                <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
+                                Task
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => openEditWorker(worker)}
+                              >
+                                <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
+                              </button>
+                            </>
+                          )}
+                          {canDelete &&
+                            (confirmDeleteWorkerId === worker.id ? (
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => void handleDeleteWorker(worker)}
+                              >
+                                Confirm
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => void handleDeleteWorker(worker)}
+                              >
+                                <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                              </button>
+                            ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1079,13 +896,15 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                           <strong>{formatCurrency(w.salaryAmount, currency)}</strong>
-                          <button
-                            type="button"
-                            className="btn btn-primary btn-sm"
-                            onClick={() => openPayModal(w)}
-                          >
-                            Pay Now
-                          </button>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              onClick={() => openPayModal(w)}
+                            >
+                              Pay Now
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -1113,14 +932,16 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                 ]}
                 onChange={setPaymentStatusFilter}
               />
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={() => openPayModal()}
-              >
-                <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
-                Record Payment
-              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => openPayModal()}
+                >
+                  <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
+                  Record Payment
+                </button>
+              )}
             </div>
 
             {filteredPayments.length === 0 ? (
@@ -1194,46 +1015,51 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                           </td>
                           <td>
                             <div className="row-actions">
-                              {payment.status === 'pending' && (
-                                <button
-                                  type="button"
-                                  className="btn btn-primary btn-sm"
-                                  onClick={() =>
-                                    void handleMarkPaidQuick(payment, worker)
-                                  }
-                                >
-                                  <img
-                                    src={APP_ICONS.checkmark}
-                                    alt=""
-                                    className="app-icon-sm"
-                                  />
-                                  Mark Paid
-                                </button>
+                              {canEdit && (
+                                <>
+                                  {payment.status === 'pending' && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary btn-sm"
+                                      onClick={() =>
+                                        void handleMarkPaidQuick(payment, worker)
+                                      }
+                                    >
+                                      <img
+                                        src={APP_ICONS.checkmark}
+                                        alt=""
+                                        className="app-icon-sm"
+                                      />
+                                      Mark Paid
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => openPayModal(worker, payment)}
+                                  >
+                                    <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
+                                  </button>
+                                </>
                               )}
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => openPayModal(worker, payment)}
-                              >
-                                <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
-                              </button>
-                              {confirmDeletePaymentId === payment.id ? (
-                                <button
-                                  type="button"
-                                  className="btn btn-danger btn-sm"
-                                  onClick={() => void handleDeletePayment(payment)}
-                                >
-                                  Confirm
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="btn btn-danger btn-sm"
-                                  onClick={() => void handleDeletePayment(payment)}
-                                >
-                                  <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
-                                </button>
-                              )}
+                              {canDelete &&
+                                (confirmDeletePaymentId === payment.id ? (
+                                  <button
+                                    type="button"
+                                    className="btn btn-danger btn-sm"
+                                    onClick={() => void handleDeletePayment(payment)}
+                                  >
+                                    Confirm
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="btn btn-danger btn-sm"
+                                    onClick={() => void handleDeletePayment(payment)}
+                                  >
+                                    <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                                  </button>
+                                ))}
                             </div>
                           </td>
                         </tr>
@@ -1333,74 +1159,81 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                         </div>
                       </div>
 
-                      <div className="row-actions">
-                        {task.status === 'pending' && (
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={() =>
-                              void updateTaskMut.mutateAsync({
-                                id: task.id,
-                                input: { status: 'in_progress' },
-                              })
-                            }
-                          >
-                            Start
-                          </button>
-                        )}
-                        {task.status !== 'completed' ? (
-                          <button
-                            type="button"
-                            className="btn btn-primary btn-sm"
-                            onClick={() =>
-                              void updateTaskMut.mutateAsync({
-                                id: task.id,
-                                input: { status: 'completed' },
-                              })
-                            }
-                          >
-                            <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                            Done
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={() =>
-                              void updateTaskMut.mutateAsync({
-                                id: task.id,
-                                input: { status: 'pending' },
-                              })
-                            }
-                          >
-                            Reopen
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openTaskModal(worker, task)}
-                        >
-                          <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
-                        </button>
-                        {confirmDeleteTaskId === task.id ? (
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-sm"
-                            onClick={() => void handleDeleteTask(task)}
-                          >
-                            Confirm
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-sm"
-                            onClick={() => void handleDeleteTask(task)}
-                          >
-                            <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
-                          </button>
-                        )}
-                      </div>
+                      {(canEdit || canDelete) && (
+                        <div className="row-actions">
+                          {canEdit && (
+                            <>
+                              {task.status === 'pending' && (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() =>
+                                    void updateTaskMut.mutateAsync({
+                                      id: task.id,
+                                      input: { status: 'in_progress' },
+                                    })
+                                  }
+                                >
+                                  Start
+                                </button>
+                              )}
+                              {task.status !== 'completed' ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-primary btn-sm"
+                                  onClick={() =>
+                                    void updateTaskMut.mutateAsync({
+                                      id: task.id,
+                                      input: { status: 'completed' },
+                                    })
+                                  }
+                                >
+                                  <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                                  Done
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() =>
+                                    void updateTaskMut.mutateAsync({
+                                      id: task.id,
+                                      input: { status: 'pending' },
+                                    })
+                                  }
+                                >
+                                  Reopen
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => openTaskModal(worker, task)}
+                              >
+                                <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
+                              </button>
+                            </>
+                          )}
+                          {canDelete &&
+                            (confirmDeleteTaskId === task.id ? (
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => void handleDeleteTask(task)}
+                              >
+                                Confirm
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => void handleDeleteTask(task)}
+                              >
+                                <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                              </button>
+                            ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

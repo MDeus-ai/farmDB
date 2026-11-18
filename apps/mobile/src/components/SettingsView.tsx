@@ -12,6 +12,7 @@ import {
 import {
   CURRENCY_OPTIONS,
   DATE_FORMATS,
+  describeModuleAccessLevel,
   FONT_SCALES,
   formatCurrency,
   formatSpeciesLabel,
@@ -34,10 +35,16 @@ import {
   useActiveFarmAccount,
   useClearCloudSyncLogs,
   useCloudSyncLogs,
+  useModulePermissions,
   useResetFarmSettings,
   useTriggerCloudSync,
+  useUpdateFarmAccount,
   useUpdateFarmSettings,
 } from '@farmdb/db';
+import type {
+  ExpoSqlController,
+  MobileStorageInfo,
+} from '../db/mobileDriver';
 import {
   getCurrencyFlagSource,
   getCurrencyOptionFlagSource,
@@ -59,8 +66,9 @@ import {
 } from './ModernDropdown';
 
 interface SettingsViewProps {
+  sqlController?: ExpoSqlController | null;
   onOpenBackup: () => void;
-  onOpenAuthPortal?: () => void;
+  onSignOut?: () => void;
   onOpenTutorial?: () => void;
 }
 
@@ -194,13 +202,16 @@ function MobileIntervalControl({
 }
 
 export function SettingsView({
+  sqlController,
   onOpenBackup,
-  onOpenAuthPortal,
+  onSignOut,
   onOpenTutorial,
 }: SettingsViewProps) {
   const ui = useUiScale();
   const { settings } = ui;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('settings');
   const updateMutation = useUpdateFarmSettings();
+  const updateAccountMutation = useUpdateFarmAccount();
   const resetMutation = useResetFarmSettings();
   const activeAccountQuery = useActiveFarmAccount();
   const logsQuery = useCloudSyncLogs(25);
@@ -211,6 +222,42 @@ export function SettingsView({
   const syncLogs = logsQuery.data ?? [];
   const isAdmin = isAdminAccount(activeAccount);
   const isAdminOrManager = isAdmin;
+  const [storageInfo, setStorageInfo] = useState<MobileStorageInfo | null>(null);
+  const [storageBusy, setStorageBusy] = useState(false);
+
+  useEffect(() => {
+    if (!sqlController) return;
+    void sqlController
+      .getStorageInfo()
+      .then(setStorageInfo)
+      .catch(() => setStorageInfo(null));
+  }, [sqlController]);
+
+  async function handleToggleReadOnlyProtection(enabled: boolean) {
+    if (!sqlController || !(isAdmin || canDelete)) return;
+    setStorageFeedback(null);
+    setStorageBusy(true);
+    try {
+      const updated = await sqlController.setReadOnlyProtection(enabled);
+      setStorageInfo(updated);
+      setStorageFeedback({
+        kind: 'ok',
+        text: enabled
+          ? 'Read-only SQLite protection enabled: direct external edits blocked via PRAGMA query_only + verified copy.'
+          : 'Read-only SQLite protection paused.',
+      });
+    } catch (err) {
+      setStorageFeedback({
+        kind: 'err',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Unable to update read-only protection.',
+      });
+    } finally {
+      setStorageBusy(false);
+    }
+  }
 
   const [farmName, setFarmName] = useState(settings.farmName);
   const [currencySymbol, setCurrencySymbol] = useState(settings.currencySymbol);
@@ -226,9 +273,17 @@ export function SettingsView({
   const [leadDaysText, setLeadDaysText] = useState(
     String(settings.paymentAlertLeadDays)
   );
-  const [activeTab, setActiveTab] = useState<'settings' | 'logs'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'advanced' | 'logs'>('settings');
   const [confirmReset, setConfirmReset] = useState(false);
   const [feedback, setFeedback] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+  const [storageFeedback, setStorageFeedback] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+  const [cloudFeedback, setCloudFeedback] = useState<{
     kind: 'ok' | 'err';
     text: string;
   } | null>(null);
@@ -282,14 +337,33 @@ export function SettingsView({
       syncIncludeFinancials: syncFinancials,
       syncIncludeHr: syncHr,
     });
+    if (
+      activeAccount &&
+      isAdminAccount(activeAccount) &&
+      supabaseUrl.trim().length > 0 &&
+      supabaseKey.trim().length > 0
+    ) {
+      await updateAccountMutation.mutateAsync({
+        id: activeAccount.id,
+        input: {
+          supabaseUrl: supabaseUrl.trim(),
+          supabaseAnonKey: supabaseKey.trim(),
+          cloudWorkspaceId: workspaceId.trim() || 'farmdb-homestead-main',
+        },
+      });
+    }
   }
 
   async function handleSaveCloud() {
+    setCloudFeedback(null);
     try {
       await persistCloudForm();
-      setFeedback({ kind: 'ok', text: 'Saved Supabase cloud database settings.' });
+      setCloudFeedback({
+        kind: 'ok',
+        text: 'Saved Supabase credentials to SQLite and active Admin account.',
+      });
     } catch (err) {
-      setFeedback({
+      setCloudFeedback({
         kind: 'err',
         text: err instanceof Error ? err.message : 'Invalid Supabase configuration.',
       });
@@ -297,12 +371,13 @@ export function SettingsView({
   }
 
   async function handleSync(dir: CloudSyncDirection) {
+    setCloudFeedback(null);
     try {
       await persistCloudForm();
       const res = await syncMut.mutateAsync(dir);
-      setFeedback({ kind: res.ok ? 'ok' : 'err', text: res.message });
+      setCloudFeedback({ kind: res.ok ? 'ok' : 'err', text: res.message });
     } catch (err) {
-      setFeedback({
+      setCloudFeedback({
         kind: 'err',
         text: err instanceof Error ? err.message : 'Supabase sync failed.',
       });
@@ -368,6 +443,7 @@ export function SettingsView({
     patch: Partial<FarmSettings>,
     successText = 'Preference updated.'
   ) {
+    if (!canEdit) return;
     setFeedback(null);
     try {
       await updateMutation.mutateAsync(patch);
@@ -381,6 +457,7 @@ export function SettingsView({
   }
 
   async function handleSaveProfile() {
+    if (!canEdit) return;
     setFeedback(null);
     try {
       await updateMutation.mutateAsync({
@@ -403,6 +480,7 @@ export function SettingsView({
   }
 
   async function handleReset() {
+    if (!canDelete) return;
     setFeedback(null);
     try {
       await resetMutation.mutateAsync();
@@ -455,6 +533,13 @@ export function SettingsView({
               alignItems: 'center',
             }}
           >
+            {!canEdit || !canDelete ? (
+              <View style={styles.previewStatus}>
+                <Text style={[styles.previewStatusText, { fontSize: ui.font(11) }]}>
+                  {describeModuleAccessLevel(accessLevel)}
+                </Text>
+              </View>
+            ) : null}
             {!isAdmin ? (
               <View style={styles.previewStatus}>
                 <Text style={[styles.previewStatusText, { fontSize: ui.font(11) }]}>
@@ -512,19 +597,20 @@ export function SettingsView({
           </View>
         </View>
 
-        {isAdmin ? (
-          <MobileFileTabs
-            surfaceTone="page"
-            activeId={activeTab}
-            onChange={setActiveTab}
-            tabs={[
-              { id: 'settings', label: 'Settings & Cloud', icon: 'settings' },
-              { id: 'logs', label: `Sync Logs (${syncLogs.length})`, icon: 'dataSync' },
-            ]}
-          />
-        ) : null}
+        <MobileFileTabs
+          surfaceTone="page"
+          activeId={activeTab}
+          onChange={setActiveTab}
+          tabs={[
+            { id: 'settings', label: 'Settings', icon: 'settings' },
+            { id: 'advanced', label: 'Advanced Settings', icon: 'cloudHosting' },
+            ...(isAdmin
+              ? [{ id: 'logs' as const, label: `Sync Logs (${syncLogs.length})`, icon: 'dataSync' as const }]
+              : []),
+          ]}
+        />
 
-        {feedback ? (
+        {activeTab === 'settings' && feedback ? (
           <View
             style={[
               styles.feedbackBanner,
@@ -544,8 +630,40 @@ export function SettingsView({
           </View>
         ) : null}
 
+        {!canEdit ? (
+          <View
+            style={[
+              styles.feedbackBanner,
+              { padding: ui.space(11), borderRadius: ui.radius },
+            ]}
+          >
+            <Text style={[styles.feedbackText, { fontSize: ui.font(12) }]}>
+              Settings are read-only for your account ({describeModuleAccessLevel(accessLevel)}).
+            </Text>
+          </View>
+        ) : null}
+
         {isAdmin && activeTab === 'logs' ? (
           <View style={cardStyle}>
+            {cloudFeedback ? (
+              <View
+                style={[
+                  styles.feedbackBanner,
+                  cloudFeedback.kind === 'err' && styles.feedbackBannerErr,
+                  { padding: ui.space(11), borderRadius: ui.radius },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.feedbackText,
+                    cloudFeedback.kind === 'err' && styles.feedbackTextErr,
+                    { fontSize: ui.font(12) },
+                  ]}
+                >
+                  {cloudFeedback.text}
+                </Text>
+              </View>
+            ) : null}
             <View style={styles.saveBar}>
               <View style={styles.sectionTitleRow}>
                 <AppIcon name="dataSync" size={ui.font(18)} />
@@ -628,7 +746,7 @@ export function SettingsView({
               </View>
             )}
           </View>
-        ) : (
+        ) : activeTab === 'settings' ? (
           <>
 
         <View style={cardStyle}>
@@ -646,9 +764,11 @@ export function SettingsView({
                 return (
                   <Pressable
                     key={scale}
+                    disabled={!canEdit}
                     style={[
                       styles.segmentBtn,
                       active && styles.segmentBtnActive,
+                      !canEdit && { opacity: 0.6 },
                       {
                         minHeight: ui.chipHeight,
                         minWidth: ui.isCramped ? '46%' : 76,
@@ -689,9 +809,11 @@ export function SettingsView({
                 return (
                   <Pressable
                     key={density}
+                    disabled={!canEdit}
                     style={[
                       styles.segmentBtn,
                       active && styles.segmentBtnActive,
+                      !canEdit && { opacity: 0.6 },
                       {
                         minHeight: ui.chipHeight,
                         minWidth: ui.isCramped ? 96 : 76,
@@ -733,6 +855,7 @@ export function SettingsView({
             </View>
             <Switch
               value={settings.mobileIconMode}
+              disabled={!canEdit}
               onValueChange={(v) =>
                 void patchSetting(
                   { mobileIconMode: v },
@@ -754,58 +877,63 @@ export function SettingsView({
             Units &amp; Herd Defaults
           </Text>
 
-          <View style={{ gap: ui.space(6) }}>
-            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-              Date Format
-            </Text>
-            <ModernDropdown
-              value={settings.dateFormat}
-              options={dateFormatOptions}
-              title="Date Format"
-              accessibilityLabel="Date Format"
-              onChange={(fmt) =>
-                void patchSetting(
-                  { dateFormat: fmt },
-                  `Date format set to ${DATE_FORMAT_LABELS[fmt]}.`
-                )
-              }
-            />
-          </View>
+          <View
+            pointerEvents={canEdit ? 'auto' : 'none'}
+            style={[{ gap: ui.space(12) }, !canEdit && { opacity: 0.65 }]}
+          >
+            <View style={{ gap: ui.space(6) }}>
+              <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                Date Format
+              </Text>
+              <ModernDropdown
+                value={settings.dateFormat}
+                options={dateFormatOptions}
+                title="Date Format"
+                accessibilityLabel="Date Format"
+                onChange={(fmt) =>
+                  void patchSetting(
+                    { dateFormat: fmt },
+                    `Date format set to ${DATE_FORMAT_LABELS[fmt]}.`
+                  )
+                }
+              />
+            </View>
 
-          <View style={{ gap: ui.space(6) }}>
-            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-              Milk Yield Display Unit
-            </Text>
-            <ModernDropdown
-              value={settings.volumeUnit}
-              options={volumeUnitOptions}
-              title="Milk Yield Display Unit"
-              accessibilityLabel="Milk Yield Display Unit"
-              onChange={(unit) =>
-                void patchSetting(
-                  { volumeUnit: unit },
-                  `Yields will show in ${VOLUME_UNIT_LABELS[unit]}.`
-                )
-              }
-            />
-          </View>
+            <View style={{ gap: ui.space(6) }}>
+              <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                Milk Yield Display Unit
+              </Text>
+              <ModernDropdown
+                value={settings.volumeUnit}
+                options={volumeUnitOptions}
+                title="Milk Yield Display Unit"
+                accessibilityLabel="Milk Yield Display Unit"
+                onChange={(unit) =>
+                  void patchSetting(
+                    { volumeUnit: unit },
+                    `Yields will show in ${VOLUME_UNIT_LABELS[unit]}.`
+                  )
+                }
+              />
+            </View>
 
-          <View style={{ gap: ui.space(6) }}>
-            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-              Default Species for New Livestock
-            </Text>
-            <ModernDropdown
-              value={settings.defaultSpecies}
-              options={speciesOptions}
-              title="Default Livestock Species"
-              accessibilityLabel="Default Livestock Species"
-              onChange={(sp) =>
-                void patchSetting(
-                  { defaultSpecies: sp },
-                  `Default species set to ${formatSpeciesLabel(sp)}.`
-                )
-              }
-            />
+            <View style={{ gap: ui.space(6) }}>
+              <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                Default Species for New Livestock
+              </Text>
+              <ModernDropdown
+                value={settings.defaultSpecies}
+                options={speciesOptions}
+                title="Default Livestock Species"
+                accessibilityLabel="Default Livestock Species"
+                onChange={(sp) =>
+                  void patchSetting(
+                    { defaultSpecies: sp },
+                    `Default species set to ${formatSpeciesLabel(sp)}.`
+                  )
+                }
+              />
+            </View>
           </View>
         </View>
 
@@ -817,102 +945,109 @@ export function SettingsView({
             </Text>
           </View>
 
-          <View style={{ gap: ui.space(6) }}>
-            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-              Farm / Operation Name
-            </Text>
-            <TextInput
-              style={[
-                styles.input,
-                { minHeight: ui.controlHeight, fontSize: ui.font(14) },
-              ]}
-              value={farmName}
-              maxLength={60}
-              onChangeText={setFarmName}
-              placeholder="farmDB Homestead"
-              placeholderTextColor={FARMDB_COLORS.textMuted}
-            />
-          </View>
-
-          <View style={{ gap: ui.space(6) }}>
-            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-              Currency
-            </Text>
-            <ModernDropdown
-              value={selectedCurrencyValue}
-              options={currencyOptions}
-              title="Select Currency"
-              accessibilityLabel="Currency"
-              onChange={(nextVal) => {
-                if (nextVal === '__custom__') {
-                  setUseCustomCurrency(true);
-                } else {
-                  setUseCustomCurrency(false);
-                  setCurrencySymbol(nextVal);
-                  void patchSetting(
-                    { currencySymbol: nextVal },
-                    `Currency set to ${nextVal}.`
-                  );
-                }
-              }}
-            />
-          </View>
-
-          {selectedCurrencyValue === '__custom__' ? (
+          <View
+            pointerEvents={canEdit ? 'auto' : 'none'}
+            style={[{ gap: ui.space(12) }, !canEdit && { opacity: 0.65 }]}
+          >
             <View style={{ gap: ui.space(6) }}>
               <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-                Custom Currency Symbol
+                Farm / Operation Name
               </Text>
               <TextInput
+                editable={canEdit}
                 style={[
                   styles.input,
                   { minHeight: ui.controlHeight, fontSize: ui.font(14) },
                 ]}
-                value={currencySymbol}
-                maxLength={6}
-                onChangeText={setCurrencySymbol}
-                placeholder="e.g. KES, EUR, €"
+                value={farmName}
+                maxLength={60}
+                onChangeText={setFarmName}
+                placeholder="farmDB Homestead"
                 placeholderTextColor={FARMDB_COLORS.textMuted}
               />
             </View>
-          ) : null}
 
-          <View style={{ gap: ui.space(6) }}>
-            <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-              Milk Rate ({currencySymbol || '$'}/L)
-            </Text>
-            <MobileNumberStepper
-              accessibilityLabel="Milk Rate"
+            <View style={{ gap: ui.space(6) }}>
+              <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                Currency
+              </Text>
+              <ModernDropdown
+                value={selectedCurrencyValue}
+                options={currencyOptions}
+                title="Select Currency"
+                accessibilityLabel="Currency"
+                onChange={(nextVal) => {
+                  if (nextVal === '__custom__') {
+                    setUseCustomCurrency(true);
+                  } else {
+                    setUseCustomCurrency(false);
+                    setCurrencySymbol(nextVal);
+                    void patchSetting(
+                      { currencySymbol: nextVal },
+                      `Currency set to ${nextVal}.`
+                    );
+                  }
+                }}
+              />
+            </View>
+
+            {selectedCurrencyValue === '__custom__' ? (
+              <View style={{ gap: ui.space(6) }}>
+                <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                  Custom Currency Symbol
+                </Text>
+                <TextInput
+                  editable={canEdit}
+                  style={[
+                    styles.input,
+                    { minHeight: ui.controlHeight, fontSize: ui.font(14) },
+                  ]}
+                  value={currencySymbol}
+                  maxLength={6}
+                  onChangeText={setCurrencySymbol}
+                  placeholder="e.g. KES, EUR, €"
+                  placeholderTextColor={FARMDB_COLORS.textMuted}
+                />
+              </View>
+            ) : null}
+
+            <View style={{ gap: ui.space(6) }}>
+              <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                Milk Rate ({currencySymbol || '$'}/L)
+              </Text>
+              <MobileNumberStepper
+                accessibilityLabel="Milk Rate"
+                min={0}
+                step={currencySymbol === 'UGX' ? 100 : 0.05}
+                decimals={currencySymbol === 'UGX' ? 0 : 2}
+                value={rateText}
+                onChangeText={setRateText}
+                placeholder="0.65"
+              />
+            </View>
+
+            <MobileIntervalControl
+              label="Background Alert Check Interval (15–3600s)"
+              accessibilityLabel="Background Alert Check Interval"
+              min={15}
+              max={3600}
+              step={5}
+              value={intervalText}
+              onChangeText={setIntervalText}
+              presets={INTERVAL_PRESETS}
+            />
+
+            <MobileIntervalControl
+              label="Alert Before Worker Payment Due (0–30 days)"
+              accessibilityLabel="Payment Alert Lead Days"
               min={0}
-              step={currencySymbol === 'UGX' ? 100 : 0.05}
-              decimals={currencySymbol === 'UGX' ? 0 : 2}
-              value={rateText}
-              onChangeText={setRateText}
-              placeholder="0.65"
+              max={30}
+              step={1}
+              value={leadDaysText}
+              onChangeText={setLeadDaysText}
+              presets={LEAD_DAYS_PRESETS}
             />
           </View>
-
-          <MobileIntervalControl
-            label="Background Alert Check Interval (15–3600s)"
-            accessibilityLabel="Background Alert Check Interval"
-            min={15}
-            max={3600}
-            step={5}
-            value={intervalText}
-            onChangeText={setIntervalText}
-            presets={INTERVAL_PRESETS}
-          />
-
-          <MobileIntervalControl
-            label="Alert Before Worker Payment Due (0–30 days)"
-            accessibilityLabel="Payment Alert Lead Days"
-            min={0}
-            max={30}
-            step={1}
-            value={leadDaysText}
-            onChangeText={setLeadDaysText}
-            presets={LEAD_DAYS_PRESETS}
-          />
 
           <View style={styles.saveBar}>
             <Text style={[styles.subHeading, { fontSize: ui.font(12) }]}>
@@ -922,22 +1057,24 @@ export function SettingsView({
                 currencySymbol || '$'
               )}
             </Text>
-            <Pressable
-              style={[
-                styles.primaryBtn,
-                {
-                  minHeight: ui.controlHeight,
-                  paddingHorizontal: ui.space(16),
-                  borderRadius: Math.max(10, ui.radius - 2),
-                },
-              ]}
-              onPress={() => void handleSaveProfile()}
-              disabled={updateMutation.isPending}
-            >
-              <Text style={[styles.primaryBtnText, { fontSize: ui.font(14) }]}>
-                {updateMutation.isPending ? 'Saving...' : 'Save Profile'}
-              </Text>
-            </Pressable>
+            {canEdit ? (
+              <Pressable
+                style={[
+                  styles.primaryBtn,
+                  {
+                    minHeight: ui.controlHeight,
+                    paddingHorizontal: ui.space(16),
+                    borderRadius: Math.max(10, ui.radius - 2),
+                  },
+                ]}
+                onPress={() => void handleSaveProfile()}
+                disabled={updateMutation.isPending}
+              >
+                <Text style={[styles.primaryBtnText, { fontSize: ui.font(14) }]}>
+                  {updateMutation.isPending ? 'Saving...' : 'Save Profile'}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
 
@@ -957,6 +1094,7 @@ export function SettingsView({
             </View>
             <Switch
               value={settings.autoRecordMilkSaleByDefault}
+              disabled={!canEdit}
               onValueChange={(v) =>
                 void patchSetting(
                   { autoRecordMilkSaleByDefault: v },
@@ -981,6 +1119,7 @@ export function SettingsView({
             </View>
             <Switch
               value={settings.autoRecordMedicalExpenseByDefault}
+              disabled={!canEdit}
               onValueChange={(v) =>
                 void patchSetting(
                   { autoRecordMedicalExpenseByDefault: v },
@@ -1005,6 +1144,7 @@ export function SettingsView({
             </View>
             <Switch
               value={settings.autoRecordPayrollExpenseByDefault}
+              disabled={!canEdit}
               onValueChange={(v) =>
                 void patchSetting(
                   { autoRecordPayrollExpenseByDefault: v },
@@ -1029,6 +1169,7 @@ export function SettingsView({
             </View>
             <Switch
               value={settings.enableNotifications}
+              disabled={!canEdit}
               onValueChange={(v) =>
                 void patchSetting(
                   { enableNotifications: v },
@@ -1055,6 +1196,7 @@ export function SettingsView({
             </View>
             <Switch
               value={settings.confirmBeforeDelete}
+              disabled={!canEdit}
               onValueChange={(v) =>
                 void patchSetting(
                   { confirmBeforeDelete: v },
@@ -1078,64 +1220,167 @@ export function SettingsView({
             >
               Stored locally in SQLite farm_settings
             </Text>
-            {confirmReset ? (
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <Pressable
-                  style={[
-                    styles.dangerBtn,
-                    {
-                      minHeight: ui.chipHeight,
-                      paddingHorizontal: ui.space(10),
-                      borderRadius: Math.max(8, ui.radius - 4),
-                    },
-                  ]}
-                  onPress={() => void handleReset()}
-                  disabled={resetMutation.isPending}
-                >
-                  <Text
-                    style={[styles.dangerBtnText, { fontSize: ui.font(12) }]}
+            {canDelete ? (
+              confirmReset ? (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Pressable
+                    style={[
+                      styles.dangerBtn,
+                      {
+                        minHeight: ui.chipHeight,
+                        paddingHorizontal: ui.space(10),
+                        borderRadius: Math.max(8, ui.radius - 4),
+                      },
+                    ]}
+                    onPress={() => void handleReset()}
+                    disabled={resetMutation.isPending}
                   >
-                    Confirm
-                  </Text>
-                </Pressable>
+                    <Text
+                      style={[styles.dangerBtnText, { fontSize: ui.font(12) }]}
+                    >
+                      Confirm
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.secondaryBtn,
+                      {
+                        minHeight: ui.chipHeight,
+                        paddingHorizontal: ui.space(10),
+                        borderRadius: Math.max(8, ui.radius - 4),
+                      },
+                    ]}
+                    onPress={() => setConfirmReset(false)}
+                  >
+                    <Text
+                      style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}
+                    >
+                      Cancel
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
                 <Pressable
                   style={[
                     styles.secondaryBtn,
                     {
                       minHeight: ui.chipHeight,
-                      paddingHorizontal: ui.space(10),
+                      paddingHorizontal: ui.space(12),
                       borderRadius: Math.max(8, ui.radius - 4),
                     },
                   ]}
-                  onPress={() => setConfirmReset(false)}
+                  onPress={() => setConfirmReset(true)}
                 >
                   <Text
                     style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}
                   >
-                    Cancel
+                    Reset Defaults
                   </Text>
                 </Pressable>
-              </View>
+              )
             ) : (
-              <Pressable
-                style={[
-                  styles.secondaryBtn,
-                  {
-                    minHeight: ui.chipHeight,
-                    paddingHorizontal: ui.space(12),
-                    borderRadius: Math.max(8, ui.radius - 4),
-                  },
-                ]}
-                onPress={() => setConfirmReset(true)}
-              >
-                <Text
-                  style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}
-                >
-                  Reset Defaults
-                </Text>
-              </Pressable>
+              <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                Full privilege required
+              </Text>
             )}
           </View>
+        </View>
+          </>
+        ) : (
+          <>
+        <View style={cardStyle}>
+          <View style={[styles.saveBar, { alignItems: 'center' }]}>
+            <View style={[styles.sectionTitleRow, { flex: 1 }]}>
+              <AppIcon name="database" size={ui.font(18)} />
+              <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+                Native SQLite Database Storage &amp; Read-Only Protection
+              </Text>
+            </View>
+            {Platform.OS !== 'web' && storageInfo ? (
+              <View style={styles.previewStatus}>
+                <Text style={[styles.previewStatusText, { fontSize: ui.font(11) }]}>
+                  {storageInfo.readOnlyProtection ? 'Read-Only Outside App Active' : 'Unlocked'}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          {Platform.OS === 'web' ? (
+            <Text style={[styles.subHeading, { fontSize: ui.font(12) }]}>
+              Web preview uses browser runtime storage. On iOS/Android native builds, the SQLite database sits in private app sandbox storage and is protected with PRAGMA query_only + a verified shadow copy.
+            </Text>
+          ) : (
+            <>
+              <View style={{ gap: 4 }}>
+                <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                  Active SQLite Storage Path
+                </Text>
+                <Text
+                  selectable
+                  style={[
+                    styles.sqlBox,
+                    { fontSize: ui.font(11), padding: ui.space(9) },
+                  ]}
+                >
+                  {storageInfo?.dbPath ?? sqlController?.getDatabasePath() ?? 'Loading...'}
+                </Text>
+                {storageInfo ? (
+                  <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                    Size: {(storageInfo.fileSizeBytes / 1024).toFixed(1)} KB
+                    {storageInfo.isProtectedCopyAvailable
+                      ? ' · Verified shadow copy active'
+                      : ''}
+                  </Text>
+                ) : null}
+              </View>
+
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={[styles.switchLabel, { fontSize: ui.font(13) }]}>
+                    Read-Only SQLite Protection
+                  </Text>
+                  <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                    Keeps native SQLite in PRAGMA query_only between verified app writes and maintains a verified copy to guard against tampering.
+                  </Text>
+                </View>
+                <Switch
+                  value={storageInfo?.readOnlyProtection ?? true}
+                  disabled={storageBusy || !sqlController || !(isAdmin || canDelete)}
+                  onValueChange={(v) => void handleToggleReadOnlyProtection(v)}
+                  trackColor={{
+                    false: FARMDB_COLORS.border,
+                    true: FARMDB_COLORS.accent,
+                  }}
+                />
+              </View>
+
+              {storageFeedback ? (
+                <View
+                  style={[
+                    styles.feedbackBanner,
+                    storageFeedback.kind === 'err' && styles.feedbackBannerErr,
+                    { padding: ui.space(10), borderRadius: ui.radius },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.feedbackText,
+                      storageFeedback.kind === 'err' && styles.feedbackTextErr,
+                      { fontSize: ui.font(12) },
+                    ]}
+                  >
+                    {storageFeedback.text}
+                  </Text>
+                </View>
+              ) : null}
+
+              {!(isAdmin || canDelete) ? (
+                <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
+                  Admin or Full Settings access required to change database lock protection.
+                </Text>
+              ) : null}
+            </>
+          )}
         </View>
 
         {/* Cloud Sync & Supabase Database Settings (Admin only) */}
@@ -1153,6 +1398,26 @@ export function SettingsView({
           <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
             Connect your local SQLite database to a Supabase cloud project for cross-device and Farm Network sync.
           </Text>
+
+          {cloudFeedback ? (
+            <View
+              style={[
+                styles.feedbackBanner,
+                cloudFeedback.kind === 'err' && styles.feedbackBannerErr,
+                { padding: ui.space(10), borderRadius: ui.radius },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.feedbackText,
+                  cloudFeedback.kind === 'err' && styles.feedbackTextErr,
+                  { fontSize: ui.font(12) },
+                ]}
+              >
+                {cloudFeedback.text}
+              </Text>
+            </View>
+          ) : null}
 
           <View style={styles.syncActionRow}>
             <Pressable
@@ -1358,7 +1623,7 @@ export function SettingsView({
                 Save Cloud Settings
               </Text>
             </Pressable>
-            {onOpenAuthPortal ? (
+            {onSignOut ? (
               <Pressable
                 style={[
                   styles.secondaryBtn,
@@ -1371,12 +1636,12 @@ export function SettingsView({
                     paddingVertical: ui.space(6),
                   },
                 ]}
-                onPress={onOpenAuthPortal}
+                onPress={onSignOut}
               >
                 <Text
                   style={[styles.secondaryBtnText, { fontSize: ui.font(12), textAlign: 'center' }]}
                 >
-                  Login / Join Key
+                  Sign Out
                 </Text>
               </Pressable>
             ) : null}
@@ -1389,7 +1654,24 @@ export function SettingsView({
             {generateSupabaseSetupSql()}
           </Text>
         </View>
-        ) : null}
+        ) : (
+        <View style={cardStyle}>
+          <View style={styles.sectionTitleRow}>
+            <AppIcon
+              name={settings.supabaseUrl ? 'cloudHosting' : 'cloudOffline'}
+              size={ui.font(18)}
+            />
+            <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+              Cloud Sync &amp; Supabase Database
+            </Text>
+          </View>
+          <Text style={[styles.subHeading, { fontSize: ui.font(12) }]}>
+            {activeAccount?.canSyncCloud
+              ? 'Linked to the Farm Admin cloud database via Network Join Key.'
+              : 'Using local SQLite storage only. Join an Admin network on the Farm Network page to connect to a cloud database.'}
+          </Text>
+        </View>
+        )}
           </>
         )}
       </FarmScrollView>
@@ -1465,7 +1747,7 @@ const styles = StyleSheet.create({
   },
   segmentBtnActive: {
     backgroundColor: FARMDB_COLORS.surface,
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: FARMDB_COLORS.accent,
   },
   segmentText: {

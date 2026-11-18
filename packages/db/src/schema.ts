@@ -6,6 +6,7 @@ export const livestock = sqliteTable(
   {
     id: text('id').primaryKey(),
     species: text('species').notNull().default('cow'),
+    sex: text('sex').notNull().default('female'),
     tagNumber: text('tag_number').notNull().unique(),
     name: text('name'),
     breed: text('breed'),
@@ -19,6 +20,7 @@ export const livestock = sqliteTable(
   },
   (table) => [
     index('idx_livestock_species').on(table.species),
+    index('idx_livestock_sex').on(table.sex),
     index('idx_livestock_status').on(table.status),
     index('idx_livestock_sire_id').on(table.sireId),
     index('idx_livestock_dam_id').on(table.damId),
@@ -217,6 +219,9 @@ export const farmAccounts = sqliteTable(
     relationship: text('relationship'),
     avatarKey: text('avatar_key').notNull().default('farmer'),
     accessCode: text('access_code'),
+    supabaseUrl: text('supabase_url'),
+    supabaseAnonKey: text('supabase_anon_key'),
+    cloudWorkspaceId: text('cloud_workspace_id'),
     isPrimaryAdmin: integer('is_primary_admin', { mode: 'boolean' })
       .notNull()
       .default(false),

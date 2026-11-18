@@ -1,10 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import Svg, { Circle, Path } from 'react-native-svg';
 import {
   analyzeBreedingPair,
   buildAnimalPedigree,
   buildHerdLineageOverview,
+  describeModuleAccessLevel,
   formatAnimalAge,
+  formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
   formatVolume,
@@ -12,11 +15,12 @@ import {
   SPECIES_LIST,
   type LineageAnimalNode,
   type Livestock,
+  type PedigreeTree,
   type Species,
 } from '@farmdb/core';
 import {
-  useCreateLivestock,
   useLivestockList,
+  useModulePermissions,
   useProductRecordList,
   useUpdateLivestock,
 } from '@farmdb/db';
@@ -24,7 +28,7 @@ import { getSpeciesPngSource, MOBILE_APP_ICONS } from '../assets/icons';
 import { FARMDB_COLORS, FARMDB_FONTS, useUiScale } from '../theme/uiScale';
 import { buildAnimalDropdownOption } from '../utils/animalOptions';
 import { AnimalEyeButton } from './AnimalQuickPreviewModal';
-import { AppIcon, SpeciesIcon, StatusIcon } from './FarmIcons';
+import { AppIcon, SexIcon, SpeciesIcon, StatusIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { MobileFileTabs } from './MobileFileTabs';
 import {
@@ -33,6 +37,130 @@ import {
 } from './ModernDropdown';
 
 type MobileTreeTab = 'pedigree' | 'dynasties' | 'kinship';
+type MobilePedigreeMode = 'pedigree' | 'graph';
+
+function buildMobileSimplifiedGraph(pedigree: PedigreeTree, fontMult = 1) {
+  const nodeW = Math.round(196 * fontMult);
+  const nodeH = Math.round(96 * fontMult);
+  const colGap = Math.round(48 * fontMult);
+  const rowGap = Math.round(20 * fontMult);
+  const padX = 18;
+  const headerH = Math.round(38 * fontMult);
+  const padBottom = 18;
+
+  type ColItem = { node: LineageAnimalNode; roleLabel: string; isFocal: boolean };
+  type ColSpec = { key: string; genTag: string; title: string; items: ColItem[] };
+  const cols: ColSpec[] = [];
+
+  const gp: ColItem[] = [];
+  if (pedigree.paternalGrandsire) gp.push({ node: pedigree.paternalGrandsire, roleLabel: 'Pat. Grandsire', isFocal: false });
+  if (pedigree.paternalGranddam) gp.push({ node: pedigree.paternalGranddam, roleLabel: 'Pat. Granddam', isFocal: false });
+  if (pedigree.maternalGrandsire) gp.push({ node: pedigree.maternalGrandsire, roleLabel: 'Mat. Grandsire', isFocal: false });
+  if (pedigree.maternalGranddam) gp.push({ node: pedigree.maternalGranddam, roleLabel: 'Mat. Granddam', isFocal: false });
+  if (gp.length > 0) cols.push({ key: 'gen-2', genTag: 'Gen −2', title: 'Grandparents', items: gp });
+
+  const parents: ColItem[] = [];
+  if (pedigree.sire) parents.push({ node: pedigree.sire, roleLabel: 'Sire', isFocal: false });
+  if (pedigree.dam) parents.push({ node: pedigree.dam, roleLabel: 'Dam', isFocal: false });
+  if (parents.length > 0) cols.push({ key: 'gen-1', genTag: 'Gen −1', title: 'Parents', items: parents });
+
+  cols.push({
+    key: 'gen-0',
+    genTag: 'Gen 0',
+    title: 'Selected',
+    items: [{ node: pedigree.focal, roleLabel: 'Selected', isFocal: true }],
+  });
+
+  if (pedigree.directOffspring.length > 0) {
+    cols.push({
+      key: 'gen+1',
+      genTag: 'Gen +1',
+      title: 'Offspring',
+      items: pedigree.directOffspring.map((child) => ({
+        node: child,
+        roleLabel: child.sireId === pedigree.focal.animal.id ? 'Offspring (S)' : 'Offspring (D)',
+        isFocal: false,
+      })),
+    });
+  }
+
+  if (pedigree.grandOffspring.length > 0) {
+    const seen = new Set<string>();
+    const gcList: ColItem[] = [];
+    for (const gc of pedigree.grandOffspring) {
+      if (!seen.has(gc.animal.animal.id)) {
+        seen.add(gc.animal.animal.id);
+        gcList.push({ node: gc.animal, roleLabel: 'Grand-Off.', isFocal: false });
+      }
+    }
+    if (gcList.length > 0) {
+      cols.push({ key: 'gen+2', genTag: 'Gen +2', title: 'Grand-Off.', items: gcList });
+    }
+  }
+
+  const maxRows = Math.max(1, ...cols.map((c) => c.items.length));
+  const width = Math.max(
+    360,
+    padX * 2 + cols.length * nodeW + Math.max(0, cols.length - 1) * colGap
+  );
+  const contentH = maxRows * nodeH + Math.max(0, maxRows - 1) * rowGap;
+  const height = Math.max(240, headerH + contentH + padBottom);
+
+  const columns: Array<{ key: string; genTag: string; title: string; x: number; width: number }> = [];
+  const nodes: Array<ColItem & { key: string; x: number; y: number }> = [];
+  const byId = new Map<string, { x: number; y: number }>();
+
+  cols.forEach((col, colIdx) => {
+    const colH = col.items.length * nodeH + Math.max(0, col.items.length - 1) * rowGap;
+    const availH = height - headerH - padBottom;
+    const startY = headerH + Math.max(0, Math.round((availH - colH) / 2));
+    const x = padX + colIdx * (nodeW + colGap);
+    columns.push({
+      key: col.key,
+      genTag: col.genTag,
+      title: col.title,
+      x,
+      width: nodeW,
+    });
+    col.items.forEach((item, rowIdx) => {
+      const y = startY + rowIdx * (nodeH + rowGap);
+      nodes.push({ ...item, key: `${colIdx}-${item.node.animal.id}-${rowIdx}`, x, y });
+      if (!byId.has(item.node.animal.id)) {
+        byId.set(item.node.animal.id, { x, y });
+      }
+    });
+  });
+
+  const edges: Array<{ key: string; fromX: number; fromY: number; toX: number; toY: number; tone: 'sire' | 'dam' | 'offspring' }> = [];
+  const seenEdges = new Set<string>();
+  const addEdge = (parentId: string | null | undefined, child: typeof nodes[number], tone: 'sire' | 'dam' | 'offspring') => {
+    if (!parentId) return;
+    const p = byId.get(parentId);
+    if (!p || p.x >= child.x) return;
+    const k = `${parentId}->${child.node.animal.id}-${tone}`;
+    if (seenEdges.has(k)) return;
+    seenEdges.add(k);
+    edges.push({
+      key: k,
+      fromX: p.x + nodeW,
+      fromY: p.y + Math.round(nodeH / 2),
+      toX: child.x,
+      toY: child.y + Math.round(nodeH / 2),
+      tone,
+    });
+  };
+
+  for (const n of nodes) {
+    const { animal, sireId, damId } = n.node;
+    const isDesc =
+      animal.id !== pedigree.focal.animal.id &&
+      (sireId === pedigree.focal.animal.id || damId === pedigree.focal.animal.id);
+    addEdge(sireId, n, isDesc ? 'offspring' : 'sire');
+    addEdge(damId, n, isDesc ? 'offspring' : 'dam');
+  }
+
+  return { columns, nodes, edges, width, height, nodeW, nodeH };
+}
 
 interface FamilyTreeViewProps {
   initialAnimalId?: string | null;
@@ -46,14 +174,15 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
   const ui = useUiScale();
   const livestockQuery = useLivestockList({});
   const productQuery = useProductRecordList({});
-  const createMutation = useCreateLivestock();
   const updateMutation = useUpdateLivestock();
+  const { canEdit, accessLevel } = useModulePermissions('family_tree');
 
   const allLivestock = livestockQuery.data ?? [];
   const allProducts = productQuery.data ?? [];
 
   const [speciesFilter, setSpeciesFilter] = useState<Species | 'all'>('all');
   const [subTab, setSubTab] = useState<MobileTreeTab>('pedigree');
+  const [pedigreeDisplayMode, setPedigreeDisplayMode] = useState<MobilePedigreeMode>('pedigree');
   const [focalId, setFocalId] = useState<string>('');
   const [trailIds, setTrailIds] = useState<string[]>([]);
   const [showLinkEditor, setShowLinkEditor] = useState(false);
@@ -122,6 +251,11 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
     () =>
       focalId ? buildAnimalPedigree(focalId, allLivestock, allProducts) : null,
     [focalId, allLivestock, allProducts]
+  );
+
+  const mobileGraph = useMemo(
+    () => (pedigree ? buildMobileSimplifiedGraph(pedigree, ui.fontMult) : null),
+    [pedigree, ui.fontMult]
   );
 
   useEffect(() => {
@@ -231,7 +365,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
   );
 
   async function handleSaveParents() {
-    if (!pedigree) return;
+    if (!pedigree || !canEdit) return;
     setLinkErrorMsg(null);
     setLinkStatusMsg(null);
     try {
@@ -248,104 +382,6 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
         err instanceof Error ? err.message : 'Unable to save parent links.'
       );
     }
-  }
-
-  async function handleSeedSampleLineage() {
-    setLinkErrorMsg(null);
-    setLinkStatusMsg(null);
-    const existingByTag = new Map(allLivestock.map((a) => [a.tagNumber, a]));
-
-    async function ensureAnimal(spec: {
-      tagNumber: string;
-      name: string;
-      breed: string;
-      dob: string;
-      sireTag?: string;
-      damTag?: string;
-    }): Promise<Livestock> {
-      const existing = existingByTag.get(spec.tagNumber);
-      const targetSireId = spec.sireTag
-        ? (existingByTag.get(spec.sireTag)?.id ?? null)
-        : null;
-      const targetDamId = spec.damTag
-        ? (existingByTag.get(spec.damTag)?.id ?? null)
-        : null;
-
-      if (existing) {
-        if ((!existing.sireId && targetSireId) || (!existing.damId && targetDamId)) {
-          const updated = await updateMutation.mutateAsync({
-            id: existing.id,
-            input: {
-              sireId: existing.sireId ?? targetSireId,
-              damId: existing.damId ?? targetDamId,
-            },
-          });
-          existingByTag.set(updated.tagNumber, updated);
-          return updated;
-        }
-        return existing;
-      }
-
-      const created = await createMutation.mutateAsync({
-        species: 'cow',
-        tagNumber: spec.tagNumber,
-        name: spec.name,
-        breed: spec.breed,
-        dob: spec.dob,
-        status: 'active',
-        sireId: targetSireId,
-        damId: targetDamId,
-      });
-      existingByTag.set(created.tagNumber, created);
-      return created;
-    }
-
-    await ensureAnimal({
-      tagNumber: 'BULL-101',
-      name: 'Titan',
-      breed: 'Holstein',
-      dob: '2019-04-10',
-    });
-    await ensureAnimal({
-      tagNumber: 'COW-318',
-      name: 'Willow',
-      breed: 'Ayrshire',
-      dob: '2020-03-18',
-    });
-    await ensureAnimal({
-      tagNumber: 'BULL-108',
-      name: 'Orion',
-      breed: 'Jersey',
-      dob: '2020-07-12',
-    });
-    const bessie = await ensureAnimal({
-      tagNumber: 'COW-402',
-      name: 'Bessie',
-      breed: 'Holstein',
-      dob: '2022-03-14',
-      sireTag: 'BULL-101',
-      damTag: 'COW-318',
-    });
-    await ensureAnimal({
-      tagNumber: 'COW-409',
-      name: 'Daisy',
-      breed: 'Jersey',
-      dob: '2022-09-02',
-      sireTag: 'BULL-108',
-      damTag: 'COW-318',
-    });
-    await ensureAnimal({
-      tagNumber: 'COW-512',
-      name: 'Clover',
-      breed: 'Holstein',
-      dob: '2024-06-21',
-      sireTag: 'BULL-108',
-      damTag: 'COW-402',
-    });
-
-    setFocalId(bessie.id);
-    setSubTab('pedigree');
-    setLinkStatusMsg('Linked 3-generation sample family tree.');
   }
 
   function renderCompactNodeCard(
@@ -405,7 +441,11 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                   { width: compact ? 26 : 34, height: compact ? 26 : 34 },
                 ]}
               >
-                <SpeciesIcon species={node.animal.species} size={compact ? 15 : 20} />
+                <SpeciesIcon
+                  species={node.animal.species}
+                  sex={node.animal.sex}
+                  size={compact ? 15 : 20}
+                />
               </View>
             )
           ) : null}
@@ -415,7 +455,10 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
               <Text style={[styles.nodeTag, { fontSize: ui.font(10), flexShrink: 1 }]} numberOfLines={2}>
                 {node.animal.tagNumber}
               </Text>
-              <AnimalEyeButton livestockId={node.animal.id} size={ui.font(compact ? 11 : 12)} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <SexIcon sex={node.animal.sex} size={ui.font(compact ? 11 : 12)} />
+                <AnimalEyeButton livestockId={node.animal.id} size={ui.font(compact ? 11 : 12)} />
+              </View>
             </View>
             <Text style={[styles.nodeName, { fontSize: ui.font(compact ? 12 : 13) }]} numberOfLines={2}>
               {getAnimalTitle(node.animal)}
@@ -425,7 +468,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
 
         {!compact ? (
           <Text style={[styles.nodeSub, { fontSize: ui.font(10) }]} numberOfLines={2}>
-            {node.animal.breed ?? formatSpeciesLabel(node.animal.species)} ·{' '}
+            {node.animal.breed ?? formatSpeciesLabel(node.animal.species, node.animal.sex)} ·{' '}
             {formatAnimalAge(node.animal.dob)}
           </Text>
         ) : null}
@@ -464,8 +507,20 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
             <Text style={[styles.heroTitle, { fontSize: ui.font(17) }]}>
               Herd Family Tree
             </Text>
+            {!canEdit ? (
+              <Text
+                style={{
+                  fontFamily: FARMDB_FONTS.semibold,
+                  color: FARMDB_COLORS.textMuted,
+                  fontSize: ui.font(11),
+                  marginTop: 2,
+                }}
+              >
+                {describeModuleAccessLevel(accessLevel)}
+              </Text>
+            ) : null}
           </View>
-          {pedigree ? (
+          {pedigree && canEdit ? (
             <Pressable
               style={[
                 styles.heroEditBtn,
@@ -553,24 +608,6 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
             </Text>
           </View>
         </View>
-
-        {overview.parentChildBondsCount === 0 ? (
-          <Pressable
-            style={[
-              styles.sampleBannerBtn,
-              { minHeight: ui.chipHeight, marginTop: ui.space(10), paddingVertical: ui.space(6) },
-            ]}
-            onPress={() => void handleSeedSampleLineage()}
-            disabled={createMutation.isPending || updateMutation.isPending}
-          >
-            <AppIcon name="tree" size={ui.font(15)} />
-            <Text style={[styles.sampleBannerBtnText, { fontSize: ui.font(12), flexShrink: 1, textAlign: 'center' }]}>
-              {allLivestock.length === 0
-                ? 'Load 3-Generation Sample Herd'
-                : 'Link Sample 3-Generation Family Tree'}
-            </Text>
-          </Pressable>
-        ) : null}
       </View>
 
       {/* Filter & Sub-view Tabs */}
@@ -653,7 +690,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
               </FarmScrollView>
             ) : null}
 
-            {showLinkEditor ? (
+            {showLinkEditor && canEdit ? (
               <View
                 style={[
                   styles.editorCard,
@@ -714,7 +751,228 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
               </View>
             ) : null}
 
-            {/* Visual Vertical Branching Tree Canvas */}
+            {/* Pedigree Tree vs Simplified Graph Mode Toggle */}
+            <View
+              style={{
+                flexDirection: 'row',
+                backgroundColor: FARMDB_COLORS.surfaceMuted,
+                borderWidth: 1,
+                borderColor: FARMDB_COLORS.border,
+                borderRadius: 10,
+                padding: 3,
+                gap: 4,
+              }}
+            >
+              {(
+                [
+                  { id: 'pedigree', label: 'Pedigree Tree' },
+                  { id: 'graph', label: 'Simplified Graph' },
+                ] as const
+              ).map((opt) => {
+                const active = pedigreeDisplayMode === opt.id;
+                return (
+                  <Pressable
+                    key={opt.id}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      alignItems: 'center',
+                      backgroundColor: active ? FARMDB_COLORS.surface : 'transparent',
+                      borderWidth: active ? 2 : 1,
+                      borderColor: active ? FARMDB_COLORS.accent : 'transparent',
+                    }}
+                    onPress={() => setPedigreeDisplayMode(opt.id)}
+                  >
+                    <Text
+                      style={{
+                        fontFamily: active ? FARMDB_FONTS.bold : FARMDB_FONTS.semibold,
+                        fontSize: ui.font(12),
+                        color: active ? FARMDB_COLORS.accent : FARMDB_COLORS.textMuted,
+                      }}
+                    >
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {pedigreeDisplayMode === 'graph' && mobileGraph ? (
+              <View
+                style={[
+                  styles.treeCanvas,
+                  { padding: ui.space(10), borderRadius: ui.radius, gap: ui.space(8) },
+                ]}
+              >
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingHorizontal: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <View style={{ width: 9, height: 9, borderRadius: 99, backgroundColor: '#2d6a4f' }} />
+                    <Text style={{ fontFamily: FARMDB_FONTS.semibold, fontSize: ui.font(10.5), color: FARMDB_COLORS.text }}>
+                      Paternal
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <View style={{ width: 9, height: 9, borderRadius: 99, backgroundColor: '#9c6644' }} />
+                    <Text style={{ fontFamily: FARMDB_FONTS.semibold, fontSize: ui.font(10.5), color: FARMDB_COLORS.text }}>
+                      Maternal
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <View style={{ width: 9, height: 9, borderRadius: 99, backgroundColor: '#1b4332' }} />
+                    <Text style={{ fontFamily: FARMDB_FONTS.semibold, fontSize: ui.font(10.5), color: FARMDB_COLORS.text }}>
+                      Offspring
+                    </Text>
+                  </View>
+                </View>
+
+                <FarmScrollView horizontal fillParent={false}>
+                  <View
+                    style={{
+                      width: mobileGraph.width,
+                      height: mobileGraph.height,
+                      position: 'relative',
+                    }}
+                  >
+                    <Svg
+                      width={mobileGraph.width}
+                      height={mobileGraph.height}
+                      style={{ position: 'absolute', left: 0, top: 0 }}
+                    >
+                      {mobileGraph.edges.map((edge) => {
+                        const midX = Math.round((edge.fromX + edge.toX) / 2);
+                        const d = `M ${edge.fromX} ${edge.fromY} C ${midX} ${edge.fromY}, ${midX} ${edge.toY}, ${edge.toX} ${edge.toY}`;
+                        const stroke =
+                          edge.tone === 'offspring'
+                            ? '#1b4332'
+                            : edge.tone === 'sire'
+                              ? '#2d6a4f'
+                              : '#9c6644';
+                        return (
+                          <React.Fragment key={edge.key}>
+                            <Path d={d} fill="none" stroke={stroke} strokeWidth={2.2} />
+                            <Circle cx={edge.toX} cy={edge.toY} r={3.5} fill={stroke} />
+                          </React.Fragment>
+                        );
+                      })}
+                    </Svg>
+
+                    {mobileGraph.columns.map((col) => (
+                      <View
+                        key={col.key}
+                        style={{
+                          position: 'absolute',
+                          top: 2,
+                          left: col.x,
+                          width: col.width,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                          borderRadius: 999,
+                          backgroundColor: col.key === 'gen-0' ? '#e1efe7' : '#efece3',
+                          borderWidth: 1,
+                          borderColor: col.key === 'gen-0' ? 'rgba(45,106,79,0.45)' : FARMDB_COLORS.border,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontFamily: FARMDB_FONTS.bold,
+                            fontSize: ui.font(9.5),
+                            color: col.key === 'gen-0' ? FARMDB_COLORS.accent : FARMDB_COLORS.textMuted,
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {col.genTag}
+                        </Text>
+                        <Text
+                          style={{
+                            fontFamily: FARMDB_FONTS.semibold,
+                            fontSize: ui.font(9.5),
+                            color: col.key === 'gen-0' ? FARMDB_COLORS.accent : FARMDB_COLORS.textMuted,
+                            flexShrink: 1,
+                          }}
+                          numberOfLines={1}
+                        >
+                          {col.title}
+                        </Text>
+                      </View>
+                    ))}
+
+                    {mobileGraph.nodes.map((entry) => (
+                      <Pressable
+                        key={entry.key}
+                        style={{
+                          position: 'absolute',
+                          left: entry.x,
+                          top: entry.y,
+                          width: mobileGraph.nodeW,
+                          minHeight: mobileGraph.nodeH,
+                          borderRadius: 11,
+                          padding: ui.space(8),
+                          justifyContent: 'space-between',
+                          gap: 5,
+                          backgroundColor: entry.isFocal ? '#eaf6ef' : FARMDB_COLORS.surface,
+                          borderWidth: entry.isFocal ? 2.5 : 1.5,
+                          borderColor: entry.isFocal ? FARMDB_COLORS.accent : FARMDB_COLORS.border,
+                        }}
+                        onPress={() => focusAnimal(entry.node.animal.id)}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+                          <Text
+                            style={{
+                              fontFamily: FARMDB_FONTS.bold,
+                              fontSize: ui.font(9.5),
+                              color: FARMDB_COLORS.accent,
+                              textTransform: 'uppercase',
+                              flexShrink: 1,
+                            }}
+                            numberOfLines={1}
+                          >
+                            {entry.roleLabel}
+                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <SexIcon sex={entry.node.animal.sex} size={ui.font(12)} />
+                            <AnimalEyeButton livestockId={entry.node.animal.id} size={ui.font(12)} />
+                          </View>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                          <SpeciesIcon
+                            species={entry.node.animal.species}
+                            sex={entry.node.animal.sex}
+                            size={ui.font(20)}
+                          />
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text
+                              style={{
+                                fontFamily: FARMDB_FONTS.bold,
+                                fontSize: ui.font(12),
+                                color: FARMDB_COLORS.text,
+                              }}
+                              numberOfLines={1}
+                            >
+                              {getAnimalTitle(entry.node.animal)}
+                            </Text>
+                            <Text
+                              style={{
+                                fontFamily: FARMDB_FONTS.regular,
+                                fontSize: ui.font(10),
+                                color: FARMDB_COLORS.textMuted,
+                              }}
+                              numberOfLines={1}
+                            >
+                              {entry.node.animal.tagNumber} · {formatSexLabel(entry.node.animal.sex)}
+                            </Text>
+                          </View>
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
+                </FarmScrollView>
+              </View>
+            ) : (
+            /* Visual Vertical Branching Tree Canvas */
             <View
               style={[
                 styles.treeCanvas,
@@ -792,6 +1050,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                     <View style={styles.focalAvatarEmpty}>
                       <SpeciesIcon
                         species={pedigree.focal.animal.species}
+                        sex={pedigree.focal.animal.sex}
                         size={ui.font(28)}
                       />
                     </View>
@@ -811,7 +1070,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                       {getAnimalTitle(pedigree.focal.animal)}
                     </Text>
                     <Text style={[styles.focalMeta, { fontSize: ui.font(12) }]} numberOfLines={2}>
-                      {formatSpeciesLabel(pedigree.focal.animal.species)}
+                      {formatSpeciesLabel(pedigree.focal.animal.species, pedigree.focal.animal.sex)}
                       {pedigree.focal.animal.breed ? ` · ${pedigree.focal.animal.breed}` : ''} ·{' '}
                       {formatAnimalAge(pedigree.focal.animal.dob)}
                     </Text>
@@ -900,6 +1159,7 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                 </View>
               )}
             </View>
+            )}
 
             {/* Siblings & Co-Parents */}
             <View
@@ -926,7 +1186,11 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                       style={styles.relativeRow}
                       onPress={() => focusAnimal(sib.animal.id)}
                     >
-                      <SpeciesIcon species={sib.animal.species} size={ui.font(18)} />
+                      <SpeciesIcon
+                        species={sib.animal.species}
+                        sex={sib.animal.sex}
+                        size={ui.font(18)}
+                      />
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={[styles.relativeName, { fontSize: ui.font(13) }]} numberOfLines={2}>
                           {sib.animal.tagNumber} · {getAnimalTitle(sib.animal)}
@@ -945,7 +1209,11 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                       style={styles.relativeRow}
                       onPress={() => focusAnimal(entry.animal.animal.id)}
                     >
-                      <SpeciesIcon species={entry.animal.animal.species} size={ui.font(18)} />
+                      <SpeciesIcon
+                        species={entry.animal.animal.species}
+                        sex={entry.animal.animal.sex}
+                        size={ui.font(18)}
+                      />
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={[styles.relativeName, { fontSize: ui.font(13) }]} numberOfLines={2}>
                           {entry.animal.animal.tagNumber} · {getAnimalTitle(entry.animal.animal)}
@@ -965,7 +1233,11 @@ export function FamilyTreeView({ initialAnimalId }: FamilyTreeViewProps) {
                       style={styles.relativeRow}
                       onPress={() => focusAnimal(cp.partner.animal.id)}
                     >
-                      <SpeciesIcon species={cp.partner.animal.species} size={ui.font(18)} />
+                      <SpeciesIcon
+                        species={cp.partner.animal.species}
+                        sex={cp.partner.animal.sex}
+                        size={ui.font(18)}
+                      />
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={[styles.relativeName, { fontSize: ui.font(13) }]} numberOfLines={2}>
                           {cp.partner.animal.tagNumber} · {getAnimalTitle(cp.partner.animal)}
@@ -1248,21 +1520,6 @@ const styles = StyleSheet.create({
     color: FARMDB_COLORS.darkHeader,
     marginTop: 2,
   },
-  sampleBannerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: FARMDB_COLORS.accentSoft,
-    borderWidth: 1,
-    borderColor: '#b7dfc6',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-  },
-  sampleBannerBtnText: {
-    fontFamily: FARMDB_FONTS.bold,
-    color: FARMDB_COLORS.accentHover,
-  },
   dropdownPairRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1439,11 +1696,11 @@ const styles = StyleSheet.create({
   },
   focalCard: {
     backgroundColor: FARMDB_COLORS.surface,
-    borderWidth: 2,
+    borderWidth: 2.5,
     borderColor: FARMDB_COLORS.accent,
     shadowColor: FARMDB_COLORS.accent,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.16,
     shadowRadius: 10,
     elevation: 3,
   },

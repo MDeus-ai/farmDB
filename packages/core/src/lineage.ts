@@ -1,5 +1,10 @@
 import { roundAmount } from './analytics';
-import type { Livestock, ProductRecord, Species } from './types';
+import {
+  inferDefaultLivestockSex,
+  type Livestock,
+  type ProductRecord,
+  type Species,
+} from './types';
 
 export interface LineageAnimalNode {
   animal: Livestock;
@@ -325,10 +330,12 @@ export function getEligibleParentCandidates(
   focalId: string | null,
   candidateRole: 'sire' | 'dam',
   livestock: readonly Livestock[],
-  excludedOtherParentId?: string | null
+  excludedOtherParentId?: string | null,
+  targetSpecies?: Species | null
 ): Livestock[] {
   const index = buildAnimalIndex(livestock, []);
   const focal = focalId ? index.byId.get(focalId) ?? null : null;
+  const effectiveSpecies = targetSpecies ?? focal?.species ?? null;
   const descendants = focalId
     ? collectAllDescendants(focalId, index.childrenByParentId)
     : new Set<string>();
@@ -343,8 +350,16 @@ export function getEligibleParentCandidates(
     if (excludedOtherParentId && candidate.id === excludedOtherParentId) {
       return false;
     }
-    // Keep same species when focal has a known species, unless candidate matches role naturally
-    if (focal && candidate.species !== focal.species) {
+    // Keep same species when focal or selected species is known
+    if (effectiveSpecies && candidate.species !== effectiveSpecies) {
+      return false;
+    }
+    const candidateSex =
+      candidate.sex ?? inferDefaultLivestockSex(candidate.tagNumber);
+    if (candidateRole === 'sire' && candidateSex !== 'male') {
+      return false;
+    }
+    if (candidateRole === 'dam' && candidateSex !== 'female') {
       return false;
     }
     return true;
@@ -853,6 +868,9 @@ export function analyzeBreedingPair(
     };
   }
 
+  const sexA = rawA.sex ?? inferDefaultLivestockSex(rawA.tagNumber);
+  const sexB = rawB.sex ?? inferDefaultLivestockSex(rawB.tagNumber);
+
   const pathsA = collectAncestorPaths(animalAId, index.byId, 4);
   const pathsB = collectAncestorPaths(animalBId, index.byId, 4);
 
@@ -926,6 +944,20 @@ export function analyzeBreedingPair(
     relationshipLabel = 'Distant Shared Lineage';
     riskLevel = 'caution';
     summary = `Low kinship (${relationshipPercent}%), sharing ${sharedAncestors.length} ancestor(s) in older generations.`;
+  }
+
+  if (rawA.species !== rawB.species) {
+    relationshipLabel = 'Different Species (Cannot Breed)';
+    riskLevel = 'high';
+    summary = 'Breeding compatibility requires two animals of the same species.';
+  } else if (sexA === sexB) {
+    if (riskLevel === 'safe') {
+      relationshipLabel = 'Same-Sex Pair (Cannot Breed)';
+      riskLevel = 'high';
+      summary = `No shared ancestors within 4 generations, but both animals are ${sexA}. Select one male (Sire) and one female (Dam) to breed.`;
+    } else {
+      summary = `${summary} Also note: both selected animals are ${sexA} and cannot breed.`;
+    }
   }
 
   return {

@@ -28,6 +28,20 @@ function persistPickedUri(sourceUri: string, tagHint: string): Promise<string> {
   })();
 }
 
+function resolveOptimizedAssetUri(
+  asset: ImagePicker.ImagePickerAsset,
+  tagHint: string
+): Promise<string> {
+  if (asset.base64 && asset.base64.trim().length > 0) {
+    const mime =
+      asset.mimeType && asset.mimeType.startsWith('image/')
+        ? asset.mimeType
+        : 'image/jpeg';
+    return Promise.resolve(`data:${mime};base64,${asset.base64}`);
+  }
+  return persistPickedUri(asset.uri, tagHint);
+}
+
 export async function captureLivestockPhoto(
   tagHint: string
 ): Promise<string | null> {
@@ -44,14 +58,16 @@ export async function captureLivestockPhoto(
     mediaTypes: ['images'],
     allowsEditing: true,
     aspect: [4, 3],
-    quality: 0.85,
+    quality: 0.55,
+    base64: true,
   });
 
-  if (result.canceled || !result.assets[0]?.uri) {
+  const asset = result.assets?.[0];
+  if (result.canceled || !asset?.uri) {
     return null;
   }
 
-  return persistPickedUri(result.assets[0].uri, tagHint);
+  return resolveOptimizedAssetUri(asset, tagHint);
 }
 
 export async function pickLivestockPhotoFromLibrary(
@@ -70,18 +86,20 @@ export async function pickLivestockPhotoFromLibrary(
     mediaTypes: ['images'],
     allowsEditing: true,
     aspect: [4, 3],
-    quality: 0.85,
+    quality: 0.55,
+    base64: true,
   });
 
-  if (result.canceled || !result.assets[0]?.uri) {
+  const asset = result.assets?.[0];
+  if (result.canceled || !asset?.uri) {
     return null;
   }
 
-  return persistPickedUri(result.assets[0].uri, tagHint);
+  return resolveOptimizedAssetUri(asset, tagHint);
 }
 
 export function deleteManagedLivestockPhoto(uri?: string | null): void {
-  if (!uri || Platform.OS === 'web') {
+  if (!uri || Platform.OS === 'web' || uri.startsWith('data:')) {
     return;
   }
   if (!uri.includes(`/${IMAGES_DIR_NAME}/`)) {

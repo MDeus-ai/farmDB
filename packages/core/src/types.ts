@@ -1,6 +1,44 @@
 export const SPECIES_LIST = ['cow', 'goat', 'sheep', 'duck', 'other'] as const;
 export type Species = (typeof SPECIES_LIST)[number];
 
+export const MILK_PRODUCING_SPECIES = ['cow', 'goat', 'sheep'] as const;
+export type MilkProducingSpecies = (typeof MILK_PRODUCING_SPECIES)[number];
+
+export function isMilkProducingSpecies(species: Species): boolean {
+  return (MILK_PRODUCING_SPECIES as readonly string[]).includes(species);
+}
+
+export const LIVESTOCK_SEXES = ['female', 'male'] as const;
+export type LivestockSex = (typeof LIVESTOCK_SEXES)[number];
+
+export function inferDefaultLivestockSex(
+  tagNumber?: string | null,
+  roleHint?: 'sire' | 'dam'
+): LivestockSex {
+  if (roleHint === 'sire') return 'male';
+  if (roleHint === 'dam') return 'female';
+  if (
+    tagNumber &&
+    /\b(BULL|RAM|BUCK|DRAKE|ROOSTER|SIRE|MALE|BOAR|STALLION)\b/i.test(tagNumber)
+  ) {
+    return 'male';
+  }
+  return 'female';
+}
+
+export function formatSexLabel(sex?: LivestockSex | null): string {
+  return sex === 'male' ? 'Male' : 'Female';
+}
+
+export function isFemaleMilkProducingAnimal(
+  animal: Pick<Livestock, 'species'> & { sex?: LivestockSex | null }
+): boolean {
+  return (
+    isMilkProducingSpecies(animal.species) &&
+    (animal.sex ?? 'female') === 'female'
+  );
+}
+
 export const LIVESTOCK_STATUSES = ['active', 'sold', 'deceased'] as const;
 export type LivestockStatus = (typeof LIVESTOCK_STATUSES)[number];
 
@@ -37,6 +75,7 @@ export const EXPENSE_CATEGORIES: readonly FinancialCategory[] = [
 export interface Livestock {
   id: string;
   species: Species;
+  sex: LivestockSex;
   tagNumber: string;
   name: string | null;
   breed: string | null;
@@ -51,6 +90,7 @@ export interface Livestock {
 
 export interface NewLivestockInput {
   species?: Species;
+  sex?: LivestockSex;
   tagNumber: string;
   name?: string | null;
   breed?: string | null;
@@ -63,6 +103,7 @@ export interface NewLivestockInput {
 
 export interface UpdateLivestockInput {
   species?: Species;
+  sex?: LivestockSex;
   tagNumber?: string;
   name?: string | null;
   breed?: string | null;
@@ -76,6 +117,7 @@ export interface UpdateLivestockInput {
 export interface LivestockFilter {
   search?: string;
   species?: Species | 'all';
+  sex?: LivestockSex | 'all';
   status?: LivestockStatus | 'all';
 }
 
@@ -580,6 +622,9 @@ export interface FarmAccount {
   relationship: string | null;
   avatarKey: FarmAccountAvatar;
   accessCode: string | null;
+  supabaseUrl?: string | null;
+  supabaseAnonKey?: string | null;
+  cloudWorkspaceId?: string | null;
   isPrimaryAdmin: boolean;
   canManageNetwork: boolean;
   canSyncCloud: boolean;
@@ -599,6 +644,9 @@ export interface NewFarmAccountInput {
   relationship?: string | null;
   avatarKey?: FarmAccountAvatar;
   accessCode?: string | null;
+  supabaseUrl?: string | null;
+  supabaseAnonKey?: string | null;
+  cloudWorkspaceId?: string | null;
   isPrimaryAdmin?: boolean;
   canManageNetwork?: boolean;
   canSyncCloud?: boolean;
@@ -614,6 +662,9 @@ export interface UpdateFarmAccountInput {
   relationship?: string | null;
   avatarKey?: FarmAccountAvatar;
   accessCode?: string | null;
+  supabaseUrl?: string | null;
+  supabaseAnonKey?: string | null;
+  cloudWorkspaceId?: string | null;
   canManageNetwork?: boolean;
   canSyncCloud?: boolean;
   permissions?: Partial<FarmAccountPermissions>;

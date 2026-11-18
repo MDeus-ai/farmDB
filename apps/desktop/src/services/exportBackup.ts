@@ -150,11 +150,109 @@ export async function pickAndParseJsonSnapshot(): Promise<FarmDbSnapshot | null>
   return parseFarmSnapshotJson(raw);
 }
 
+export interface SqliteStorageInfo {
+  dbPath: string;
+  defaultDbPath: string;
+  storageDir: string;
+  isCustomLocation: boolean;
+  readOnlyProtection: boolean;
+  isFileReadOnly: boolean;
+  fileSizeBytes: number;
+}
+
 export async function getDesktopSqlitePath(): Promise<string | null> {
   if (!isTauriEnvironment()) {
     return null;
   }
   return invoke<string>('get_sqlite_db_path');
+}
+
+export async function getDesktopSqliteStorageInfo(): Promise<SqliteStorageInfo | null> {
+  if (!isTauriEnvironment()) {
+    return null;
+  }
+  return invoke<SqliteStorageInfo>('get_sqlite_storage_info');
+}
+
+export async function setDesktopSqliteReadOnlyProtection(
+  enabled: boolean
+): Promise<SqliteStorageInfo> {
+  if (!isTauriEnvironment()) {
+    throw new Error(
+      'Native SQLite storage protection is available in the Tauri desktop app.'
+    );
+  }
+  return invoke<SqliteStorageInfo>('set_sqlite_readonly_protection', {
+    enabled,
+  });
+}
+
+export async function relocateDesktopSqliteStorage(
+  controller: TauriSqlController
+): Promise<SqliteStorageInfo | null> {
+  if (!isTauriEnvironment()) {
+    throw new Error(
+      'SQLite storage location can be changed in the Tauri desktop app.'
+    );
+  }
+
+  const targetDir = await open({
+    title: 'Choose Folder for Native SQLite Database (farmdb.db)',
+    directory: true,
+    multiple: false,
+  });
+
+  if (!targetDir || typeof targetDir !== 'string') {
+    return null;
+  }
+
+  try {
+    await controller.driver.execute('PRAGMA wal_checkpoint(TRUNCATE);');
+  } catch {
+    // Ignore if database is not using WAL journal mode.
+  }
+
+  await controller.close();
+  try {
+    const info = await invoke<SqliteStorageInfo>('relocate_sqlite_storage', {
+      targetDir,
+    });
+    await controller.reloadAtPath(info.dbPath);
+    await runMigrations(controller.driver);
+    return info;
+  } catch (err) {
+    await controller.reopen();
+    throw err;
+  }
+}
+
+export async function resetDesktopSqliteStorage(
+  controller: TauriSqlController
+): Promise<SqliteStorageInfo> {
+  if (!isTauriEnvironment()) {
+    throw new Error(
+      'SQLite storage location can be changed in the Tauri desktop app.'
+    );
+  }
+
+  try {
+    await controller.driver.execute('PRAGMA wal_checkpoint(TRUNCATE);');
+  } catch {
+    // Ignore if database is not using WAL journal mode.
+  }
+
+  await controller.close();
+  try {
+    const info = await invoke<SqliteStorageInfo>(
+      'reset_sqlite_storage_location'
+    );
+    await controller.reloadAtPath(info.dbPath);
+    await runMigrations(controller.driver);
+    return info;
+  } catch (err) {
+    await controller.reopen();
+    throw err;
+  }
 }
 
 export async function backupDesktopSqliteFile(

@@ -162,7 +162,9 @@ export function createFinancialRepository(
         throw new FinancialLogNotFoundError(id);
       }
 
-      const validation = validateUpdateFinancialLog(input);
+      const validation = validateUpdateFinancialLog(input, {
+        currentTransactionType: existing.transactionType,
+      });
       if (!validation.ok || !validation.data) {
         const msg =
           Object.values(validation.errors).find(Boolean) ??

@@ -22,12 +22,14 @@ import {
   formatVolume,
   getTodayIsoDate,
   getVolumeUnitShortLabel,
+  isFemaleMilkProducingAnimal,
   RECORD_DATE_FILTER_OPTIONS,
   roundAmount,
   validateNewProductRecord,
   type DateSortDirection,
   type NewProductRecordInput,
   type RecordDateFilter,
+  describeModuleAccessLevel,
   type StatisticsTimeframe,
   type ValidationErrors,
 } from '@farmdb/core';
@@ -36,6 +38,7 @@ import {
   useCreateProductRecord,
   useDeleteProductRecord,
   useLivestockList,
+  useModulePermissions,
   useProductRecordList,
 } from '@farmdb/db';
 import { MOBILE_APP_ICONS } from '../assets/icons';
@@ -59,6 +62,7 @@ import {
 export function ProductionView() {
   const ui = useUiScale();
   const { settings } = ui;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('production');
   const iconMode = settings.mobileIconMode;
 
   const livestockQuery = useLivestockList({});
@@ -68,7 +72,10 @@ export function ProductionView() {
 
   const animals = livestockQuery.data ?? [];
   const activeAnimals = useMemo(
-    () => animals.filter((a) => a.status === 'active'),
+    () =>
+      animals.filter(
+        (a) => a.status === 'active' && isFemaleMilkProducingAnimal(a)
+      ),
     [animals]
   );
   const animalsById = useMemo(
@@ -129,8 +136,13 @@ export function ProductionView() {
   const [feedback, setFeedback] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!selectedAnimalId && activeAnimals[0]) {
-      setSelectedAnimalId(activeAnimals[0].id);
+    if (
+      activeAnimals.length > 0 &&
+      (!selectedAnimalId || !activeAnimals.some((a) => a.id === selectedAnimalId))
+    ) {
+      setSelectedAnimalId(activeAnimals[0]!.id);
+    } else if (activeAnimals.length === 0 && selectedAnimalId !== '') {
+      setSelectedAnimalId('');
     }
   }, [activeAnimals, selectedAnimalId]);
 
@@ -196,12 +208,15 @@ export function ProductionView() {
 
   async function handleSubmit() {
     setFeedback(null);
-    const check = validateNewProductRecord({
-      livestockId: selectedAnimalId,
-      date,
-      yieldAmount: normalizedLiters,
-      qualityNotes,
-    });
+    const check = validateNewProductRecord(
+      {
+        livestockId: selectedAnimalId,
+        date,
+        yieldAmount: normalizedLiters,
+        qualityNotes,
+      },
+      { animal: animalsById.get(selectedAnimalId) }
+    );
 
     if (!check.ok || !check.data) {
       setErrors(check.errors);
@@ -240,6 +255,7 @@ export function ProductionView() {
   }
 
   async function handleDeleteRecord(id: string) {
+    if (!canDelete) return;
     if (settings.confirmBeforeDelete && confirmDeleteId !== id) {
       setConfirmDeleteId(id);
       return;
@@ -320,27 +336,45 @@ export function ProductionView() {
           </View>
         </View>
 
-        <Pressable
-          style={[
-            showForm ? styles.toggleCloseBtn : styles.toggleAddBtn,
-            { minHeight: ui.controlHeight },
-          ]}
-          onPress={() => setShowForm((prev) => !prev)}
-        >
-          <AppIcon
-            name={showForm ? 'close' : 'plus'}
-            size={ui.font(17)}
-            color={showForm ? FARMDB_COLORS.text : '#ffffff'}
-          />
-          <Text
+        {canEdit ? (
+          <Pressable
             style={[
-              showForm ? styles.toggleCloseBtnText : styles.toggleAddBtnText,
-              { fontSize: ui.font(14) },
+              showForm ? styles.toggleCloseBtn : styles.toggleAddBtn,
+              { minHeight: ui.controlHeight },
             ]}
+            onPress={() => setShowForm((prev) => !prev)}
           >
-            {showForm ? 'Close Yield Form' : 'Log Daily Milk Yield'}
-          </Text>
-        </Pressable>
+            <AppIcon
+              name={showForm ? 'close' : 'plus'}
+              size={ui.font(17)}
+              color={showForm ? FARMDB_COLORS.text : '#ffffff'}
+            />
+            <Text
+              style={[
+                showForm ? styles.toggleCloseBtnText : styles.toggleAddBtnText,
+                { fontSize: ui.font(14) },
+              ]}
+            >
+              {showForm ? 'Close Yield Form' : 'Log Daily Milk Yield'}
+            </Text>
+          </Pressable>
+        ) : (
+          <View
+            style={{
+              alignSelf: 'flex-start',
+              paddingHorizontal: ui.space(10),
+              paddingVertical: ui.space(6),
+              borderRadius: 999,
+              backgroundColor: '#f3efe4',
+              borderWidth: 1,
+              borderColor: FARMDB_COLORS.border,
+            }}
+          >
+            <Text style={{ fontFamily: FARMDB_FONTS.bold, fontSize: ui.font(11), color: FARMDB_COLORS.textMuted }}>
+              {describeModuleAccessLevel(accessLevel)}
+            </Text>
+          </View>
+        )}
 
         {feedback && !showForm ? (
           <View style={[styles.feedbackBanner, { padding: ui.space(10), borderRadius: ui.radius }]}>
@@ -363,7 +397,7 @@ export function ProductionView() {
             </View>
             {activeAnimals.length === 0 ? (
               <Text style={[styles.mutedText, { fontSize: ui.font(13) }]}>
-                Add at least one active animal in Herd before logging milk yields.
+                Add at least one active female milk-producing animal (Cow, Goat, or Sheep) in Herd before logging milk yields.
               </Text>
             ) : (
               <>
@@ -699,10 +733,63 @@ export function ProductionView() {
                       {rec.qualityNotes ? ` · ${rec.qualityNotes}` : ''}
                     </Text>
                   </View>
-                  {confirmDeleteId === rec.id ? (
-                    <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                  {canDelete ? (
+                    confirmDeleteId === rec.id ? (
+                      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                        <Pressable
+                          accessibilityLabel="Confirm delete"
+                          style={[
+                            styles.deleteBtn,
+                            {
+                              minHeight: ui.chipHeight - 2,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() => void handleDeleteRecord(rec.id)}
+                        >
+                          <AppIcon
+                            name="check"
+                            size={ui.font(14)}
+                            color={FARMDB_COLORS.danger}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
+                              Confirm
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                        <Pressable
+                          accessibilityLabel="Keep record"
+                          style={[
+                            styles.keepBtn,
+                            {
+                              minHeight: ui.chipHeight - 2,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() => setConfirmDeleteId(null)}
+                        >
+                          <AppIcon
+                            name="close"
+                            size={ui.font(14)}
+                            color={FARMDB_COLORS.text}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.keepBtnText, { fontSize: ui.font(11) }]}>
+                              Keep
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      </View>
+                    ) : (
                       <Pressable
-                        accessibilityLabel="Confirm delete"
+                        accessibilityLabel="Delete milk log"
                         style={[
                           styles.deleteBtn,
                           {
@@ -716,69 +803,18 @@ export function ProductionView() {
                         onPress={() => void handleDeleteRecord(rec.id)}
                       >
                         <AppIcon
-                          name="check"
+                          name="trash"
                           size={ui.font(14)}
                           color={FARMDB_COLORS.danger}
                         />
                         {!iconMode ? (
                           <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
-                            Confirm
+                            Delete
                           </Text>
                         ) : null}
                       </Pressable>
-                      <Pressable
-                        accessibilityLabel="Keep record"
-                        style={[
-                          styles.keepBtn,
-                          {
-                            minHeight: ui.chipHeight - 2,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                          },
-                        ]}
-                        onPress={() => setConfirmDeleteId(null)}
-                      >
-                        <AppIcon
-                          name="close"
-                          size={ui.font(14)}
-                          color={FARMDB_COLORS.text}
-                        />
-                        {!iconMode ? (
-                          <Text style={[styles.keepBtnText, { fontSize: ui.font(11) }]}>
-                            Keep
-                          </Text>
-                        ) : null}
-                      </Pressable>
-                    </View>
-                  ) : (
-                    <Pressable
-                      accessibilityLabel="Delete milk log"
-                      style={[
-                        styles.deleteBtn,
-                        {
-                          minHeight: ui.chipHeight - 2,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 4,
-                        },
-                      ]}
-                      onPress={() => void handleDeleteRecord(rec.id)}
-                    >
-                      <AppIcon
-                        name="trash"
-                        size={ui.font(14)}
-                        color={FARMDB_COLORS.danger}
-                      />
-                      {!iconMode ? (
-                        <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
-                          Delete
-                        </Text>
-                      ) : null}
-                    </Pressable>
-                  )}
+                    )
+                  ) : null}
                 </View>
               );
             })

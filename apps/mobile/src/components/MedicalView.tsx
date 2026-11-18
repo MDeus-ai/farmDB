@@ -19,6 +19,7 @@ import {
   validateNewMedicalRecord,
   type DateSortDirection,
   type NewMedicalRecordInput,
+  describeModuleAccessLevel,
   type RecordDateFilter,
   type ValidationErrors,
 } from '@farmdb/core';
@@ -28,6 +29,7 @@ import {
   useDeleteMedicalRecord,
   useLivestockList,
   useMedicalRecordList,
+  useModulePermissions,
 } from '@farmdb/db';
 import {
   MOBILE_APP_ICONS,
@@ -51,6 +53,7 @@ import {
 export function MedicalView() {
   const ui = useUiScale();
   const { settings } = ui;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('medical');
   const iconMode = settings.mobileIconMode;
 
   const livestockQuery = useLivestockList({});
@@ -199,6 +202,7 @@ export function MedicalView() {
   }
 
   async function handleDeleteRecord(id: string) {
+    if (!canDelete) return;
     if (settings.confirmBeforeDelete && confirmDeleteId !== id) {
       setConfirmDeleteId(id);
       return;
@@ -244,27 +248,45 @@ export function MedicalView() {
           </View>
         </View>
 
-        <Pressable
-          style={[
-            showForm ? styles.toggleCloseBtn : styles.toggleAddBtn,
-            { minHeight: ui.controlHeight },
-          ]}
-          onPress={() => setShowForm((prev) => !prev)}
-        >
-          <AppIcon
-            name={showForm ? 'close' : 'plus'}
-            size={ui.font(17)}
-            color={showForm ? FARMDB_COLORS.text : '#ffffff'}
-          />
-          <Text
+        {canEdit ? (
+          <Pressable
             style={[
-              showForm ? styles.toggleCloseBtnText : styles.toggleAddBtnText,
-              { fontSize: ui.font(14) },
+              showForm ? styles.toggleCloseBtn : styles.toggleAddBtn,
+              { minHeight: ui.controlHeight },
             ]}
+            onPress={() => setShowForm((prev) => !prev)}
           >
-            {showForm ? 'Close Medical Form' : 'Log Medical Treatment'}
-          </Text>
-        </Pressable>
+            <AppIcon
+              name={showForm ? 'close' : 'plus'}
+              size={ui.font(17)}
+              color={showForm ? FARMDB_COLORS.text : '#ffffff'}
+            />
+            <Text
+              style={[
+                showForm ? styles.toggleCloseBtnText : styles.toggleAddBtnText,
+                { fontSize: ui.font(14) },
+              ]}
+            >
+              {showForm ? 'Close Medical Form' : 'Log Medical Treatment'}
+            </Text>
+          </Pressable>
+        ) : (
+          <View
+            style={{
+              alignSelf: 'flex-start',
+              paddingHorizontal: ui.space(10),
+              paddingVertical: ui.space(6),
+              borderRadius: 999,
+              backgroundColor: '#f3efe4',
+              borderWidth: 1,
+              borderColor: FARMDB_COLORS.border,
+            }}
+          >
+            <Text style={{ fontFamily: FARMDB_FONTS.bold, fontSize: ui.font(11), color: FARMDB_COLORS.textMuted }}>
+              {describeModuleAccessLevel(accessLevel)}
+            </Text>
+          </View>
+        )}
 
         {feedback && !showForm ? (
           <View style={[styles.feedbackBanner, { padding: ui.space(10), borderRadius: ui.radius }]}>
@@ -520,10 +542,63 @@ export function MedicalView() {
                       {formatCurrency(rec.cost, currency)}
                     </Text>
                   </View>
-                  {confirmDeleteId === rec.id ? (
-                    <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                  {canDelete ? (
+                    confirmDeleteId === rec.id ? (
+                      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                        <Pressable
+                          accessibilityLabel="Confirm delete"
+                          style={[
+                            styles.deleteBtn,
+                            {
+                              minHeight: ui.chipHeight - 2,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() => void handleDeleteRecord(rec.id)}
+                        >
+                          <AppIcon
+                            name="check"
+                            size={ui.font(14)}
+                            color={FARMDB_COLORS.danger}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
+                              Confirm
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                        <Pressable
+                          accessibilityLabel="Keep record"
+                          style={[
+                            styles.keepBtn,
+                            {
+                              minHeight: ui.chipHeight - 2,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 4,
+                            },
+                          ]}
+                          onPress={() => setConfirmDeleteId(null)}
+                        >
+                          <AppIcon
+                            name="close"
+                            size={ui.font(14)}
+                            color={FARMDB_COLORS.text}
+                          />
+                          {!iconMode ? (
+                            <Text style={[styles.keepBtnText, { fontSize: ui.font(11) }]}>
+                              Keep
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      </View>
+                    ) : (
                       <Pressable
-                        accessibilityLabel="Confirm delete"
+                        accessibilityLabel="Delete medical record"
                         style={[
                           styles.deleteBtn,
                           {
@@ -537,69 +612,18 @@ export function MedicalView() {
                         onPress={() => void handleDeleteRecord(rec.id)}
                       >
                         <AppIcon
-                          name="check"
+                          name="trash"
                           size={ui.font(14)}
                           color={FARMDB_COLORS.danger}
                         />
                         {!iconMode ? (
                           <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
-                            Confirm
+                            Delete
                           </Text>
                         ) : null}
                       </Pressable>
-                      <Pressable
-                        accessibilityLabel="Keep record"
-                        style={[
-                          styles.keepBtn,
-                          {
-                            minHeight: ui.chipHeight - 2,
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                          },
-                        ]}
-                        onPress={() => setConfirmDeleteId(null)}
-                      >
-                        <AppIcon
-                          name="close"
-                          size={ui.font(14)}
-                          color={FARMDB_COLORS.text}
-                        />
-                        {!iconMode ? (
-                          <Text style={[styles.keepBtnText, { fontSize: ui.font(11) }]}>
-                            Keep
-                          </Text>
-                        ) : null}
-                      </Pressable>
-                    </View>
-                  ) : (
-                    <Pressable
-                      accessibilityLabel="Delete medical record"
-                      style={[
-                        styles.deleteBtn,
-                        {
-                          minHeight: ui.chipHeight - 2,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 4,
-                        },
-                      ]}
-                      onPress={() => void handleDeleteRecord(rec.id)}
-                    >
-                      <AppIcon
-                        name="trash"
-                        size={ui.font(14)}
-                        color={FARMDB_COLORS.danger}
-                      />
-                      {!iconMode ? (
-                        <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
-                          Delete
-                        </Text>
-                      ) : null}
-                    </Pressable>
-                  )}
+                    )
+                  ) : null}
                 </View>
               );
             })

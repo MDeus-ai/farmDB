@@ -28,7 +28,10 @@ import {
 import type { FarmDrizzleDb } from '../driver';
 import type { DatabaseEventBus } from '../events';
 import { cloudSyncLogs, farmAccounts } from '../schema';
-import type { RestoreSnapshotResult } from './backupRepository';
+import type {
+  RestoreSnapshotOptions,
+  RestoreSnapshotResult,
+} from './backupRepository';
 import type { SettingsRepository } from './settingsRepository';
 
 export class NetworkValidationError extends Error {
@@ -87,6 +90,9 @@ function mapAccountRow(row: FarmAccountRow): FarmAccount {
     relationship: row.relationship ?? null,
     avatarKey: row.avatarKey as FarmAccountAvatar,
     accessCode: row.accessCode ?? null,
+    supabaseUrl: row.supabaseUrl ?? null,
+    supabaseAnonKey: row.supabaseAnonKey ?? null,
+    cloudWorkspaceId: row.cloudWorkspaceId ?? null,
     isPrimaryAdmin: Boolean(row.isPrimaryAdmin),
     canManageNetwork: Boolean(row.canManageNetwork),
     canSyncCloud: Boolean(row.canSyncCloud),
@@ -133,6 +139,21 @@ export interface AcceptPendingAccountOptions {
   canSyncCloud?: boolean;
 }
 
+export interface RecoverAdminCloudInput {
+  cloudKey?: string;
+  supabaseUrl?: string;
+  supabaseAnonKey?: string;
+  cloudWorkspaceId?: string;
+  email?: string;
+  accessCode?: string;
+}
+
+export interface RecoverAdminCloudResult {
+  account: FarmAccount;
+  farmName: string;
+  recordsPulled: number;
+}
+
 export interface NetworkRepository {
   listAccounts(filter?: FarmAccountFilter): Promise<FarmAccount[]>;
   listAccountsRaw(): Promise<FarmAccount[]>;
@@ -149,6 +170,9 @@ export interface NetworkRepository {
 
   rotateNetworkJoinKey(): Promise<string>;
   joinNetworkWithKey(input: JoinFarmNetworkInput): Promise<JoinFarmNetworkResult>;
+  recoverAdminFromCloud(
+    input: RecoverAdminCloudInput
+  ): Promise<RecoverAdminCloudResult>;
   acceptPendingAccount(
     accountId: string,
     options?: AcceptPendingAccountOptions
@@ -161,7 +185,10 @@ export interface NetworkRepository {
 
 export interface NetworkBackupBridge {
   exportSnapshot(): Promise<FarmDbSnapshot>;
-  restoreSnapshot(snapshot: FarmDbSnapshot): Promise<RestoreSnapshotResult>;
+  restoreSnapshot(
+    snapshot: FarmDbSnapshot,
+    options?: RestoreSnapshotOptions
+  ): Promise<RestoreSnapshotResult>;
 }
 
 export function createNetworkRepository(
@@ -173,6 +200,70 @@ export function createNetworkRepository(
 ): NetworkRepository {
   const resolveFetch = (): typeof fetch => customFetch ?? globalThis.fetch;
   let bypassSyncAccountGate = false;
+
+  const createSupabaseFetcher = (anonKey: string) => {
+    const fetchImpl = resolveFetch();
+    const isPublishableKey = anonKey.startsWith('sb_publishable_');
+    const baseHeaders: Record<string, string> = {
+      apikey: anonKey,
+      'Content-Type': 'application/json',
+      ...(isPublishableKey ? {} : { Authorization: `Bearer ${anonKey}` }),
+    };
+
+    return async (
+      url: string,
+      init: RequestInit & { extraHeaders?: Record<string, string> }
+    ) => {
+      const res = await fetchImpl(url, {
+        ...init,
+        headers: {
+          ...baseHeaders,
+          ...(init.extraHeaders ?? {}),
+        },
+      });
+      if (res.status === 401 && isPublishableKey) {
+        return fetchImpl(url, {
+          ...init,
+          headers: {
+            ...baseHeaders,
+            Authorization: `Bearer ${anonKey}`,
+            ...(init.extraHeaders ?? {}),
+          },
+        });
+      }
+      return res;
+    };
+  };
+
+  async function applyAdminCloudCredentialsIfEmpty(
+    account: FarmAccount
+  ): Promise<void> {
+    if (!isAdminAccount(account)) {
+      return;
+    }
+    const accUrl = account.supabaseUrl
+      ? normalizeSupabaseBaseUrl(account.supabaseUrl)
+      : '';
+    const accKey = account.supabaseAnonKey?.trim() ?? '';
+    if (!accUrl || !accKey) {
+      return;
+    }
+    const currentSettings = await settingsRepo.get();
+    if (
+      !currentSettings.supabaseUrl.trim() ||
+      !currentSettings.supabaseAnonKey.trim()
+    ) {
+      await settingsRepo.update({
+        supabaseUrl: accUrl,
+        supabaseAnonKey: accKey,
+        cloudWorkspaceId:
+          account.cloudWorkspaceId?.trim() ||
+          currentSettings.cloudWorkspaceId ||
+          'farmdb-homestead-main',
+        cloudSyncEnabled: true,
+      });
+    }
+  }
 
   async function appendSyncLog(input: {
     direction: CloudSyncDirection;
@@ -266,7 +357,6 @@ export function createNetworkRepository(
         return existingAdmin;
       }
 
-      const now = Date.now();
       const adminRow: typeof farmAccounts.$inferInsert = {
         id: DEFAULT_ADMIN_ACCOUNT.id,
         displayName: DEFAULT_ADMIN_ACCOUNT.displayName,
@@ -276,14 +366,17 @@ export function createNetworkRepository(
         relationship: DEFAULT_ADMIN_ACCOUNT.relationship,
         avatarKey: DEFAULT_ADMIN_ACCOUNT.avatarKey,
         accessCode: DEFAULT_ADMIN_ACCOUNT.accessCode,
+        supabaseUrl: DEFAULT_ADMIN_ACCOUNT.supabaseUrl ?? null,
+        supabaseAnonKey: DEFAULT_ADMIN_ACCOUNT.supabaseAnonKey ?? null,
+        cloudWorkspaceId: DEFAULT_ADMIN_ACCOUNT.cloudWorkspaceId ?? null,
         isPrimaryAdmin: true,
         canManageNetwork: true,
         canSyncCloud: true,
         permissionsJson: JSON.stringify(DEFAULT_ADMIN_ACCOUNT.permissions),
         status: 'active',
         lastSyncedAt: null,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: 1,
+        updatedAt: 1,
       };
       await db.insert(farmAccounts).values(adminRow).run();
       events.emit(['network'], adminRow.id);
@@ -319,7 +412,23 @@ export function createNetworkRepository(
           'This account is currently suspended by the administrator.'
         );
       }
-      if (
+      if (!account.isPrimaryAdmin) {
+        if (!account.accessCode || account.accessCode.trim().length === 0) {
+          throw new NetworkValidationError(
+            {
+              accessCode:
+                'This user account requires login credentials before it can be accessed.',
+            },
+            'This user account requires login credentials before it can be accessed.'
+          );
+        }
+        if ((accessCode ?? '').trim() !== account.accessCode.trim()) {
+          throw new NetworkValidationError(
+            { accessCode: 'Incorrect access PIN / passcode for this account.' },
+            'Incorrect access PIN / passcode for this account.'
+          );
+        }
+      } else if (
         account.accessCode &&
         account.accessCode.trim().length > 0 &&
         (accessCode ?? '').trim() !== account.accessCode.trim()
@@ -330,6 +439,7 @@ export function createNetworkRepository(
         );
       }
       await settingsRepo.update({ activeAccountId: account.id });
+      await applyAdminCloudCredentialsIfEmpty(account);
       events.emit(['network', 'settings'], account.id);
       return account;
     },
@@ -349,6 +459,8 @@ export function createNetworkRepository(
 
       const now = Date.now();
       const id = validation.data.id || generateId();
+      const isAdminRole =
+        validation.data.isPrimaryAdmin || validation.data.role === 'admin';
       const record: typeof farmAccounts.$inferInsert = {
         id,
         displayName: validation.data.displayName,
@@ -358,6 +470,9 @@ export function createNetworkRepository(
         relationship: validation.data.relationship,
         avatarKey: validation.data.avatarKey,
         accessCode: validation.data.accessCode,
+        supabaseUrl: isAdminRole ? validation.data.supabaseUrl : null,
+        supabaseAnonKey: isAdminRole ? validation.data.supabaseAnonKey : null,
+        cloudWorkspaceId: isAdminRole ? validation.data.cloudWorkspaceId : null,
         isPrimaryAdmin: validation.data.isPrimaryAdmin,
         canManageNetwork: validation.data.canManageNetwork,
         canSyncCloud: validation.data.canSyncCloud,
@@ -369,8 +484,13 @@ export function createNetworkRepository(
       };
 
       await db.insert(farmAccounts).values(record).run();
+      const createdAccount = mapAccountRow(record as FarmAccountRow);
+      const currentSettings = await settingsRepo.get();
+      if (isAdminRole && currentSettings.activeAccountId === createdAccount.id) {
+        await applyAdminCloudCredentialsIfEmpty(createdAccount);
+      }
       events.emit(['network'], id);
-      return mapAccountRow(record as FarmAccountRow);
+      return createdAccount;
     },
 
     async updateAccount(
@@ -392,6 +512,11 @@ export function createNetworkRepository(
           msg
         );
       }
+
+      const currentActive = await this.getActiveAccount();
+      const preserveExistingAccessCode =
+        currentActive.id !== existing.id &&
+        Boolean(existing.accessCode && existing.accessCode.trim().length > 0);
 
       const nextRole: FarmAccountRole = existing.isPrimaryAdmin
         ? 'admin'
@@ -431,10 +556,29 @@ export function createNetworkRepository(
               ? validation.data.relationship
               : existing.relationship,
           avatarKey: validation.data.avatarKey ?? existing.avatarKey,
-          accessCode:
-            validation.data.accessCode !== undefined
+          accessCode: preserveExistingAccessCode
+            ? existing.accessCode
+            : validation.data.accessCode !== undefined
               ? validation.data.accessCode
               : existing.accessCode,
+          supabaseUrl:
+            existing.isPrimaryAdmin || nextRole === 'admin'
+              ? validation.data.supabaseUrl !== undefined
+                ? validation.data.supabaseUrl
+                : existing.supabaseUrl
+              : null,
+          supabaseAnonKey:
+            existing.isPrimaryAdmin || nextRole === 'admin'
+              ? validation.data.supabaseAnonKey !== undefined
+                ? validation.data.supabaseAnonKey
+                : existing.supabaseAnonKey
+              : null,
+          cloudWorkspaceId:
+            existing.isPrimaryAdmin || nextRole === 'admin'
+              ? validation.data.cloudWorkspaceId !== undefined
+                ? validation.data.cloudWorkspaceId
+                : existing.cloudWorkspaceId
+              : null,
           canManageNetwork: nextCanManageNetwork,
           canSyncCloud: nextCanSyncCloud,
           permissionsJson: JSON.stringify(nextPermissions),
@@ -453,6 +597,9 @@ export function createNetworkRepository(
       const updated = await this.getAccountById(id);
       if (!updated) {
         throw new FarmAccountNotFoundError(id);
+      }
+      if (currentActive.id === updated.id) {
+        await applyAdminCloudCredentialsIfEmpty(updated);
       }
       return updated;
     },
@@ -570,15 +717,10 @@ export function createNetworkRepository(
         if (!existing) {
           throw new FarmAccountNotFoundError(input.accountId);
         }
-        if (existing.isPrimaryAdmin) {
-          throw new NetworkValidationError(
-            { accountId: 'Primary Farm Owner cannot be downgraded to pending.' },
-            'Primary Farm Owner cannot be downgraded to pending.'
-          );
-        }
+        const isAdminJoining = existing.isPrimaryAdmin || existing.role === 'admin';
         targetAccount = await this.updateAccount(existing.id, {
-          status: 'pending',
-          canManageNetwork: false,
+          status: isAdminJoining ? 'active' : 'pending',
+          canManageNetwork: isAdminJoining,
           canSyncCloud: true,
         });
       } else if (input.newAccount) {
@@ -619,6 +761,179 @@ export function createNetworkRepository(
         account: targetAccount,
         syncedWithCloud,
         farmName: finalSettings.farmName,
+      };
+    },
+
+    async recoverAdminFromCloud(
+      input: RecoverAdminCloudInput
+    ): Promise<RecoverAdminCloudResult> {
+      let baseUrl = '';
+      let anonKey = '';
+      let workspaceId =
+        input.cloudWorkspaceId?.trim() || 'farmdb-homestead-main';
+
+      if (input.cloudKey && input.cloudKey.trim().length > 0) {
+        const decoded = decodeFarmNetworkJoinKey(input.cloudKey);
+        if (
+          !decoded ||
+          decoded.kind !== 'full' ||
+          !decoded.supabaseUrl ||
+          !decoded.supabaseAnonKey
+        ) {
+          throw new NetworkValidationError(
+            {
+              cloudKey:
+                'Paste a valid full Farm Cloud Key (FDB1:...) or enter your Supabase URL and Key below.',
+            },
+            'Paste a valid full Farm Cloud Key (FDB1:...) or enter your Supabase URL and Key below.'
+          );
+        }
+        baseUrl = decoded.supabaseUrl;
+        anonKey = decoded.supabaseAnonKey;
+        workspaceId = decoded.workspaceId || workspaceId;
+      } else {
+        baseUrl = normalizeSupabaseBaseUrl(input.supabaseUrl ?? '');
+        anonKey = (input.supabaseAnonKey ?? '').trim();
+        if (!baseUrl || !/^https?:\/\/.+/i.test(baseUrl) || !anonKey) {
+          throw new NetworkValidationError(
+            {
+              supabaseUrl:
+                'Enter your Cloud Key (FDB1:...) or valid Supabase Project URL and Anon Key.',
+            },
+            'Enter your Cloud Key (FDB1:...) or valid Supabase Project URL and Anon Key.'
+          );
+        }
+      }
+
+      const fetchSupabase = createSupabaseFetcher(anonKey);
+      const restEndpoint = `${baseUrl}/rest/v1/farmdb_cloud_snapshots`;
+      const res = await fetchSupabase(
+        `${restEndpoint}?workspace_id=eq.${encodeURIComponent(workspaceId)}&select=workspace_id,farm_name,snapshot,updated_at`,
+        { method: 'GET' }
+      );
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(
+          `Unable to reach Supabase cloud (HTTP ${res.status}): ${errText.slice(0, 140)}`
+        );
+      }
+
+      const rows = (await res.json()) as Array<{
+        workspace_id: string;
+        farm_name?: string;
+        snapshot?: unknown;
+      }>;
+      if (!rows.length || !rows[0]?.snapshot) {
+        throw new Error(
+          `No synced cloud farm database was found for workspace "${workspaceId}".`
+        );
+      }
+
+      const remoteSnapshot = parseFarmSnapshotJson(
+        JSON.stringify(rows[0].snapshot)
+      );
+      const remoteAdmins = (remoteSnapshot.farmAccounts ?? []).filter((acc) =>
+        isAdminAccount(acc)
+      );
+      const emailFilter = input.email?.trim().toLowerCase();
+      let targetAdmin = emailFilter
+        ? remoteAdmins.find(
+            (acc) => (acc.email ?? '').trim().toLowerCase() === emailFilter
+          )
+        : undefined;
+
+      if (emailFilter && !targetAdmin) {
+        throw new NetworkValidationError(
+          {
+            email: `No Admin account matching "${input.email!.trim()}" was found in workspace "${workspaceId}".`,
+          },
+          `No Admin account matching "${input.email!.trim()}" was found in workspace "${workspaceId}".`
+        );
+      }
+
+      targetAdmin =
+        targetAdmin ??
+        remoteAdmins.find((acc) => acc.isPrimaryAdmin) ??
+        remoteAdmins[0];
+
+      if (
+        targetAdmin?.accessCode &&
+        targetAdmin.accessCode.trim().length > 0 &&
+        (input.accessCode ?? '').trim() !== targetAdmin.accessCode.trim()
+      ) {
+        throw new NetworkValidationError(
+          {
+            accessCode:
+              'Incorrect Admin password / PIN for the cloud workspace.',
+          },
+          'Incorrect Admin password / PIN for the cloud workspace.'
+        );
+      }
+
+      const targetAdminId = targetAdmin?.id ?? DEFAULT_ADMIN_ACCOUNT.id;
+      await settingsRepo.update({
+        supabaseUrl: baseUrl,
+        supabaseAnonKey: anonKey,
+        cloudWorkspaceId: workspaceId,
+        cloudSyncEnabled: true,
+        activeAccountId: targetAdminId,
+      });
+
+      const backupBridge = getBackupBridge();
+      const restoredCounts = await backupBridge.restoreSnapshot(
+        remoteSnapshot,
+        { preserveLocalSession: true }
+      );
+      const ensuredAdmin =
+        (await this.getAccountById(targetAdminId)) ??
+        (await this.ensureAdminAccount());
+
+      const now = Date.now();
+      await db
+        .update(farmAccounts)
+        .set({
+          supabaseUrl: baseUrl,
+          supabaseAnonKey: anonKey,
+          cloudWorkspaceId: workspaceId,
+          lastSyncedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(farmAccounts.id, ensuredAdmin.id))
+        .run();
+
+      const recovered = (await this.getAccountById(ensuredAdmin.id)) ?? {
+        ...ensuredAdmin,
+        supabaseUrl: baseUrl,
+        supabaseAnonKey: anonKey,
+        cloudWorkspaceId: workspaceId,
+        lastSyncedAt: now,
+      };
+
+      const totalPulled =
+        restoredCounts.livestockCount +
+        restoredCounts.productCount +
+        restoredCounts.medicalCount +
+        restoredCounts.financialCount +
+        restoredCounts.alertCount +
+        (restoredCounts.workerCount ?? 0) +
+        (restoredCounts.workerPaymentCount ?? 0) +
+        (restoredCounts.workerTaskCount ?? 0) +
+        (restoredCounts.ownershipCount ?? 0) +
+        (restoredCounts.accountCount ?? 0);
+
+      await appendSyncLog({
+        direction: 'pull',
+        status: 'success',
+        recordsPushed: 0,
+        recordsPulled: totalPulled,
+        summary: `Signed into Admin account "${recovered.displayName}" and downloaded ${totalPulled} records from Supabase workspace "${workspaceId}".`,
+      });
+      events.emit(['*']);
+
+      return {
+        account: recovered,
+        farmName: remoteSnapshot.settings.farmName || rows[0]?.farm_name || 'farmDB Homestead',
+        recordsPulled: totalPulled,
       };
     },
 
@@ -749,39 +1064,8 @@ export function createNetworkRepository(
         };
       }
 
-      const fetchImpl = resolveFetch();
+      const fetchSupabase = createSupabaseFetcher(anonKey);
       const restEndpoint = `${baseUrl}/rest/v1/farmdb_cloud_snapshots`;
-      const isPublishableKey = anonKey.startsWith('sb_publishable_');
-      const baseHeaders: Record<string, string> = {
-        apikey: anonKey,
-        'Content-Type': 'application/json',
-        ...(isPublishableKey ? {} : { Authorization: `Bearer ${anonKey}` }),
-      };
-
-      const fetchSupabase = async (
-        url: string,
-        init: RequestInit & { extraHeaders?: Record<string, string> }
-      ) => {
-        const res = await fetchImpl(url, {
-          ...init,
-          headers: {
-            ...baseHeaders,
-            ...(init.extraHeaders ?? {}),
-          },
-        });
-        // Fallback if server expects Bearer even for custom/anon keys or vice versa
-        if (res.status === 401 && isPublishableKey) {
-          return fetchImpl(url, {
-            ...init,
-            headers: {
-              ...baseHeaders,
-              Authorization: `Bearer ${anonKey}`,
-              ...(init.extraHeaders ?? {}),
-            },
-          });
-        }
-        return res;
-      };
 
       try {
         if (direction === 'test') {
@@ -847,7 +1131,43 @@ export function createNetworkRepository(
         }
 
         const backupBridge = getBackupBridge();
-        await this.ensureAdminAccount();
+        const ensuredAdmin = await this.ensureAdminAccount();
+        const activeSyncAcc = await this.getActiveAccount();
+        if (
+          isAdminAccount(activeSyncAcc) &&
+          baseUrl &&
+          anonKey &&
+          (activeSyncAcc.supabaseUrl !== baseUrl ||
+            activeSyncAcc.supabaseAnonKey !== anonKey ||
+            activeSyncAcc.cloudWorkspaceId !== workspaceId)
+        ) {
+          await db
+            .update(farmAccounts)
+            .set({
+              supabaseUrl: baseUrl,
+              supabaseAnonKey: anonKey,
+              cloudWorkspaceId: workspaceId,
+              updatedAt: Date.now(),
+            })
+            .where(eq(farmAccounts.id, activeSyncAcc.id))
+            .run();
+        } else if (
+          ensuredAdmin &&
+          baseUrl &&
+          anonKey &&
+          (!ensuredAdmin.supabaseUrl || !ensuredAdmin.supabaseAnonKey)
+        ) {
+          await db
+            .update(farmAccounts)
+            .set({
+              supabaseUrl: baseUrl,
+              supabaseAnonKey: anonKey,
+              cloudWorkspaceId: workspaceId,
+              updatedAt: Date.now(),
+            })
+            .where(eq(farmAccounts.id, ensuredAdmin.id))
+            .run();
+        }
         const localSnapshot = await backupBridge.exportSnapshot();
 
         const buildPushPayload = (snap: FarmDbSnapshot): FarmDbSnapshot => ({
@@ -887,6 +1207,18 @@ export function createNetworkRepository(
           }
         }
 
+        const countSnapshotRecords = (snap: FarmDbSnapshot): number =>
+          snap.livestock.length +
+          snap.productRecords.length +
+          snap.medicalRecords.length +
+          snap.financialLogs.length +
+          snap.alerts.length +
+          (snap.workers?.length ?? 0) +
+          (snap.workerPayments?.length ?? 0) +
+          (snap.workerTasks?.length ?? 0) +
+          (snap.animalOwnerships?.length ?? 0) +
+          (snap.farmAccounts?.length ?? 0);
+
         let finalSnapshotToPush = buildPushPayload(localSnapshot);
         let recordsPulled = 0;
         let recordsPushed = 0;
@@ -921,15 +1253,10 @@ export function createNetworkRepository(
               includeHr: currentSettings.syncIncludeHr,
             }
           );
-          recordsPulled =
-            mergeRes.merged.livestock.length +
-            mergeRes.merged.productRecords.length +
-            mergeRes.merged.medicalRecords.length +
-            mergeRes.merged.financialLogs.length +
-            mergeRes.merged.alerts.length +
-            (mergeRes.merged.workers?.length ?? 0) +
-            (mergeRes.merged.animalOwnerships?.length ?? 0);
-          await backupBridge.restoreSnapshot(mergeRes.merged);
+          recordsPulled = countSnapshotRecords(mergeRes.merged);
+          await backupBridge.restoreSnapshot(mergeRes.merged, {
+            preserveLocalSession: true,
+          });
           await this.ensureAdminAccount();
         } else if (direction === 'bidirectional') {
           if (pulledSnapshot) {
@@ -945,29 +1272,15 @@ export function createNetworkRepository(
             recordsPulled = mergeRes.recordsPulled;
             recordsPushed = mergeRes.recordsPushed;
             finalSnapshotToPush = buildPushPayload(mergeRes.merged);
-            if (recordsPulled > 0) {
-              await backupBridge.restoreSnapshot(mergeRes.merged);
-              await this.ensureAdminAccount();
-            }
+            await backupBridge.restoreSnapshot(mergeRes.merged, {
+              preserveLocalSession: true,
+            });
+            await this.ensureAdminAccount();
           } else {
-            recordsPushed =
-              localSnapshot.livestock.length +
-              localSnapshot.productRecords.length +
-              localSnapshot.medicalRecords.length +
-              localSnapshot.financialLogs.length +
-              localSnapshot.alerts.length +
-              (localSnapshot.workers?.length ?? 0) +
-              (localSnapshot.animalOwnerships?.length ?? 0);
+            recordsPushed = countSnapshotRecords(finalSnapshotToPush);
           }
         } else if (direction === 'push') {
-          recordsPushed =
-            finalSnapshotToPush.livestock.length +
-            finalSnapshotToPush.productRecords.length +
-            finalSnapshotToPush.medicalRecords.length +
-            finalSnapshotToPush.financialLogs.length +
-            finalSnapshotToPush.alerts.length +
-            (finalSnapshotToPush.workers?.length ?? 0) +
-            (finalSnapshotToPush.animalOwnerships?.length ?? 0);
+          recordsPushed = countSnapshotRecords(finalSnapshotToPush);
         }
 
         if (direction === 'push' || direction === 'bidirectional') {

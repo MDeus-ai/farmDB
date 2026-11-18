@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
-import type { ExportTableKey } from '@farmdb/core';
-import { useFarmDb, useFarmSummary } from '@farmdb/db';
+import {
+  describeModuleAccessLevel,
+  type ExportTableKey,
+} from '@farmdb/core';
+import {
+  useFarmDb,
+  useFarmSummary,
+  useModulePermissions,
+} from '@farmdb/db';
 import { APP_ICONS } from '../assets/icons';
 import type { TauriSqlController } from '../db/tauriDriver';
 import {
@@ -33,6 +40,7 @@ const EXPORT_TABLES: Array<{ key: ExportTableKey; label: string }> = [
 
 export function BackupView({ sqlController }: BackupViewProps) {
   const { backup, events, driverKind } = useFarmDb();
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('backup');
   const summaryQuery = useFarmSummary();
   const summary = summaryQuery.data;
 
@@ -134,7 +142,22 @@ export function BackupView({ sqlController }: BackupViewProps) {
         <div>
           <h1 className="page-title">Export &amp; Backup</h1>
         </div>
+        {(!canEdit || !canDelete) && (
+          <span className="status-pill status-sold">
+            {describeModuleAccessLevel(accessLevel)}
+          </span>
+        )}
       </div>
+
+      {(!canEdit || !canDelete) && (
+        <div className="notice-banner" role="status">
+          <span>
+            {!canEdit
+              ? 'View-Only Access: File exports and database restores are disabled for your account.'
+              : 'View & Edit Access: You can export backups, but Full Access is required to overwrite the database via Restore.'}
+          </span>
+        </div>
+      )}
 
       <div className="stats-grid">
         <div className="stat-card">
@@ -188,7 +211,7 @@ export function BackupView({ sqlController }: BackupViewProps) {
               type="button"
               className="btn btn-primary"
               onClick={() => void handleExportJson()}
-              disabled={busy}
+              disabled={busy || !canEdit}
             >
               <img src={APP_ICONS.downloadDrive} alt="" className="app-icon-sm" />
               Export Full JSON
@@ -197,20 +220,22 @@ export function BackupView({ sqlController }: BackupViewProps) {
               type="button"
               className="btn btn-secondary"
               onClick={() => void handleExportAllCsv()}
-              disabled={busy}
+              disabled={busy || !canEdit}
             >
               <img src={APP_ICONS.downloads} alt="" className="app-icon-sm" />
               Export All CSVs
             </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => void handleImportJson()}
-              disabled={busy}
-            >
-              <img src={APP_ICONS.uploadArrow} alt="" className="app-icon-sm" />
-              Restore from JSON
-            </button>
+            {canDelete && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => void handleImportJson()}
+                disabled={busy}
+              >
+                <img src={APP_ICONS.uploadArrow} alt="" className="app-icon-sm" />
+                Restore from JSON
+              </button>
+            )}
           </div>
 
           <p className="form-label" style={{ marginBottom: 8 }}>
@@ -223,7 +248,7 @@ export function BackupView({ sqlController }: BackupViewProps) {
                 type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={() => void handleExportTableCsv(tbl.key)}
-                disabled={busy}
+                disabled={busy || !canEdit}
               >
                 <img src={APP_ICONS.downloads} alt="" className="app-icon-sm" />
                 {tbl.label}
@@ -258,20 +283,22 @@ export function BackupView({ sqlController }: BackupViewProps) {
                 type="button"
                 className="btn btn-primary"
                 onClick={() => void handleBackupSqlite()}
-                disabled={busy || !sqlController}
+                disabled={busy || !sqlController || !canEdit}
               >
                 <img src={APP_ICONS.downloadDrive} alt="" className="app-icon-sm" />
                 Save .db Backup
               </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => void handleRestoreSqlite()}
-                disabled={busy || !sqlController}
-              >
-                <img src={APP_ICONS.upload} alt="" className="app-icon-sm" />
-                Restore from .db File
-              </button>
+              {canDelete && (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => void handleRestoreSqlite()}
+                  disabled={busy || !sqlController}
+                >
+                  <img src={APP_ICONS.upload} alt="" className="app-icon-sm" />
+                  Restore from .db File
+                </button>
+              )}
             </div>
           )}
 

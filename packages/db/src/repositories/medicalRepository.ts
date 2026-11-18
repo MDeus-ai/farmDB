@@ -132,20 +132,35 @@ export function createMedicalRepository(
       input: NewMedicalRecordInput,
       options?: CreateMedicalRecordOptions
     ): Promise<CreateMedicalRecordResult> {
-      const validation = validateNewMedicalRecord(input);
+      const targetLivestockId = (input.livestockId ?? '').trim();
+      const animal = targetLivestockId
+        ? await db
+            .select({
+              id: livestock.id,
+              tagNumber: livestock.tagNumber,
+              dob: livestock.dob,
+            })
+            .from(livestock)
+            .where(eq(livestock.id, targetLivestockId))
+            .get()
+        : undefined;
+
+      if (targetLivestockId && !animal) {
+        throw new MedicalValidationError(
+          { livestockId: 'Selected animal does not exist.' },
+          'Selected animal does not exist.'
+        );
+      }
+
+      const validation = validateNewMedicalRecord(input, {
+        animal: animal ? { dob: animal.dob } : undefined,
+      });
       if (!validation.ok || !validation.data) {
         const msg =
           Object.values(validation.errors).find(Boolean) ??
           'Invalid medical record.';
         throw new MedicalValidationError(validation.errors, msg);
       }
-
-      const animal = await db
-        .select({ id: livestock.id, tagNumber: livestock.tagNumber })
-        .from(livestock)
-        .where(eq(livestock.id, validation.data.livestockId))
-        .get();
-
       if (!animal) {
         throw new MedicalValidationError(
           { livestockId: 'Selected animal does not exist.' },
@@ -198,12 +213,40 @@ export function createMedicalRepository(
         throw new MedicalRecordNotFoundError(id);
       }
 
-      const validation = validateUpdateMedicalRecord(input);
+      const targetLivestockId = (
+        input.livestockId ?? existing.livestockId
+      ).trim();
+      const animal = targetLivestockId
+        ? await db
+            .select({ id: livestock.id, dob: livestock.dob })
+            .from(livestock)
+            .where(eq(livestock.id, targetLivestockId))
+            .get()
+        : undefined;
+      if (targetLivestockId && !animal) {
+        throw new MedicalValidationError(
+          { livestockId: 'Selected animal does not exist.' },
+          'Selected animal does not exist.'
+        );
+      }
+
+      const validation = validateUpdateMedicalRecord(input, {
+        animal: animal ? { dob: animal.dob } : undefined,
+      });
       if (!validation.ok || !validation.data) {
         const msg =
           Object.values(validation.errors).find(Boolean) ??
           'Invalid medical record update.';
         throw new MedicalValidationError(validation.errors, msg);
+      }
+      if (
+        input.date === undefined &&
+        animal?.dob &&
+        existing.date < animal.dob
+      ) {
+        const msg =
+          'Medical record date cannot be earlier than the animal’s date of birth.';
+        throw new MedicalValidationError({ date: msg }, msg);
       }
 
       const now = Date.now();

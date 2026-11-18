@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildAllModulePermissions,
   buildStandardUserPermissions,
   canAccountDeleteInModule,
   canAccountEditModule,
@@ -8,9 +9,11 @@ import {
   decodeFarmNetworkJoinKey,
   DEFAULT_ADMIN_ACCOUNT,
   DEFAULT_FARM_SETTINGS,
+  describeModuleAccessLevel,
   encodeFarmNetworkJoinKey,
   generateShortJoinCode,
   generateSupabaseSetupSql,
+  getAccountModuleAccess,
   getDefaultPermissionsForRole,
   isAdminAccount,
   mergeFarmSnapshots,
@@ -136,9 +139,37 @@ describe('@farmdb/core ownerships, farm network & cloud sync', () => {
     expect(canAccountViewModule(familyAccount, 'financial')).toBe(true);
     expect(canAccountEditModule(familyAccount, 'financial')).toBe(false);
     expect(isAdminAccount(familyAccount)).toBe(false);
-    expect(canAccountViewModule(familyAccount, 'network')).toBe(false);
+    expect(canAccountViewModule(familyAccount, 'network')).toBe(true);
+    expect(getAccountModuleAccess(familyAccount, 'network')).toBe('edit');
+    expect(canAccountDeleteInModule(familyAccount, 'network')).toBe(false);
     expect(canAccountViewModule(familyAccount, 'backup')).toBe(true);
     expect(canAccountViewModule(familyAccount, 'settings')).toBe(true);
+    expect(describeModuleAccessLevel('none')).toBe('Hidden');
+    expect(describeModuleAccessLevel('view')).toBe('View Only (Read-Only)');
+    expect(describeModuleAccessLevel('edit')).toBe('View & Edit (Create & Update)');
+    expect(describeModuleAccessLevel('full')).toBe('Full Access (Create, Edit & Delete)');
+
+    // Fine-grained none/view/edit/full enforcement across all modules (including statistics, backup, settings)
+    const restrictedPartner: FarmAccount = {
+      ...familyAccount,
+      id: 'acc-restricted',
+      permissions: {
+        ...buildAllModulePermissions('none'),
+        livestock: 'edit',
+        financial: 'view',
+        medical: 'full',
+      },
+    };
+    expect(getAccountModuleAccess(DEFAULT_ADMIN_ACCOUNT, 'network')).toBe('full');
+    expect(getAccountModuleAccess(restrictedPartner, 'statistics')).toBe('none');
+    expect(canAccountViewModule(restrictedPartner, 'statistics')).toBe(false);
+    expect(canAccountViewModule(restrictedPartner, 'backup')).toBe(false);
+    expect(canAccountViewModule(restrictedPartner, 'settings')).toBe(false);
+    expect(canAccountViewModule(restrictedPartner, 'financial')).toBe(true);
+    expect(canAccountEditModule(restrictedPartner, 'financial')).toBe(false);
+    expect(canAccountEditModule(restrictedPartner, 'livestock')).toBe(true);
+    expect(canAccountDeleteInModule(restrictedPartner, 'livestock')).toBe(false);
+    expect(canAccountDeleteInModule(restrictedPartner, 'medical')).toBe(true);
 
     const standardUserPerms = buildStandardUserPermissions();
     const standaloneUser: FarmAccount = {
@@ -147,7 +178,8 @@ describe('@farmdb/core ownerships, farm network & cloud sync', () => {
       canSyncCloud: false,
       permissions: standardUserPerms,
     };
-    expect(canAccountViewModule(standaloneUser, 'network')).toBe(false);
+    expect(canAccountViewModule(standaloneUser, 'network')).toBe(true);
+    expect(getAccountModuleAccess(standaloneUser, 'network')).toBe('edit');
     expect(canAccountViewModule(standaloneUser, 'backup')).toBe(true);
     expect(canAccountEditModule(standaloneUser, 'backup')).toBe(true);
     expect(canAccountEditModule(standaloneUser, 'financial')).toBe(true);
@@ -211,16 +243,24 @@ describe('@farmdb/core ownerships, farm network & cloud sync', () => {
       version: 1,
       app: 'farmDB',
       exportedAt: '2026-11-17T00:00:00Z',
-      settings: { ...DEFAULT_FARM_SETTINGS, farmName: 'Local Homestead' },
+      settings: {
+        ...DEFAULT_FARM_SETTINGS,
+        farmName: 'Local Homestead',
+        supabaseUrl: 'https://local.supabase.co',
+        supabaseAnonKey: 'local_anon_key',
+        cloudSyncEnabled: true,
+      },
+      settingsUpdatedAt: 100,
       livestock: [
         {
           id: 'c1',
           species: 'cow',
+          sex: 'female',
           tagNumber: 'COW-1',
           name: 'Local Older',
           breed: null,
           dob: null,
-          imageUri: null,
+          imageUri: 'data:image/webp;base64,AAA111',
           sireId: null,
           damId: null,
           status: 'active',
@@ -234,10 +274,30 @@ describe('@farmdb/core ownerships, farm network & cloud sync', () => {
       alerts: [],
       animalOwnerships: [],
       farmAccounts: [DEFAULT_ADMIN_ACCOUNT],
+      cloudSyncLogs: [
+        {
+          id: 'log-local-1',
+          direction: 'push',
+          status: 'success',
+          recordsPulled: 0,
+          recordsPushed: 2,
+          summary: 'Local push log',
+          createdAt: 150,
+        },
+      ],
     };
 
     const remote: FarmDbSnapshot = {
       ...baseLocal,
+      settings: {
+        ...DEFAULT_FARM_SETTINGS,
+        farmName: 'Cloud Updated Homestead',
+        currencySymbol: 'UGX',
+        supabaseUrl: 'https://cloud-other.supabase.co',
+        supabaseAnonKey: 'cloud_other_key',
+        cloudSyncEnabled: false,
+      },
+      settingsUpdatedAt: 900,
       livestock: [
         {
           ...baseLocal.livestock[0]!,
@@ -247,11 +307,12 @@ describe('@farmdb/core ownerships, farm network & cloud sync', () => {
         {
           id: 'd2',
           species: 'duck',
+          sex: 'female',
           tagNumber: 'DUCK-9',
           name: 'Puddles',
           breed: 'Pekin',
           dob: null,
-          imageUri: null,
+          imageUri: 'data:image/webp;base64,AAA111',
           sireId: null,
           damId: null,
           status: 'active',
@@ -259,13 +320,37 @@ describe('@farmdb/core ownerships, farm network & cloud sync', () => {
           updatedAt: 400,
         },
       ],
+      cloudSyncLogs: [
+        {
+          id: 'log-remote-1',
+          direction: 'pull',
+          status: 'success',
+          recordsPulled: 3,
+          recordsPushed: 0,
+          summary: 'Remote pull log',
+          createdAt: 950,
+        },
+      ],
     };
 
     const merged = mergeFarmSnapshots(baseLocal, remote, 'last_write_wins');
-    expect(merged.recordsPulled).toBe(2);
+    expect(merged.recordsPulled).toBe(3);
     expect(merged.merged.livestock).toHaveLength(2);
     expect(
       merged.merged.livestock.find((a) => a.id === 'c1')?.name
     ).toBe('Cloud Newer');
+    expect(
+      merged.merged.livestock.find((a) => a.id === 'c1')?.imageUri
+    ).toBe('data:image/webp;base64,AAA111');
+    expect(merged.merged.settings.farmName).toBe('Cloud Updated Homestead');
+    expect(merged.merged.settings.currencySymbol).toBe('UGX');
+    expect(merged.merged.settingsUpdatedAt).toBeGreaterThanOrEqual(900);
+    // Device-local Supabase connection fields remain preserved
+    expect(merged.merged.settings.supabaseUrl).toBe('https://local.supabase.co');
+    expect(merged.merged.settings.supabaseAnonKey).toBe('local_anon_key');
+    expect(merged.merged.settings.cloudSyncEnabled).toBe(true);
+    expect(merged.merged.livestock[0]?.sex).toBe('female');
+    expect(merged.merged.farmAccounts?.[0]?.permissions.settings).toBe('full');
+    expect(merged.merged.cloudSyncLogs).toHaveLength(2);
   });
 });

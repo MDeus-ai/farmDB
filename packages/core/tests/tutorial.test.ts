@@ -36,4 +36,25 @@ describe('@farmdb/core tutorial steps', () => {
     expect(userSteps.some((s) => s.id === 'backup')).toBe(true);
     expect(userSteps.some((s) => s.id === 'statistics')).toBe(true);
   });
+
+  it('documents current v1.5 workflows in the in-app guide', () => {
+    const stepById = new Map(FARMDB_TUTORIAL_STEPS.map((s) => [s.id, s]));
+    const welcomeText = JSON.stringify(stepById.get('welcome'));
+    const livestockText = JSON.stringify(stepById.get('livestock'));
+    const treeText = JSON.stringify(stepById.get('family_tree'));
+    const milkText = JSON.stringify(stepById.get('production'));
+    const authText = JSON.stringify(stepById.get('accounts_auth'));
+    const settingsText = JSON.stringify(stepById.get('settings'));
+
+    expect(welcomeText).toContain('Sign Out');
+    expect(livestockText).toContain('Sex');
+    expect(livestockText).toContain('Bull');
+    expect(treeText).toContain('Simplified Graph');
+    expect(treeText).toContain('family_tree');
+    expect(milkText).toContain('female');
+    expect(authText).not.toContain('Enter Join Key');
+    expect(settingsText).toContain('Advanced Settings');
+    expect(settingsText).toContain('Native SQLite Database Storage & Read-Only Protection');
+    expect(settingsText).toContain('Cloud Sync & Supabase Database');
+  });
 });

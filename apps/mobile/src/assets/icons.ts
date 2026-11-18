@@ -1,8 +1,14 @@
-import type { CurrencyOption, LivestockStatus, Species } from '@farmdb/core';
+import type {
+  CurrencyOption,
+  LivestockSex,
+  LivestockStatus,
+  Species,
+} from '@farmdb/core';
 
 import barn from '../../assets/icons/barn.png';
 import barnAlt from '../../assets/icons/barn-2.png';
 import budget from '../../assets/icons/budget.png';
+import bull from '../../assets/icons/bull.png';
 import calendar from '../../assets/icons/calendar.png';
 import checkmark from '../../assets/icons/checkmark.png';
 import chicken from '../../assets/icons/chicken.png';
@@ -24,8 +30,11 @@ import duck from '../../assets/icons/duck.png';
 import farmer from '../../assets/icons/farmer.png';
 import farmerAlt from '../../assets/icons/farmer-2.png';
 import farmerFemale from '../../assets/icons/farmer-female.png';
+import female from '../../assets/icons/female.png';
+import field from '../../assets/icons/field.png';
 import gallon from '../../assets/icons/gallon.png';
 import gear from '../../assets/icons/gear.png';
+import male from '../../assets/icons/gender.png';
 import goat from '../../assets/icons/goat.png';
 import groupIcon from '../../assets/icons/group.png';
 import herd from '../../assets/icons/herd.png';
@@ -57,9 +66,11 @@ import usaFlag from '../../assets/icons/usa-flag.png';
 import web from '../../assets/icons/web.png';
 
 export const MOBILE_APP_ICONS = {
+  appLogo: field,
   barn,
   barnAlt,
   budget,
+  bull,
   calendar,
   checkmark,
   chicken,
@@ -81,6 +92,8 @@ export const MOBILE_APP_ICONS = {
   farmer,
   farmerAlt,
   farmerFemale,
+  female,
+  field,
   gallon,
   gear,
   goat,
@@ -93,6 +106,7 @@ export const MOBILE_APP_ICONS = {
   letterX,
   liter,
   livestockGroup,
+  male,
   milkBottle,
   money,
   network: networking,
@@ -149,10 +163,13 @@ export function getCurrencyOptionFlagSource(
   return getCurrencyFlagSource(option.flagKey);
 }
 
-export function getSpeciesPngSource(species: Species): MobilePngIconSource {
+export function getSpeciesPngSource(
+  species: Species,
+  sex?: LivestockSex | null
+): MobilePngIconSource {
   switch (species) {
     case 'cow':
-      return MOBILE_APP_ICONS.cow;
+      return sex === 'male' ? MOBILE_APP_ICONS.bull : MOBILE_APP_ICONS.cow;
     case 'goat':
       return MOBILE_APP_ICONS.goat;
     case 'sheep':
@@ -162,6 +179,12 @@ export function getSpeciesPngSource(species: Species): MobilePngIconSource {
     case 'other':
       return MOBILE_APP_ICONS.chicken;
   }
+}
+
+export function getSexPngSource(
+  sex?: LivestockSex | null
+): MobilePngIconSource {
+  return sex === 'male' ? MOBILE_APP_ICONS.male : MOBILE_APP_ICONS.female;
 }
 
 export function getStatusPngSource(

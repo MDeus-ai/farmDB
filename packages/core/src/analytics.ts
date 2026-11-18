@@ -1,4 +1,7 @@
 import {
+  formatSexLabel,
+  isFemaleMilkProducingAnimal,
+  LIVESTOCK_SEXES,
   LIVESTOCK_STATUSES,
   SPECIES_LIST,
   type AnimalOwnership,
@@ -6,6 +9,7 @@ import {
   type FinancialCategory,
   type FinancialLog,
   type Livestock,
+  type LivestockSex,
   type LivestockStatus,
   type MedicalRecord,
   type ProductRecord,
@@ -95,6 +99,15 @@ export interface LivestockStatusStatPoint {
   sharePercent: number;
 }
 
+export interface SexAnalyticsPoint {
+  sex: LivestockSex;
+  label: string;
+  count: number;
+  activeCount: number;
+  sharePercent: number;
+  milkLiters: number;
+}
+
 export interface LivestockStatisticsInput {
   livestock: readonly Livestock[];
   productRecords: readonly ProductRecord[];
@@ -102,6 +115,7 @@ export interface LivestockStatisticsInput {
   financialLogs: readonly FinancialLog[];
   ownerships?: readonly AnimalOwnership[];
   speciesFilter?: Species | 'all';
+  sexFilter?: LivestockSex | 'all';
   trendDays?: number;
   timeframe?: StatisticsTimeframe;
   todayIso?: string;
@@ -179,9 +193,17 @@ export interface LivestockStatisticsReport {
   soldAnimals: number;
   deceasedAnimals: number;
   activeSharePercent: number;
+  femaleCount: number;
+  maleCount: number;
+  femaleSharePercent: number;
+  maleSharePercent: number;
+  cowsCount: number;
+  bullsCount: number;
+  milkingEligibleCount: number;
   totalMilkLiters: number;
   avgMilkPerRecord: number;
   avgMilkPerAnimal: number;
+  avgMilkPerMilkingFemale: number;
   totalMedicalEvents: number;
   totalMedicalCost: number;
   treatedAnimalsCount: number;
@@ -192,6 +214,7 @@ export interface LivestockStatisticsReport {
   externalOwnedAnimals: number;
   lineageLinkedAnimals: number;
   speciesBreakdown: SpeciesAnalyticsPoint[];
+  sexBreakdown: SexAnalyticsPoint[];
   statusBreakdown: LivestockStatusStatPoint[];
   ageCohorts: AgeCohortPoint[];
   topBreeds: BreedStatPoint[];
@@ -763,6 +786,10 @@ export function buildTopProducers(
   >();
 
   for (const rec of records) {
+    const knownAnimal = animalsById.get(rec.livestockId);
+    if (knownAnimal && !isFemaleMilkProducingAnimal(knownAnimal)) {
+      continue;
+    }
     const current = byAnimal.get(rec.livestockId) ?? {
       totalLiters: 0,
       recordCount: 0,
@@ -779,6 +806,9 @@ export function buildTopProducers(
   const stats: AnimalProductionStat[] = [];
   for (const [livestockId, agg] of byAnimal.entries()) {
     const animal = animalsById.get(livestockId);
+    if (animal && !isFemaleMilkProducingAnimal(animal)) {
+      continue;
+    }
     stats.push({
       livestockId,
       tagNumber: animal?.tagNumber ?? 'UNKNOWN',
@@ -834,6 +864,8 @@ export function computeLivestockStatistics(
   input: LivestockStatisticsInput
 ): LivestockStatisticsReport {
   const speciesFilter = input.speciesFilter ?? 'all';
+  const sexFilter = input.sexFilter ?? 'all';
+  const hasSubsetFilter = speciesFilter !== 'all' || sexFilter !== 'all';
   const todayIso = input.todayIso ?? getTodayIsoDate();
   const explicitTimeframe = input.timeframe;
   const effectiveTimeframe: StatisticsTimeframe =
@@ -845,10 +877,16 @@ export function computeLivestockStatistics(
     ? getTimeframeStartDateIso(explicitTimeframe, todayIso)
     : null;
 
-  const animals =
-    speciesFilter === 'all'
-      ? input.livestock
-      : input.livestock.filter((animal) => animal.species === speciesFilter);
+  const animals = input.livestock.filter((animal) => {
+    if (speciesFilter !== 'all' && animal.species !== speciesFilter) {
+      return false;
+    }
+    const animalSex: LivestockSex = animal.sex === 'male' ? 'male' : 'female';
+    if (sexFilter !== 'all' && animalSex !== sexFilter) {
+      return false;
+    }
+    return true;
+  });
 
   const animalsById = new Map<string, Livestock>();
   for (const animal of animals) {
@@ -856,7 +894,7 @@ export function computeLivestockStatistics(
   }
 
   const productRecords = input.productRecords.filter((rec) => {
-    if (speciesFilter !== 'all' && !animalsById.has(rec.livestockId)) {
+    if (hasSubsetFilter && !animalsById.has(rec.livestockId)) {
       return false;
     }
     if (windowStartIso && rec.date < windowStartIso) {
@@ -866,7 +904,7 @@ export function computeLivestockStatistics(
   });
 
   const medicalRecords = input.medicalRecords.filter((rec) => {
-    if (speciesFilter !== 'all' && !animalsById.has(rec.livestockId)) {
+    if (hasSubsetFilter && !animalsById.has(rec.livestockId)) {
       return false;
     }
     if (windowStartIso && rec.date < windowStartIso) {
@@ -877,7 +915,7 @@ export function computeLivestockStatistics(
 
   const financialLogs = input.financialLogs.filter((log) => {
     if (
-      speciesFilter !== 'all' &&
+      hasSubsetFilter &&
       (log.livestockId === null || !animalsById.has(log.livestockId))
     ) {
       return false;
@@ -891,9 +929,26 @@ export function computeLivestockStatistics(
   let activeAnimals = 0;
   let soldAnimals = 0;
   let deceasedAnimals = 0;
+  let femaleCount = 0;
+  let maleCount = 0;
+  let cowsCount = 0;
+  let bullsCount = 0;
+  let milkingEligibleCount = 0;
   let lineageLinkedAnimals = 0;
   let totalAgeMonths = 0;
   let knownAgeAnimals = 0;
+
+  const sexMap = new Map<LivestockSex, SexAnalyticsPoint>();
+  for (const sx of LIVESTOCK_SEXES) {
+    sexMap.set(sx, {
+      sex: sx,
+      label: formatSexLabel(sx),
+      count: 0,
+      activeCount: 0,
+      sharePercent: 0,
+      milkLiters: 0,
+    });
+  }
 
   const cohortCounts = {
     calf_kid: 0,
@@ -942,6 +997,25 @@ export function computeLivestockStatistics(
     else if (animal.status === 'sold') soldAnimals += 1;
     else if (animal.status === 'deceased') deceasedAnimals += 1;
 
+    const animalSex: LivestockSex = animal.sex === 'male' ? 'male' : 'female';
+    if (animalSex === 'male') {
+      maleCount += 1;
+    } else {
+      femaleCount += 1;
+    }
+    if (animal.species === 'cow') {
+      if (animalSex === 'male') bullsCount += 1;
+      else cowsCount += 1;
+    }
+    if (animal.status === 'active' && isFemaleMilkProducingAnimal(animal)) {
+      milkingEligibleCount += 1;
+    }
+    const sxBucket = sexMap.get(animalSex);
+    if (sxBucket) {
+      sxBucket.count += 1;
+      if (animal.status === 'active') sxBucket.activeCount += 1;
+    }
+
     if (animal.sireId || animal.damId) {
       lineageLinkedAnimals += 1;
     }
@@ -980,6 +1054,11 @@ export function computeLivestockStatistics(
       if (spBucket) {
         spBucket.milkLiters = roundAmount(spBucket.milkLiters + rec.yieldAmount);
         spBucket.milkRecordCount += 1;
+      }
+      const animalSex: LivestockSex = animal.sex === 'male' ? 'male' : 'female';
+      const sxBucket = sexMap.get(animalSex);
+      if (sxBucket) {
+        sxBucket.milkLiters = roundAmount(sxBucket.milkLiters + rec.yieldAmount);
       }
     }
   }
@@ -1048,6 +1127,13 @@ export function computeLivestockStatistics(
   }
 
   const totalAnimals = animals.length;
+  const sexBreakdown: SexAnalyticsPoint[] = LIVESTOCK_SEXES.map((sx) => {
+    const bucket = sexMap.get(sx)!;
+    return {
+      ...bucket,
+      sharePercent: sharePercent(bucket.count, totalAnimals),
+    };
+  });
   const speciesBreakdown: SpeciesAnalyticsPoint[] = [];
   for (const spBucket of speciesMap.values()) {
     spBucket.netAmount = roundAmount(spBucket.incomeAmount - spBucket.expenseAmount);
@@ -1154,6 +1240,13 @@ export function computeLivestockStatistics(
     soldAnimals,
     deceasedAnimals,
     activeSharePercent: sharePercent(activeAnimals, totalAnimals),
+    femaleCount,
+    maleCount,
+    femaleSharePercent: sharePercent(femaleCount, totalAnimals),
+    maleSharePercent: sharePercent(maleCount, totalAnimals),
+    cowsCount,
+    bullsCount,
+    milkingEligibleCount,
     totalMilkLiters,
     avgMilkPerRecord:
       productRecords.length > 0
@@ -1161,6 +1254,8 @@ export function computeLivestockStatistics(
         : 0,
     avgMilkPerAnimal:
       topProducers.length > 0 ? roundAmount(totalMilkLiters / topProducers.length) : 0,
+    avgMilkPerMilkingFemale:
+      milkingEligibleCount > 0 ? roundAmount(totalMilkLiters / milkingEligibleCount) : 0,
     totalMedicalEvents,
     totalMedicalCost,
     treatedAnimalsCount: treatedIds.size,
@@ -1172,6 +1267,7 @@ export function computeLivestockStatistics(
     externalOwnedAnimals: externalAnimalIds.size,
     lineageLinkedAnimals,
     speciesBreakdown,
+    sexBreakdown,
     statusBreakdown,
     ageCohorts,
     topBreeds,

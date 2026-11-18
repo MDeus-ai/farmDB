@@ -1,11 +1,14 @@
 import { and, count, desc, eq, or, sql, type SQL } from 'drizzle-orm';
 import {
   generateId,
+  inferDefaultLivestockSex,
+  LIVESTOCK_SEXES,
   normalizeTagNumber,
   validateNewLivestock,
   validateUpdateLivestock,
   type Livestock,
   type LivestockFilter,
+  type LivestockSex,
   type LivestockStatus,
   type NewLivestockInput,
   type Species,
@@ -57,9 +60,13 @@ export interface FarmSummary {
 type LivestockRow = typeof livestock.$inferSelect;
 
 function mapRowToDomain(row: LivestockRow): Livestock {
+  const sex = (LIVESTOCK_SEXES as readonly string[]).includes(row.sex)
+    ? (row.sex as LivestockSex)
+    : inferDefaultLivestockSex(row.tagNumber);
   return {
     id: row.id,
     species: row.species as Species,
+    sex,
     tagNumber: row.tagNumber,
     name: row.name,
     breed: row.breed,
@@ -91,19 +98,16 @@ export function createLivestockRepository(
   db: FarmDrizzleDb,
   events: DatabaseEventBus
 ): LivestockRepository {
-  async function getAllTagNumbers(): Promise<string[]> {
-    const rows = await db
-      .select({ tagNumber: livestock.tagNumber })
-      .from(livestock);
-    return rows.map((row) => row.tagNumber);
-  }
-
   return {
     async list(filter?: LivestockFilter): Promise<Livestock[]> {
       const conditions: SQL[] = [];
 
       if (filter?.species && filter.species !== 'all') {
         conditions.push(eq(livestock.species, filter.species));
+      }
+
+      if (filter?.sex && filter.sex !== 'all') {
+        conditions.push(eq(livestock.sex, filter.sex));
       }
 
       if (filter?.status && filter.status !== 'all') {
@@ -156,8 +160,11 @@ export function createLivestockRepository(
     },
 
     async create(input: NewLivestockInput): Promise<Livestock> {
-      const existingTags = await getAllTagNumbers();
-      const validation = validateNewLivestock(input, { existingTags });
+      const allLivestock = await this.list({});
+      const validation = validateNewLivestock(input, {
+        existingTags: allLivestock.map((item) => item.tagNumber),
+        allLivestock,
+      });
       if (!validation.ok || !validation.data) {
         const firstError =
           Object.values(validation.errors).find(Boolean) ??
@@ -169,6 +176,7 @@ export function createLivestockRepository(
       const record: typeof livestock.$inferInsert = {
         id: generateId(),
         species: validation.data.species,
+        sex: validation.data.sex,
         tagNumber: validation.data.tagNumber,
         name: validation.data.name,
         breed: validation.data.breed,
@@ -206,11 +214,14 @@ export function createLivestockRepository(
         throw new LivestockNotFoundError(id);
       }
 
-      const existingTags = await getAllTagNumbers();
+      const allLivestock = await this.list({});
       const validation = validateUpdateLivestock(input, {
-        existingTags,
+        existingTags: allLivestock.map((item) => item.tagNumber),
         currentTag: existing.tagNumber,
         currentId: id,
+        currentSpecies: existing.species,
+        currentDob: existing.dob,
+        allLivestock,
       });
 
       if (!validation.ok || !validation.data) {

@@ -1,6 +1,7 @@
 import barn from '@farmdb-icons/barn.png';
 import barnAlt from '@farmdb-icons/barn-2.png';
 import budget from '@farmdb-icons/budget.png';
+import bull from '@farmdb-icons/bull.png';
 import calendar from '@farmdb-icons/calendar.png';
 import checkmark from '@farmdb-icons/checkmark.png';
 import chicken from '@farmdb-icons/chicken.png';
@@ -22,8 +23,11 @@ import duck from '@farmdb-icons/duck.png';
 import farmer from '@farmdb-icons/farmer.png';
 import farmerAlt from '@farmdb-icons/farmer-2.png';
 import farmerFemale from '@farmdb-icons/farmer-female.png';
+import female from '@farmdb-icons/female.png';
+import field from '@farmdb-icons/field.png';
 import gallon from '@farmdb-icons/gallon.png';
 import gear from '@farmdb-icons/gear.png';
+import male from '@farmdb-icons/gender.png';
 import goat from '@farmdb-icons/goat.png';
 import groupIcon from '@farmdb-icons/group.png';
 import herd from '@farmdb-icons/herd.png';
@@ -53,12 +57,19 @@ import upload from '@farmdb-icons/up-loading.png';
 import uploadArrow from '@farmdb-icons/upload-big-arrow.png';
 import usaFlag from '@farmdb-icons/usa-flag.png';
 import web from '@farmdb-icons/web.png';
-import type { CurrencyOption, LivestockStatus, Species } from '@farmdb/core';
+import type {
+  CurrencyOption,
+  LivestockSex,
+  LivestockStatus,
+  Species,
+} from '@farmdb/core';
 
 export const APP_ICONS = {
+  appLogo: field,
   barn,
   barnAlt,
   budget,
+  bull,
   calendar,
   checkmark,
   chicken,
@@ -80,6 +91,8 @@ export const APP_ICONS = {
   farmer,
   farmerAlt,
   farmerFemale,
+  female,
+  field,
   gallon,
   gear,
   goat,
@@ -92,6 +105,7 @@ export const APP_ICONS = {
   letterX,
   liter,
   livestockGroup,
+  male,
   milkBottle,
   money,
   network: networking,
@@ -138,10 +152,13 @@ export function getCurrencyOptionFlag(option: CurrencyOption): string {
   return getCurrencyFlagIcon(option.flagKey);
 }
 
-export function getSpeciesPngIcon(species: Species): string {
+export function getSpeciesPngIcon(
+  species: Species,
+  sex?: LivestockSex | null
+): string {
   switch (species) {
     case 'cow':
-      return APP_ICONS.cow;
+      return sex === 'male' ? APP_ICONS.bull : APP_ICONS.cow;
     case 'goat':
       return APP_ICONS.goat;
     case 'sheep':
@@ -151,6 +168,10 @@ export function getSpeciesPngIcon(species: Species): string {
     case 'other':
       return APP_ICONS.chicken;
   }
+}
+
+export function getSexPngIcon(sex?: LivestockSex | null): string {
+  return sex === 'male' ? APP_ICONS.male : APP_ICONS.female;
 }
 
 export function getStatusPngIcon(status: LivestockStatus): string {

@@ -1,6 +1,7 @@
 import {
   formatAnimalAge,
   formatDisplayDate,
+  formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
   type DateFormatPreference,
@@ -29,7 +30,7 @@ export function buildAnimalSelectOption(
   const label =
     params?.label ??
     (animal.name ? `${animal.tagNumber} · ${animal.name}` : animal.tagNumber);
-  const speciesBreed = `${formatSpeciesLabel(animal.species)}${
+  const speciesBreed = `${formatSpeciesLabel(animal.species, animal.sex)} · ${formatSexLabel(animal.sex)}${
     animal.breed ? ` · ${animal.breed}` : ''
   }`;
   const ageText = formatAnimalAge(animal.dob);
@@ -37,7 +38,7 @@ export function buildAnimalSelectOption(
     ? formatDisplayDate(animal.dob, params?.dateFormat ?? 'iso')
     : 'Unknown DOB';
   const imageSrc = resolveDesktopImageSrc(animal.imageUri);
-  const fallbackIconSrc = getSpeciesPngIcon(animal.species);
+  const fallbackIconSrc = getSpeciesPngIcon(animal.species, animal.sex);
 
   return {
     value: params?.value ?? animal.id,

@@ -1,4 +1,4 @@
-import type { DateFormatPreference, VolumeUnit } from './types';
+import type { DateFormatPreference, LivestockSex, VolumeUnit } from './types';
 
 const LITERS_PER_US_GALLON = 3.785411784;
 
@@ -100,7 +100,13 @@ export function formatVolume(
   return `${value.toFixed(1)} ${getVolumeUnitShortLabel(unit)}`;
 }
 
-export function formatSpeciesLabel(species: string): string {
+export function formatSpeciesLabel(
+  species: string,
+  sex?: LivestockSex | null
+): string {
+  if (species === 'cow' && sex === 'male') {
+    return 'Bull';
+  }
   return species.charAt(0).toUpperCase() + species.slice(1);
 }
 

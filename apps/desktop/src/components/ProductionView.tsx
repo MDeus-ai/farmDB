@@ -15,6 +15,7 @@ import {
   convertDisplayVolumeToLiters,
   convertLitersToDisplayVolume,
   DEFAULT_FARM_SETTINGS,
+  describeModuleAccessLevel,
   filterAndSortRecordsByDate,
   formatCompactAxisNumber,
   formatCurrency,
@@ -22,6 +23,7 @@ import {
   formatVolume,
   getTodayIsoDate,
   getVolumeUnitShortLabel,
+  isFemaleMilkProducingAnimal,
   RECORD_DATE_FILTER_OPTIONS,
   roundAmount,
   validateNewProductRecord,
@@ -37,6 +39,7 @@ import {
   useDeleteProductRecord,
   useFarmSettings,
   useLivestockList,
+  useModulePermissions,
   useProductRecordList,
 } from '@farmdb/db';
 import { APP_ICONS } from '../assets/icons';
@@ -76,7 +79,10 @@ export function ProductionView() {
 
   const animals = livestockQuery.data ?? [];
   const activeAnimals = useMemo(
-    () => animals.filter((a) => a.status === 'active'),
+    () =>
+      animals.filter(
+        (a) => a.status === 'active' && isFemaleMilkProducingAnimal(a)
+      ),
     [animals]
   );
 
@@ -86,6 +92,7 @@ export function ProductionView() {
   );
 
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('production');
 
   const activeAnimalOptions = useMemo<ModernSelectOption<string>[]>(
     () =>
@@ -101,12 +108,14 @@ export function ProductionView() {
   const filterAnimalOptions = useMemo<ModernSelectOption<string>[]>(
     () => [
       { value: '', label: 'All Animals', iconSrc: APP_ICONS.group },
-      ...animals.map((animal) =>
-        buildAnimalSelectOption(animal, {
-          dateFormat: settings.dateFormat,
-          label: `${animal.tagNumber}${animal.name ? ` — ${animal.name}` : ''}`,
-        })
-      ),
+      ...animals
+        .filter((animal) => isFemaleMilkProducingAnimal(animal))
+        .map((animal) =>
+          buildAnimalSelectOption(animal, {
+            dateFormat: settings.dateFormat,
+            label: `${animal.tagNumber}${animal.name ? ` — ${animal.name}` : ''}`,
+          })
+        ),
     ],
     [animals, settings.dateFormat]
   );
@@ -150,8 +159,13 @@ export function ProductionView() {
   const [feedback, setFeedback] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!selectedAnimalId && activeAnimals[0]) {
-      setSelectedAnimalId(activeAnimals[0].id);
+    if (
+      activeAnimals.length > 0 &&
+      (!selectedAnimalId || !activeAnimals.some((a) => a.id === selectedAnimalId))
+    ) {
+      setSelectedAnimalId(activeAnimals[0]!.id);
+    } else if (activeAnimals.length === 0 && selectedAnimalId !== '') {
+      setSelectedAnimalId('');
     }
   }, [activeAnimals, selectedAnimalId]);
 
@@ -251,12 +265,15 @@ export function ProductionView() {
     event.preventDefault();
     setFeedback(null);
 
-    const check = validateNewProductRecord({
-      livestockId: selectedAnimalId,
-      date,
-      yieldAmount: normalizedLiters,
-      qualityNotes,
-    });
+    const check = validateNewProductRecord(
+      {
+        livestockId: selectedAnimalId,
+        date,
+        yieldAmount: normalizedLiters,
+        qualityNotes,
+      },
+      { animal: animalsById.get(selectedAnimalId) }
+    );
 
     if (!check.ok || !check.data) {
       setErrors(check.errors);
@@ -308,6 +325,11 @@ export function ProductionView() {
         <div>
           <h1 className="page-title">Milk Production</h1>
         </div>
+        {(!canEdit || !canDelete) && (
+          <span className="status-pill status-sold">
+            {describeModuleAccessLevel(accessLevel)}
+          </span>
+        )}
       </div>
 
       <div className="stats-grid">
@@ -343,9 +365,13 @@ export function ProductionView() {
       <div className="split-grid">
         <div className="card">
           <h2 className="card-section-title">Daily Yield Entry</h2>
-          {activeAnimals.length === 0 ? (
+          {!canEdit ? (
             <p style={{ color: 'var(--text-muted)', marginBottom: 0 }}>
-              No active animals yet.
+              View-Only Access: Your account can review production logs and charts, but cannot record new yields.
+            </p>
+          ) : activeAnimals.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)', marginBottom: 0 }}>
+              No active female milk-producing animals (cow, goat, or sheep) yet.
             </p>
           ) : (
             <form onSubmit={handleLogSubmit}>
@@ -611,39 +637,45 @@ export function ProductionView() {
                       </td>
                       <td>{rec.qualityNotes ?? '—'}</td>
                       <td>
-                        <div className="row-actions">
-                          {confirmDeleteId === rec.id ? (
-                            <>
+                        {canDelete ? (
+                          <div className="row-actions">
+                            {confirmDeleteId === rec.id ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn btn-danger btn-sm"
+                                  onClick={() => void handleDeleteRecord(rec.id)}
+                                  disabled={deleteMutation.isPending}
+                                >
+                                  <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                                  Confirm
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                >
+                                  <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
                               <button
                                 type="button"
                                 className="btn btn-danger btn-sm"
                                 onClick={() => void handleDeleteRecord(rec.id)}
                                 disabled={deleteMutation.isPending}
+                                aria-label="Delete milk record"
                               >
-                                <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                                Confirm
+                                <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
                               </button>
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => setConfirmDeleteId(null)}
-                              >
-                                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              className="btn btn-danger btn-sm"
-                              onClick={() => void handleDeleteRecord(rec.id)}
-                              disabled={deleteMutation.isPending}
-                              aria-label="Delete milk record"
-                            >
-                              <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
-                            </button>
-                          )}
-                        </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                            Protected
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

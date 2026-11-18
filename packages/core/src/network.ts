@@ -3,12 +3,17 @@ import type { FarmDbSnapshot } from './export';
 import type { AppSectionId } from './navigation';
 import {
   FARM_PERMISSION_MODULES,
+  inferDefaultLivestockSex,
+  LIVESTOCK_SEXES,
+  type CloudSyncLog,
   type FarmAccount,
   type FarmAccountPermissions,
   type FarmAccountRole,
   type FarmAccountStatus,
   type FarmModuleAccessLevel,
   type FarmPermissionModule,
+  type FarmSettings,
+  type LivestockSex,
   type SyncConflictStrategy,
 } from './types';
 
@@ -169,14 +174,17 @@ export const DEFAULT_ADMIN_ACCOUNT: FarmAccount = {
   relationship: 'Primary Farm Owner',
   avatarKey: 'farmer',
   accessCode: null,
+  supabaseUrl: null,
+  supabaseAnonKey: null,
+  cloudWorkspaceId: null,
   isPrimaryAdmin: true,
   canManageNetwork: true,
   canSyncCloud: true,
   permissions: getDefaultPermissionsForRole('admin'),
   status: 'active',
   lastSyncedAt: null,
-  createdAt: 0,
-  updatedAt: 0,
+  createdAt: 1,
+  updatedAt: 1,
 };
 
 export function formatAccountRoleLabel(role: FarmAccountRole): string {
@@ -222,6 +230,19 @@ export function formatAccessLevelLabel(level: FarmModuleAccessLevel): string {
   }
 }
 
+export function describeModuleAccessLevel(level: FarmModuleAccessLevel): string {
+  switch (level) {
+    case 'none':
+      return 'Hidden';
+    case 'view':
+      return 'View Only (Read-Only)';
+    case 'edit':
+      return 'View & Edit (Create & Update)';
+    case 'full':
+      return 'Full Access (Create, Edit & Delete)';
+  }
+}
+
 export function formatPermissionModuleLabel(
   mod: FarmPermissionModule
 ): string {
@@ -262,45 +283,24 @@ export function getAccountModuleAccess(
   ) {
     return 'none';
   }
-  if (isAdminAccount(account)) {
+  if (account.isPrimaryAdmin) {
     return 'full';
   }
   if (section === 'network') {
-    return 'none';
+    return isAdminAccount(account) || account.canManageNetwork
+      ? 'full'
+      : 'edit';
   }
-  if (section === 'statistics') {
-    if (!account.canSyncCloud) {
-      return 'full';
-    }
-    const level = account.permissions.statistics;
-    return level === 'none' ? 'view' : (level ?? 'view');
-  }
-  if (section === 'backup') {
-    if (!account.canSyncCloud) {
-      return 'full';
-    }
-    const level = account.permissions.backup;
-    return level === 'none' ? 'view' : level;
-  }
-  if (section === 'settings') {
-    const level = account.permissions.settings;
-    return level === 'none' ? 'view' : level;
-  }
-  return account.permissions[section] ?? 'none';
+  return (
+    account.permissions?.[section] ??
+    (isAdminAccount(account) ? 'full' : 'none')
+  );
 }
 
 export function canAccountViewModule(
   account: FarmAccount | null | undefined,
   section: AppSectionId
 ): boolean {
-  if (!account) return true;
-  if (isAdminAccount(account)) return true;
-  if (account.status === 'suspended' || account.status === 'pending') {
-    return false;
-  }
-  if (section === 'network') {
-    return false;
-  }
   return getAccountModuleAccess(account, section) !== 'none';
 }
 
@@ -370,6 +370,47 @@ function mergeTableRows<T extends TimestampedEntity>(
   }
 
   return { merged, pulledCount, pushedCount };
+}
+
+const LOCAL_ONLY_SETTINGS_KEYS = new Set<keyof FarmSettings>([
+  'supabaseUrl',
+  'supabaseAnonKey',
+  'cloudWorkspaceId',
+  'cloudSyncEnabled',
+  'activeAccountId',
+]);
+
+function extractSharedSettings(settings: FarmSettings): Record<string, unknown> {
+  const shared: Record<string, unknown> = {};
+  const keys = (Object.keys(settings) as Array<keyof FarmSettings>).sort();
+  for (const key of keys) {
+    if (!LOCAL_ONLY_SETTINGS_KEYS.has(key)) {
+      shared[key] = settings[key];
+    }
+  }
+  return shared;
+}
+
+function mergeCloudSyncLogs(
+  localLogs: readonly CloudSyncLog[],
+  remoteLogs: readonly CloudSyncLog[]
+): CloudSyncLog[] {
+  const byId = new Map<string, CloudSyncLog>();
+  for (const log of remoteLogs) {
+    const existing = byId.get(log.id);
+    if (!existing || log.createdAt > existing.createdAt) {
+      byId.set(log.id, log);
+    }
+  }
+  for (const log of localLogs) {
+    const existing = byId.get(log.id);
+    if (!existing || log.createdAt >= existing.createdAt) {
+      byId.set(log.id, log);
+    }
+  }
+  return Array.from(byId.values())
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 150);
 }
 
 export interface MergeSnapshotsResult {
@@ -455,25 +496,136 @@ export function mergeFarmSnapshots(
     strategy
   );
 
-  // Preserve device-local Supabase credentials while letting shared farm metadata merge cleanly.
-  const mergedSettings = {
+  const localSettingsTs = localSnapshot.settingsUpdatedAt ?? 0;
+  const remoteSettingsTs = remoteSnapshot.settingsUpdatedAt ?? 0;
+  const useRemoteSettings =
+    strategy === 'cloud_priority' ||
+    (strategy === 'last_write_wins' &&
+      remoteSettingsTs >= localSettingsTs &&
+      remoteSettingsTs > 0);
+
+  const sharedSettingsDiffer =
+    JSON.stringify(extractSharedSettings(localSnapshot.settings)) !==
+    JSON.stringify(extractSharedSettings(remoteSnapshot.settings));
+
+  const settingsPulledCount = sharedSettingsDiffer && useRemoteSettings ? 1 : 0;
+  const settingsPushedCount = sharedSettingsDiffer && !useRemoteSettings ? 1 : 0;
+
+  // Preserve device-local Supabase credentials/session while letting shared farm settings sync cleanly.
+  const mergedSettings: FarmSettings = {
     ...DEFAULT_FARM_SETTINGS,
-    ...(strategy === 'cloud_priority'
-      ? remoteSnapshot.settings
-      : localSnapshot.settings),
-    supabaseUrl: localSnapshot.settings.supabaseUrl,
-    supabaseAnonKey: localSnapshot.settings.supabaseAnonKey,
-    cloudWorkspaceId: localSnapshot.settings.cloudWorkspaceId,
+    ...(useRemoteSettings ? remoteSnapshot.settings : localSnapshot.settings),
+    supabaseUrl:
+      localSnapshot.settings.supabaseUrl || remoteSnapshot.settings.supabaseUrl,
+    supabaseAnonKey:
+      localSnapshot.settings.supabaseAnonKey ||
+      remoteSnapshot.settings.supabaseAnonKey,
+    cloudWorkspaceId:
+      localSnapshot.settings.cloudWorkspaceId ||
+      remoteSnapshot.settings.cloudWorkspaceId,
     cloudSyncEnabled: localSnapshot.settings.cloudSyncEnabled,
     activeAccountId: localSnapshot.settings.activeAccountId,
   };
+
+  const mergedLogs = mergeCloudSyncLogs(
+    localSnapshot.cloudSyncLogs ?? [],
+    remoteSnapshot.cloudSyncLogs ?? []
+  );
+
+  const localLivestockMap = new Map(
+    localSnapshot.livestock.map((row) => [row.id, row])
+  );
+  const remoteLivestockMap = new Map(
+    remoteSnapshot.livestock.map((row) => [row.id, row])
+  );
+
+  const localAccountsMap = new Map(
+    (localSnapshot.farmAccounts ?? []).map((acc) => [acc.id, acc])
+  );
+  const remoteAccountsMap = new Map(
+    (remoteSnapshot.farmAccounts ?? []).map((acc) => [acc.id, acc])
+  );
+  const mergedAccounts = accountsRes.merged.map((acc) => {
+    const localAcc = localAccountsMap.get(acc.id);
+    const remoteAcc = remoteAccountsMap.get(acc.id);
+    const resolvedAccessCode =
+      acc.accessCode && acc.accessCode.trim().length > 0
+        ? acc.accessCode
+        : (remoteAcc?.accessCode && remoteAcc.accessCode.trim().length > 0
+            ? remoteAcc.accessCode
+            : localAcc?.accessCode ?? null);
+    const isAdmin = Boolean(acc.isPrimaryAdmin || acc.role === 'admin');
+    const pickCred = (
+      a?: string | null,
+      b?: string | null,
+      c?: string | null,
+      fallback?: string
+    ): string | null => {
+      for (const candidate of [a, b, c]) {
+        if (candidate && candidate.trim().length > 0) return candidate.trim();
+      }
+      if (isAdmin && fallback && fallback.trim().length > 0) {
+        return fallback.trim();
+      }
+      return null;
+    };
+    return {
+      ...acc,
+      accessCode: resolvedAccessCode,
+      supabaseUrl: isAdmin
+        ? pickCred(
+            acc.supabaseUrl,
+            remoteAcc?.supabaseUrl,
+            localAcc?.supabaseUrl,
+            mergedSettings.supabaseUrl
+          )
+        : null,
+      supabaseAnonKey: isAdmin
+        ? pickCred(
+            acc.supabaseAnonKey,
+            remoteAcc?.supabaseAnonKey,
+            localAcc?.supabaseAnonKey,
+            mergedSettings.supabaseAnonKey
+          )
+        : null,
+      cloudWorkspaceId: isAdmin
+        ? pickCred(
+            acc.cloudWorkspaceId,
+            remoteAcc?.cloudWorkspaceId,
+            localAcc?.cloudWorkspaceId,
+            mergedSettings.cloudWorkspaceId
+          )
+        : null,
+      permissions: normalizeAccountPermissions(acc.permissions, acc.role),
+    };
+  });
+
+  const mergedLivestock = livestockRes.merged.map((animal) => {
+    const normalizedSex = (LIVESTOCK_SEXES as readonly string[]).includes(animal.sex)
+      ? (animal.sex as LivestockSex)
+      : inferDefaultLivestockSex(animal.tagNumber);
+    const uri = animal.imageUri ?? '';
+    if (uri.startsWith('data:image/')) {
+      return { ...animal, sex: normalizedSex };
+    }
+    const localUri = localLivestockMap.get(animal.id)?.imageUri ?? '';
+    const remoteUri = remoteLivestockMap.get(animal.id)?.imageUri ?? '';
+    if (remoteUri.startsWith('data:image/')) {
+      return { ...animal, sex: normalizedSex, imageUri: remoteUri };
+    }
+    if (localUri.startsWith('data:image/')) {
+      return { ...animal, sex: normalizedSex, imageUri: localUri };
+    }
+    return { ...animal, sex: normalizedSex };
+  });
 
   const merged: FarmDbSnapshot = {
     version: 1,
     app: 'farmDB',
     exportedAt: new Date().toISOString(),
     settings: mergedSettings,
-    livestock: livestockRes.merged,
+    settingsUpdatedAt: Math.max(localSettingsTs, remoteSettingsTs, Date.now()),
+    livestock: mergedLivestock,
     productRecords: prodRes.merged,
     medicalRecords: medRes.merged,
     financialLogs: finRes.merged,
@@ -482,7 +634,8 @@ export function mergeFarmSnapshots(
     workerPayments: paymentsRes.merged,
     workerTasks: tasksRes.merged,
     animalOwnerships: ownershipsRes.merged,
-    farmAccounts: accountsRes.merged,
+    farmAccounts: mergedAccounts,
+    cloudSyncLogs: mergedLogs,
   };
 
   const recordsPulled =
@@ -495,7 +648,8 @@ export function mergeFarmSnapshots(
     paymentsRes.pulledCount +
     tasksRes.pulledCount +
     ownershipsRes.pulledCount +
-    accountsRes.pulledCount;
+    accountsRes.pulledCount +
+    settingsPulledCount;
 
   const recordsPushed =
     livestockRes.pushedCount +
@@ -507,7 +661,8 @@ export function mergeFarmSnapshots(
     paymentsRes.pushedCount +
     tasksRes.pushedCount +
     ownershipsRes.pushedCount +
-    accountsRes.pushedCount;
+    accountsRes.pushedCount +
+    settingsPushedCount;
 
   return { merged, recordsPulled, recordsPushed };
 }

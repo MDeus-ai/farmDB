@@ -7,9 +7,13 @@ import {
   formatDisplayDate,
   formatVolume,
   generateId,
+  isMilkProducingSpecies,
   normalizeTagNumber,
   validateFarmSettings,
+  validateNewAnimalOwnership,
+  validateNewFinancialLog,
   validateNewLivestock,
+  validateNewProductRecord,
   validateUpdateLivestock,
 } from '../src/index';
 
@@ -33,6 +37,7 @@ describe('@farmdb/core validation', () => {
     expect(result.ok).toBe(true);
     expect(result.data).toEqual({
       species: 'cow',
+      sex: 'female',
       tagNumber: 'COW-402',
       name: 'Bessie',
       breed: 'Holstein',
@@ -158,5 +163,89 @@ describe('@farmdb/core validation', () => {
     expect(formatDisplayDate('2026-11-17', 'mdy')).toBe('11/17/2026');
     expect(formatVolume(10, 'liters')).toBe('10.0 L');
     expect(formatVolume(3.785411784, 'gallons')).toBe('1.0 gal');
+  });
+
+  it('enforces milk-producing species, realistic yields, date coherence, and category matching', () => {
+    expect(isMilkProducingSpecies('cow')).toBe(true);
+    expect(isMilkProducingSpecies('goat')).toBe(true);
+    expect(isMilkProducingSpecies('sheep')).toBe(true);
+    expect(isMilkProducingSpecies('duck')).toBe(false);
+    expect(isMilkProducingSpecies('other')).toBe(false);
+
+    const nonDairyMilk = validateNewProductRecord(
+      { livestockId: 'd1', date: '2026-11-10', yieldAmount: 5 },
+      { animal: { species: 'duck', dob: '2024-01-01', status: 'active' }, todayIso: '2026-11-18' }
+    );
+    expect(nonDairyMilk.ok).toBe(false);
+    expect(nonDairyMilk.errors.livestockId).toContain('milk-producing animals');
+
+    const bullMilk = validateNewProductRecord(
+      { livestockId: 'b1', date: '2026-11-10', yieldAmount: 10 },
+      { animal: { species: 'cow', sex: 'male', dob: '2022-01-01', status: 'active' }, todayIso: '2026-11-18' }
+    );
+    expect(bullMilk.ok).toBe(false);
+    expect(bullMilk.errors.livestockId).toContain('male');
+
+    const invalidSireSex = validateNewLivestock(
+      { tagNumber: 'COW-777', species: 'cow', sex: 'female', sireId: 'f1' },
+      {
+        allLivestock: [
+          {
+            id: 'f1',
+            species: 'cow',
+            sex: 'female',
+            tagNumber: 'COW-100',
+            name: 'Bella',
+            breed: null,
+            dob: '2020-01-01',
+            imageUri: null,
+            sireId: null,
+            damId: null,
+            status: 'active',
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }
+    );
+    expect(invalidSireSex.ok).toBe(false);
+    expect(invalidSireSex.errors.sireId).toContain('male');
+
+    const absurdYield = validateNewProductRecord(
+      { livestockId: 'c1', date: '2026-11-10', yieldAmount: 400 },
+      { animal: { species: 'cow', dob: '2022-01-01', status: 'active' }, todayIso: '2026-11-18' }
+    );
+    expect(absurdYield.ok).toBe(false);
+    expect(absurdYield.errors.yieldAmount).toBeDefined();
+
+    const preBirthMilk = validateNewProductRecord(
+      { livestockId: 'c1', date: '2021-05-01', yieldAmount: 12 },
+      { animal: { species: 'cow', dob: '2022-01-01', status: 'active' }, todayIso: '2026-11-18' }
+    );
+    expect(preBirthMilk.ok).toBe(false);
+    expect(preBirthMilk.errors.date).toBeDefined();
+
+    const badFinCategory = validateNewFinancialLog(
+      { date: '2026-11-10', transactionType: 'income', category: 'veterinary', amount: 50 },
+      { todayIso: '2026-11-18' }
+    );
+    expect(badFinCategory.ok).toBe(false);
+    expect(badFinCategory.errors.category).toBeDefined();
+
+    const badOwnershipEnd = validateNewAnimalOwnership({
+      livestockId: 'c1',
+      ownerName: 'Partner Farm',
+      startDate: '2026-11-15',
+      expectedEndDate: '2026-11-01',
+    });
+    expect(badOwnershipEnd.ok).toBe(false);
+    expect(badOwnershipEnd.errors.expectedEndDate).toBeDefined();
+
+    const pre1980Animal = validateNewLivestock(
+      { tagNumber: 'COW-OLD', dob: '1970-01-01' },
+      { todayIso: '2026-11-18' }
+    );
+    expect(pre1980Animal.ok).toBe(false);
+    expect(pre1980Animal.errors.dob).toBeDefined();
   });
 });

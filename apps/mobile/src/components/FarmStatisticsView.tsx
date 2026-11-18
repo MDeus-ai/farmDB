@@ -12,10 +12,13 @@ import {
   formatCategoryAxisLabel,
   formatCompactAxisNumber,
   formatCurrency,
+  formatSexLabel,
   formatSpeciesLabel,
   getVolumeUnitShortLabel,
+  LIVESTOCK_SEXES,
   SPECIES_LIST,
   STATISTICS_TIMEFRAME_OPTIONS,
+  type LivestockSex,
   type Species,
   type StatisticsTimeframe,
 } from '@farmdb/core';
@@ -26,7 +29,11 @@ import {
   useOwnershipList,
   useProductRecordList,
 } from '@farmdb/db';
-import { getSpeciesPngSource, MOBILE_APP_ICONS } from '../assets/icons';
+import {
+  getSexPngSource,
+  getSpeciesPngSource,
+  MOBILE_APP_ICONS,
+} from '../assets/icons';
 import {
   FARMDB_COLORS,
   FARMDB_FONTS,
@@ -34,7 +41,7 @@ import {
 } from '../theme/uiScale';
 import { computeMobileYAxisGutter } from '../utils/chartAxis';
 import { AnimalEyeButton } from './AnimalQuickPreviewModal';
-import { AppIcon, SpeciesIcon } from './FarmIcons';
+import { AppIcon, SexIcon, SpeciesIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { ModernDropdown, type ModernDropdownOption } from './ModernDropdown';
 
@@ -60,9 +67,22 @@ function formatAgeMonthsSummary(avgMonths: number | null): string {
   return rem === 0 ? `${years} yr${years === 1 ? '' : 's'}` : `${years}y ${rem}m`;
 }
 
+type MobileStatsSpeciesFilter =
+  | 'all'
+  | 'cow'
+  | 'bull'
+  | 'cattle'
+  | Exclude<Species, 'cow'>;
+
 export function FarmStatisticsView() {
-  const [speciesFilter, setSpeciesFilter] = useState<Species | 'all'>('all');
+  const [speciesFilter, setSpeciesFilter] = useState<MobileStatsSpeciesFilter>('all');
+  const [sexFilter, setSexFilter] = useState<LivestockSex | 'all'>('all');
   const [timeframe, setTimeframe] = useState<StatisticsTimeframe>('14d');
+
+  const querySpecies: Species | 'all' =
+    speciesFilter === 'bull' || speciesFilter === 'cattle' || speciesFilter === 'cow'
+      ? 'cow'
+      : speciesFilter;
 
   const ui = useUiScale();
   const livestockQuery = useLivestockList({});
@@ -76,6 +96,14 @@ export function FarmStatisticsView() {
   const volumeUnit = settings.volumeUnit;
   const volumeShort = getVolumeUnitShortLabel(volumeUnit);
 
+  const animalsById = useMemo(() => {
+    const map = new Map<string, NonNullable<typeof livestockQuery.data>[number]>();
+    for (const animal of livestockQuery.data ?? []) {
+      map.set(animal.id, animal);
+    }
+    return map;
+  }, [livestockQuery.data]);
+
   const report = useMemo(
     () =>
       computeLivestockStatistics({
@@ -84,7 +112,8 @@ export function FarmStatisticsView() {
         medicalRecords: medicalQuery.data ?? [],
         financialLogs: financialQuery.data ?? [],
         ownerships: ownershipQuery.data ?? [],
-        speciesFilter,
+        speciesFilter: querySpecies,
+        sexFilter,
         timeframe,
       }),
     [
@@ -93,18 +122,34 @@ export function FarmStatisticsView() {
       medicalQuery.data,
       financialQuery.data,
       ownershipQuery.data,
-      speciesFilter,
+      querySpecies,
+      sexFilter,
       timeframe,
     ]
   );
 
-  const speciesOptions = useMemo<ModernDropdownOption<Species | 'all'>[]>(
+  const speciesOptions = useMemo<ModernDropdownOption<MobileStatsSpeciesFilter>[]>(
     () => [
       { value: 'all', label: 'All Species', iconSource: MOBILE_APP_ICONS.group },
-      ...SPECIES_LIST.map((sp) => ({
-        value: sp,
+      { value: 'cow', label: 'Cow', iconSource: getSpeciesPngSource('cow', 'female') },
+      { value: 'bull', label: 'Bull', iconSource: getSpeciesPngSource('cow', 'male') },
+      { value: 'cattle', label: 'Cattle (All)', iconSource: MOBILE_APP_ICONS.herd },
+      ...SPECIES_LIST.filter((sp) => sp !== 'cow').map((sp) => ({
+        value: sp as MobileStatsSpeciesFilter,
         label: formatSpeciesLabel(sp),
         iconSource: getSpeciesPngSource(sp),
+      })),
+    ],
+    []
+  );
+
+  const sexOptions = useMemo<ModernDropdownOption<LivestockSex | 'all'>[]>(
+    () => [
+      { value: 'all', label: 'All Sexes', iconSource: MOBILE_APP_ICONS.group },
+      ...LIVESTOCK_SEXES.map((sx) => ({
+        value: sx,
+        label: formatSexLabel(sx),
+        iconSource: getSexPngSource(sx),
       })),
     ],
     []
@@ -130,6 +175,10 @@ export function FarmStatisticsView() {
   );
   const avgMilkAnimalDisplay = convertLitersToDisplayVolume(
     report.avgMilkPerAnimal,
+    volumeUnit
+  );
+  const avgMilkFemaleDisplay = convertLitersToDisplayVolume(
+    report.avgMilkPerMilkingFemale,
     volumeUnit
   );
 
@@ -182,7 +231,29 @@ export function FarmStatisticsView() {
           <ModernDropdown
             value={speciesFilter}
             options={speciesOptions}
-            onChange={setSpeciesFilter}
+            onChange={(next) => {
+              setSpeciesFilter(next);
+              if (next === 'cow') {
+                setSexFilter('female');
+              } else if (next === 'bull') {
+                setSexFilter('male');
+              } else {
+                setSexFilter('all');
+              }
+            }}
+          />
+
+          <ModernDropdown
+            value={sexFilter}
+            options={sexOptions}
+            onChange={(nextSex) => {
+              setSexFilter(nextSex);
+              if (speciesFilter === 'cow' || speciesFilter === 'bull' || speciesFilter === 'cattle') {
+                setSpeciesFilter(
+                  nextSex === 'male' ? 'bull' : nextSex === 'female' ? 'cow' : 'cattle'
+                );
+              }
+            }}
           />
 
           <View style={styles.segmentRow}>
@@ -252,12 +323,54 @@ export function FarmStatisticsView() {
             },
           ]}
         >
+          <Text style={[styles.statLabel, { fontSize: ui.font(11) }]}>Gender &amp; Cattle Split</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <SexIcon sex="female" size={ui.font(15)} />
+              <Text style={[styles.statValue, { fontSize: ui.font(17) }]}>
+                {report.femaleCount}
+              </Text>
+            </View>
+            <Text style={[styles.mutedText, { fontSize: ui.font(14) }]}>/</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <SexIcon sex="male" size={ui.font(15)} />
+              <Text style={[styles.statValue, { fontSize: ui.font(17) }]}>
+                {report.maleCount}
+              </Text>
+            </View>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+            <AppIcon name="cow" size={ui.font(12)} />
+            <Text style={[styles.statHint, { fontSize: ui.font(11) }]}>
+              {report.cowsCount} Cow
+            </Text>
+            <Text style={[styles.statHint, { fontSize: ui.font(11) }]}>·</Text>
+            <AppIcon name="bull" size={ui.font(12)} />
+            <Text style={[styles.statHint, { fontSize: ui.font(11) }]}>
+              {report.bullsCount} Bull
+            </Text>
+          </View>
+        </View>
+
+        <View
+          style={[
+            styles.statBox,
+            {
+              padding: ui.space(12),
+              borderRadius: ui.radius,
+              flexBasis: ui.isCompactPhone && (ui.isLargeText || ui.isLargeDensity) ? '100%' : '45%',
+              minWidth: 134,
+            },
+          ]}
+        >
           <Text style={[styles.statLabel, { fontSize: ui.font(11) }]}>Total Milk</Text>
           <Text style={[styles.statValue, { fontSize: ui.font(17) }]}>
             {totalMilkDisplay.toFixed(1)} {volumeShort}
           </Text>
           <Text style={[styles.statHint, { fontSize: ui.font(11) }]}>
-            Avg {avgMilkAnimalDisplay.toFixed(1)} {volumeShort} / cow
+            {report.milkingEligibleCount > 0
+              ? `Avg ${avgMilkFemaleDisplay.toFixed(1)} ${volumeShort} / milking female`
+              : `Avg ${avgMilkAnimalDisplay.toFixed(1)} ${volumeShort} / animal`}
           </Text>
         </View>
 
@@ -646,10 +759,21 @@ export function FarmStatisticsView() {
               return topSlice.map((item) => {
                 const pct = Math.max(6, Math.round((item.totalLiters / maxYield) * 100));
                 const totalDisp = convertLitersToDisplayVolume(item.totalLiters, volumeUnit);
+                const knownAnimal = animalsById.get(item.livestockId);
                 return (
                   <View key={item.livestockId} style={{ gap: 4 }}>
                     <View style={[styles.splitRowBetween, { flexWrap: 'wrap' }]}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 140 }}>
+                        {knownAnimal ? (
+                          <SpeciesIcon
+                            species={knownAnimal.species}
+                            sex={knownAnimal.sex}
+                            size={ui.font(16)}
+                          />
+                        ) : null}
+                        {knownAnimal ? (
+                          <SexIcon sex={knownAnimal.sex} size={ui.font(12)} />
+                        ) : null}
                         <Text style={[styles.rowPrimary, { fontSize: ui.font(13), flexShrink: 1 }]} numberOfLines={2}>
                           {item.name ? `${item.name} (${item.tagNumber})` : item.tagNumber}
                         </Text>
@@ -721,6 +845,48 @@ export function FarmStatisticsView() {
         )}
       </View>
 
+      {/* Card 5b: Gender & Dairy-Eligibility Mix */}
+      <View style={cardStyle}>
+        <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+          Gender &amp; Dairy-Eligibility Mix
+        </Text>
+        <View style={{ gap: ui.space(10) }}>
+          {report.sexBreakdown.map((sx) => {
+            const isFemale = sx.sex === 'female';
+            const fillColor = isFemale ? '#b83b72' : '#1e5f8a';
+            const milkDisp = convertLitersToDisplayVolume(sx.milkLiters, volumeUnit);
+            return (
+              <View key={sx.sex} style={{ gap: 4 }}>
+                <View style={[styles.splitRowBetween, { flexWrap: 'wrap' }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <SexIcon sex={sx.sex} size={ui.font(15)} />
+                    <Text style={[styles.rowPrimary, { fontSize: ui.font(13) }]}>
+                      {sx.label} ({sx.activeCount} active)
+                    </Text>
+                  </View>
+                  <Text style={[styles.rowMetric, { fontSize: ui.font(13), color: fillColor }]}>
+                    {sx.count} ({sx.sharePercent}%)
+                  </Text>
+                </View>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${Math.min(100, sx.sharePercent)}%`, backgroundColor: fillColor },
+                    ]}
+                  />
+                </View>
+                <Text style={[styles.mutedText, { fontSize: ui.font(11) }]}>
+                  {isFemale
+                    ? `${milkDisp.toFixed(1)} ${volumeShort} milk (${report.milkingEligibleCount} active milking females)`
+                    : 'Non-milking male cohort'}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+
       {/* Card 6: Species Summary List */}
       {report.speciesBreakdown.length > 0 ? (
         <View style={cardStyle}>
@@ -730,10 +896,19 @@ export function FarmStatisticsView() {
           <View style={{ gap: ui.space(8) }}>
             {report.speciesBreakdown.map((sp) => (
               <View key={sp.species} style={styles.speciesSummaryRow}>
-                <SpeciesIcon species={sp.species} size={ui.font(20)} />
+                <SpeciesIcon
+                  species={sp.species}
+                  sex={sexFilter === 'male' ? 'male' : 'female'}
+                  size={ui.font(20)}
+                />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={[styles.rowPrimary, { fontSize: ui.font(13) }]}>
-                    {sp.label} ({sp.totalCount} total · {sp.activeCount} active)
+                    {sp.species === 'cow' && sexFilter === 'male'
+                      ? 'Bull'
+                      : sp.species === 'cow' && sexFilter === 'all'
+                        ? `Cattle (${report.cowsCount} Cow · ${report.bullsCount} Bull)`
+                        : sp.label}{' '}
+                    ({sp.totalCount} total · {sp.activeCount} active)
                   </Text>
                   <Text style={[styles.mutedText, { fontSize: ui.font(11) }]}>
                     Milk: {convertLitersToDisplayVolume(sp.milkLiters, volumeUnit).toFixed(1)}{' '}

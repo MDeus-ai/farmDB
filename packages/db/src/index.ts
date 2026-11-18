@@ -14,4 +14,5 @@ export * from './repositories/ownershipRepository';
 export * from './repositories/networkRepository';
 export * from './repositories/settingsRepository';
 export * from './repositories/backupRepository';
+export * from './rbac';
 export * from './react';

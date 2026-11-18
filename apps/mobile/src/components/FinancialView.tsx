@@ -22,6 +22,7 @@ import {
   RECORD_DATE_FILTER_OPTIONS,
   type DateSortDirection,
   type FinancialLog,
+  describeModuleAccessLevel,
   type RecordDateFilter,
   type TransactionType,
 } from '@farmdb/core';
@@ -29,6 +30,7 @@ import {
   useDeleteFinancialLog,
   useFinancialLogList,
   useLivestockList,
+  useModulePermissions,
   useUpdateFarmSettings,
 } from '@farmdb/db';
 import {
@@ -55,6 +57,7 @@ import {
 export function FinancialView() {
   const ui = useUiScale();
   const { settings } = ui;
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('financial');
   const iconMode = settings.mobileIconMode;
 
   const [typeFilter, setTypeFilter] = useState<TransactionType | 'all'>('all');
@@ -186,6 +189,7 @@ export function FinancialView() {
   );
 
   async function handleSaveSettings() {
+    if (!canEdit) return;
     setSettingsMsg(null);
     try {
       await updateSettingsMutation.mutateAsync({
@@ -199,6 +203,7 @@ export function FinancialView() {
   }
 
   async function handleDeleteLog(id: string) {
+    if (!canDelete) return;
     if (settings.confirmBeforeDelete && confirmDeleteId !== id) {
       setConfirmDeleteId(id);
       return;
@@ -296,29 +301,47 @@ export function FinancialView() {
             </View>
           </View>
 
-          <Pressable
-            accessibilityLabel="Record income or expense"
-            style={[
-              styles.addBtn,
-              {
-                minHeight: ui.controlHeight,
-                paddingHorizontal: ui.space(12),
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-              },
-            ]}
-            onPress={() => {
-              setEditing(null);
-              setModalVisible(true);
-            }}
-          >
-            <AppIcon name="plus" size={ui.font(18)} color="#ffffff" />
-            <Text style={[styles.addBtnText, { fontSize: ui.font(14) }]}>
-              {iconMode ? 'Add Entry' : 'Record Income / Expense'}
-            </Text>
-          </Pressable>
+          {canEdit ? (
+            <Pressable
+              accessibilityLabel="Record income or expense"
+              style={[
+                styles.addBtn,
+                {
+                  minHeight: ui.controlHeight,
+                  paddingHorizontal: ui.space(12),
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                },
+              ]}
+              onPress={() => {
+                setEditing(null);
+                setModalVisible(true);
+              }}
+            >
+              <AppIcon name="plus" size={ui.font(18)} color="#ffffff" />
+              <Text style={[styles.addBtnText, { fontSize: ui.font(14) }]}>
+                {iconMode ? 'Add Entry' : 'Record Income / Expense'}
+              </Text>
+            </Pressable>
+          ) : (
+            <View
+              style={{
+                alignSelf: 'flex-start',
+                paddingHorizontal: ui.space(10),
+                paddingVertical: ui.space(6),
+                borderRadius: 999,
+                backgroundColor: '#f3efe4',
+                borderWidth: 1,
+                borderColor: FARMDB_COLORS.border,
+              }}
+            >
+              <Text style={{ fontFamily: FARMDB_FONTS.bold, fontSize: ui.font(11), color: FARMDB_COLORS.textMuted }}>
+                {describeModuleAccessLevel(accessLevel)}
+              </Text>
+            </View>
+          )}
         </View>
 
         <View
@@ -504,17 +527,19 @@ export function FinancialView() {
                 placeholder="KES"
               />
             ) : null}
-            <Pressable
-              style={[
-                styles.saveSmallBtn,
-                { minHeight: ui.controlHeight, minWidth: 74, justifyContent: 'center', alignItems: 'center' },
-              ]}
-              onPress={() => void handleSaveSettings()}
-            >
-              <Text style={[styles.saveSmallBtnText, { fontSize: ui.font(13) }]}>
-                Save
-              </Text>
-            </Pressable>
+            {canEdit ? (
+              <Pressable
+                style={[
+                  styles.saveSmallBtn,
+                  { minHeight: ui.controlHeight, minWidth: 74, justifyContent: 'center', alignItems: 'center' },
+                ]}
+                onPress={() => void handleSaveSettings()}
+              >
+                <Text style={[styles.saveSmallBtnText, { fontSize: ui.font(13) }]}>
+                  Save
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
           {settingsMsg ? (
             <Text style={[styles.settingsMsg, { fontSize: ui.font(12) }]}>
@@ -632,118 +657,124 @@ export function FinancialView() {
                     </View>
                   </View>
 
-                  <View style={[styles.rowBtns, { flexWrap: 'wrap' }]}>
-                    {confirmDeleteId === log.id ? (
-                      <>
-                        <Pressable
-                          accessibilityLabel="Confirm delete"
-                          style={[
-                            styles.deleteBtn,
-                            {
-                              minHeight: ui.chipHeight - 2,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 4,
-                            },
-                          ]}
-                          onPress={() => void handleDeleteLog(log.id)}
-                        >
-                          <AppIcon
-                            name="check"
-                            size={ui.font(14)}
-                            color={FARMDB_COLORS.danger}
-                          />
-                          {!iconMode ? (
-                            <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
-                              Confirm
-                            </Text>
+                  {canEdit || canDelete ? (
+                    <View style={[styles.rowBtns, { flexWrap: 'wrap' }]}>
+                      {canDelete && confirmDeleteId === log.id ? (
+                        <>
+                          <Pressable
+                            accessibilityLabel="Confirm delete"
+                            style={[
+                              styles.deleteBtn,
+                              {
+                                minHeight: ui.chipHeight - 2,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 4,
+                              },
+                            ]}
+                            onPress={() => void handleDeleteLog(log.id)}
+                          >
+                            <AppIcon
+                              name="check"
+                              size={ui.font(14)}
+                              color={FARMDB_COLORS.danger}
+                            />
+                            {!iconMode ? (
+                              <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
+                                Confirm
+                              </Text>
+                            ) : null}
+                          </Pressable>
+                          <Pressable
+                            accessibilityLabel="Keep entry"
+                            style={[
+                              styles.editBtn,
+                              {
+                                minHeight: ui.chipHeight - 2,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 4,
+                              },
+                            ]}
+                            onPress={() => setConfirmDeleteId(null)}
+                          >
+                            <AppIcon
+                              name="close"
+                              size={ui.font(14)}
+                              color={FARMDB_COLORS.text}
+                            />
+                            {!iconMode ? (
+                              <Text style={[styles.editBtnText, { fontSize: ui.font(11) }]}>
+                                Keep
+                              </Text>
+                            ) : null}
+                          </Pressable>
+                        </>
+                      ) : (
+                        <>
+                          {canEdit ? (
+                            <Pressable
+                              accessibilityLabel="Edit financial entry"
+                              style={[
+                                styles.editBtn,
+                                {
+                                  minHeight: ui.chipHeight - 2,
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 4,
+                                },
+                              ]}
+                              onPress={() => {
+                                setEditing(log);
+                                setModalVisible(true);
+                              }}
+                            >
+                              <AppIcon
+                                name="edit"
+                                size={ui.font(14)}
+                                color={FARMDB_COLORS.text}
+                              />
+                              {!iconMode ? (
+                                <Text style={[styles.editBtnText, { fontSize: ui.font(11) }]}>
+                                  Edit
+                                </Text>
+                              ) : null}
+                            </Pressable>
                           ) : null}
-                        </Pressable>
-                        <Pressable
-                          accessibilityLabel="Keep entry"
-                          style={[
-                            styles.editBtn,
-                            {
-                              minHeight: ui.chipHeight - 2,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 4,
-                            },
-                          ]}
-                          onPress={() => setConfirmDeleteId(null)}
-                        >
-                          <AppIcon
-                            name="close"
-                            size={ui.font(14)}
-                            color={FARMDB_COLORS.text}
-                          />
-                          {!iconMode ? (
-                            <Text style={[styles.editBtnText, { fontSize: ui.font(11) }]}>
-                              Keep
-                            </Text>
+                          {canDelete ? (
+                            <Pressable
+                              accessibilityLabel="Delete financial entry"
+                              style={[
+                                styles.deleteBtn,
+                                {
+                                  minHeight: ui.chipHeight - 2,
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 4,
+                                },
+                              ]}
+                              onPress={() => void handleDeleteLog(log.id)}
+                            >
+                              <AppIcon
+                                name="trash"
+                                size={ui.font(14)}
+                                color={FARMDB_COLORS.danger}
+                              />
+                              {!iconMode ? (
+                                <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
+                                  Delete
+                                </Text>
+                              ) : null}
+                            </Pressable>
                           ) : null}
-                        </Pressable>
-                      </>
-                    ) : (
-                      <>
-                        <Pressable
-                          accessibilityLabel="Edit financial entry"
-                          style={[
-                            styles.editBtn,
-                            {
-                              minHeight: ui.chipHeight - 2,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 4,
-                            },
-                          ]}
-                          onPress={() => {
-                            setEditing(log);
-                            setModalVisible(true);
-                          }}
-                        >
-                          <AppIcon
-                            name="edit"
-                            size={ui.font(14)}
-                            color={FARMDB_COLORS.text}
-                          />
-                          {!iconMode ? (
-                            <Text style={[styles.editBtnText, { fontSize: ui.font(11) }]}>
-                              Edit
-                            </Text>
-                          ) : null}
-                        </Pressable>
-                        <Pressable
-                          accessibilityLabel="Delete financial entry"
-                          style={[
-                            styles.deleteBtn,
-                            {
-                              minHeight: ui.chipHeight - 2,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 4,
-                            },
-                          ]}
-                          onPress={() => void handleDeleteLog(log.id)}
-                        >
-                          <AppIcon
-                            name="trash"
-                            size={ui.font(14)}
-                            color={FARMDB_COLORS.danger}
-                          />
-                          {!iconMode ? (
-                            <Text style={[styles.deleteBtnText, { fontSize: ui.font(11) }]}>
-                              Delete
-                            </Text>
-                          ) : null}
-                        </Pressable>
-                      </>
-                    )}
-                  </View>
+                        </>
+                      )}
+                    </View>
+                  ) : null}
                 </View>
               );
             })

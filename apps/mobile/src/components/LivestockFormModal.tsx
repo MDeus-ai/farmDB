@@ -12,14 +12,18 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
   getEligibleParentCandidates,
+  inferDefaultLivestockSex,
+  LIVESTOCK_SEXES,
   LIVESTOCK_STATUSES,
   SPECIES_LIST,
   validateNewLivestock,
   validateUpdateLivestock,
   type Livestock,
+  type LivestockSex,
   type LivestockStatus,
   type NewLivestockInput,
   type Species,
@@ -29,6 +33,7 @@ import {
   LivestockValidationError,
   useCreateLivestock,
   useLivestockList,
+  useModulePermissions,
   useUpdateLivestock,
 } from '@farmdb/db';
 import {
@@ -46,7 +51,7 @@ import {
   useUiScale,
 } from '../theme/uiScale';
 import { buildAnimalDropdownOption } from '../utils/animalOptions';
-import { AppIcon, SpeciesIcon } from './FarmIcons';
+import { AppIcon, SexIcon, SpeciesIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { ModernDatePicker } from './ModernDatePicker';
 import {
@@ -73,9 +78,12 @@ export function LivestockFormModal({
   const allLivestockQuery = useLivestockList({});
   const createMutation = useCreateLivestock();
   const updateMutation = useUpdateLivestock();
+  const { canEdit: canEditLineage } = useModulePermissions('family_tree');
 
   const [tagNumber, setTagNumber] = useState('');
   const [species, setSpecies] = useState<Species>(defaultSpecies);
+  const [sex, setSex] = useState<LivestockSex>('female');
+  const [sexTouched, setSexTouched] = useState(false);
   const [name, setName] = useState('');
   const [breed, setBreed] = useState('');
   const [dob, setDob] = useState('');
@@ -93,6 +101,8 @@ export function LivestockFormModal({
     if (editing) {
       setTagNumber(editing.tagNumber);
       setSpecies(editing.species);
+      setSex(editing.sex ?? inferDefaultLivestockSex(editing.tagNumber));
+      setSexTouched(true);
       setName(editing.name ?? '');
       setBreed(editing.breed ?? '');
       setDob(editing.dob ?? '');
@@ -103,6 +113,8 @@ export function LivestockFormModal({
     } else {
       setTagNumber('');
       setSpecies(defaultSpecies);
+      setSex('female');
+      setSexTouched(false);
       setName('');
       setBreed('');
       setDob('');
@@ -122,9 +134,10 @@ export function LivestockFormModal({
     const candidates = getEligibleParentCandidates(
       editing?.id ?? null,
       'sire',
-      allLivestock.filter((item) => editing || item.species === species),
-      damId || null
-    ).filter((item) => item.species === species);
+      allLivestock,
+      damId || null,
+      species
+    );
     return [
       { value: '', label: 'Unknown / Founder', iconSource: MOBILE_APP_ICONS.tree },
       ...candidates.map((item) =>
@@ -139,9 +152,10 @@ export function LivestockFormModal({
     const candidates = getEligibleParentCandidates(
       editing?.id ?? null,
       'dam',
-      allLivestock.filter((item) => editing || item.species === species),
-      sireId || null
-    ).filter((item) => item.species === species);
+      allLivestock,
+      sireId || null,
+      species
+    );
     return [
       { value: '', label: 'Unknown / Founder', iconSource: MOBILE_APP_ICONS.tree },
       ...candidates.map((item) =>
@@ -213,6 +227,7 @@ export function LivestockFormModal({
         {
           tagNumber,
           species,
+          sex,
           name,
           breed,
           dob,
@@ -221,7 +236,14 @@ export function LivestockFormModal({
           sireId: sireId || null,
           damId: damId || null,
         },
-        { existingTags, currentTag: editing.tagNumber, currentId: editing.id }
+        {
+          existingTags,
+          currentTag: editing.tagNumber,
+          currentId: editing.id,
+          currentSpecies: editing.species,
+          currentDob: editing.dob,
+          allLivestock,
+        }
       );
       if (!check.ok || !check.data) {
         setErrors(check.errors);
@@ -229,7 +251,14 @@ export function LivestockFormModal({
       }
       setErrors({});
       try {
-        await updateMutation.mutateAsync({ id: editing.id, input: check.data });
+        const updatePayload = canEditLineage
+          ? check.data
+          : {
+              ...check.data,
+              sireId: editing.sireId ?? null,
+              damId: editing.damId ?? null,
+            };
+        await updateMutation.mutateAsync({ id: editing.id, input: updatePayload });
         cleanupAfterSave(check.data.imageUri);
         onClose();
       } catch (err) {
@@ -248,6 +277,7 @@ export function LivestockFormModal({
       {
         tagNumber,
         species,
+        sex,
         name,
         breed,
         dob,
@@ -256,7 +286,7 @@ export function LivestockFormModal({
         sireId: sireId || null,
         damId: damId || null,
       },
-      { existingTags }
+      { existingTags, allLivestock }
     );
     if (!check.ok || !check.data) {
       setErrors(check.errors);
@@ -264,7 +294,14 @@ export function LivestockFormModal({
     }
     setErrors({});
     try {
-      await createMutation.mutateAsync(check.data);
+      const createPayload = canEditLineage
+        ? check.data
+        : {
+            ...check.data,
+            sireId: null,
+            damId: null,
+          };
+      await createMutation.mutateAsync(createPayload);
       cleanupAfterSave(check.data.imageUri);
       onClose();
     } catch (err) {
@@ -344,6 +381,7 @@ export function LivestockFormModal({
                 >
                   <SpeciesIcon
                     species={species}
+                    sex={sex}
                     size={ui.font(28)}
                     color={FARMDB_COLORS.textMuted}
                   />
@@ -448,7 +486,12 @@ export function LivestockFormModal({
               style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(15) }]}
               placeholder="e.g. COW-402"
               value={tagNumber}
-              onChangeText={setTagNumber}
+              onChangeText={(nextTag) => {
+                setTagNumber(nextTag);
+                if (!sexTouched) {
+                  setSex(inferDefaultLivestockSex(nextTag));
+                }
+              }}
               autoCapitalize="characters"
               autoCorrect={false}
             />
@@ -460,12 +503,28 @@ export function LivestockFormModal({
 
             <Text style={[styles.label, { fontSize: ui.font(13) }]}>Species</Text>
             <View style={styles.chipRow}>
-              {SPECIES_LIST.map((sp) => {
-                const active = species === sp;
+              {(
+                [
+                  { id: 'cow', speciesVal: 'cow' as Species, sexVal: 'female' as LivestockSex, label: 'Cow' },
+                  { id: 'bull', speciesVal: 'cow' as Species, sexVal: 'male' as LivestockSex, label: 'Bull' },
+                  ...SPECIES_LIST.filter((sp) => sp !== 'cow').map((sp) => ({
+                    id: sp,
+                    speciesVal: sp,
+                    sexVal: undefined,
+                    label: formatSpeciesLabel(sp),
+                  })),
+                ] as Array<{ id: string; speciesVal: Species; sexVal?: LivestockSex; label: string }>
+              ).map((opt) => {
+                const active =
+                  opt.id === 'bull'
+                    ? species === 'cow' && sex === 'male'
+                    : opt.id === 'cow'
+                      ? species === 'cow' && sex === 'female'
+                      : species === opt.speciesVal;
                 return (
                   <Pressable
-                    key={sp}
-                    accessibilityLabel={formatSpeciesLabel(sp)}
+                    key={opt.id}
+                    accessibilityLabel={opt.label}
                     style={[
                       styles.chip,
                       active && styles.chipActive,
@@ -479,13 +538,20 @@ export function LivestockFormModal({
                       },
                     ]}
                     onPress={() => {
-                      setSpecies(sp);
-                      setSireId('');
-                      setDamId('');
+                      if (opt.speciesVal !== species) {
+                        setSireId('');
+                        setDamId('');
+                      }
+                      setSpecies(opt.speciesVal);
+                      if (opt.sexVal) {
+                        setSex(opt.sexVal);
+                        setSexTouched(true);
+                      }
                     }}
                   >
                     <SpeciesIcon
-                      species={sp}
+                      species={opt.speciesVal}
+                      sex={opt.sexVal}
                       size={ui.font(18)}
                       color={active ? FARMDB_COLORS.accentHover : FARMDB_COLORS.text}
                     />
@@ -497,13 +563,58 @@ export function LivestockFormModal({
                           { fontSize: ui.font(13) },
                         ]}
                       >
-                        {formatSpeciesLabel(sp)}
+                        {opt.label}
                       </Text>
                     ) : null}
                   </Pressable>
                 );
               })}
             </View>
+
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>Sex *</Text>
+            <View style={styles.chipRow}>
+              {LIVESTOCK_SEXES.map((sx) => {
+                const active = sex === sx;
+                return (
+                  <Pressable
+                    key={sx}
+                    accessibilityLabel={formatSexLabel(sx)}
+                    style={[
+                      styles.chip,
+                      active && styles.chipActive,
+                      {
+                        minHeight: ui.chipHeight,
+                        paddingHorizontal: ui.space(14),
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      },
+                    ]}
+                    onPress={() => {
+                      setSex(sx);
+                      setSexTouched(true);
+                    }}
+                  >
+                    <SexIcon sex={sx} size={ui.font(14)} />
+                    <Text
+                      style={[
+                        styles.chipText,
+                        active && styles.chipTextActive,
+                        { fontSize: ui.font(13) },
+                      ]}
+                    >
+                      {formatSexLabel(sx)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {errors.sex ? (
+              <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
+                {errors.sex}
+              </Text>
+            ) : null}
 
             <Text style={[styles.label, { fontSize: ui.font(13) }]}>Name</Text>
             <TextInput
@@ -552,12 +663,18 @@ export function LivestockFormModal({
             </Text>
             <ModernDropdown
               searchable
+              disabled={!canEditLineage}
               value={sireId}
               options={sireOptions}
               title="Select Sire (Father)"
               accessibilityLabel="Sire (Father)"
               onChange={setSireId}
             />
+            {!canEditLineage ? (
+              <Text style={[styles.photoHint, { fontSize: ui.font(11), marginTop: 4 }]}>
+                Requires Family Tree Edit permission
+              </Text>
+            ) : null}
             {errors.sireId ? (
               <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
                 {errors.sireId}
@@ -569,12 +686,18 @@ export function LivestockFormModal({
             </Text>
             <ModernDropdown
               searchable
+              disabled={!canEditLineage}
               value={damId}
               options={damOptions}
               title="Select Dam (Mother)"
               accessibilityLabel="Dam (Mother)"
               onChange={setDamId}
             />
+            {!canEditLineage ? (
+              <Text style={[styles.photoHint, { fontSize: ui.font(11), marginTop: 4 }]}>
+                Requires Family Tree Edit permission
+              </Text>
+            ) : null}
             {errors.damId ? (
               <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
                 {errors.damId}

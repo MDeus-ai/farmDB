@@ -6,11 +6,16 @@ import {
 import {
   ALERT_ENTRY_KINDS,
   DATE_FORMATS,
+  EXPENSE_CATEGORIES,
   FARM_ACCOUNT_AVATARS,
   FARM_ACCOUNT_ROLES,
   FARM_ACCOUNT_STATUSES,
   FINANCIAL_CATEGORIES,
   FONT_SCALES,
+  INCOME_CATEGORIES,
+  inferDefaultLivestockSex,
+  isMilkProducingSpecies,
+  LIVESTOCK_SEXES,
   LIVESTOCK_STATUSES,
   OWNERSHIP_CATEGORIES,
   OWNERSHIP_STATUSES,
@@ -33,6 +38,8 @@ import {
   type FarmSettings,
   type FinancialCategory,
   type FontScale,
+  type Livestock,
+  type LivestockSex,
   type LivestockStatus,
   type NewAlertInput,
   type NewAnimalOwnershipInput,
@@ -77,6 +84,32 @@ export interface ValidationResult<T> {
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const MIN_SENSIBLE_FARM_DATE = '1980-01-01';
+export const MIN_SENSIBLE_HIRE_DATE = '1960-01-01';
+const MAX_MILK_YIELD_LITERS_PER_LOG = 120;
+const MAX_MEDICAL_COST = 1_000_000_000;
+const MAX_FINANCIAL_AMOUNT = 10_000_000_000;
+
+function wouldCreateAncestorCycle(
+  childId: string,
+  candidateParentId: string,
+  byId: ReadonlyMap<string, Livestock>
+): boolean {
+  if (candidateParentId === childId) return true;
+  const visited = new Set<string>();
+  const queue: string[] = [candidateParentId];
+  while (queue.length > 0) {
+    const curId = queue.shift()!;
+    if (curId === childId) return true;
+    if (visited.has(curId)) continue;
+    visited.add(curId);
+    const cur = byId.get(curId);
+    if (!cur) continue;
+    if (cur.sireId) queue.push(cur.sireId);
+    if (cur.damId) queue.push(cur.damId);
+  }
+  return false;
+}
 
 /**
  * Normalizes a livestock tag number so comparisons and unique checks are
@@ -114,9 +147,17 @@ function roundToTwo(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function isValidSex(value: string): value is LivestockSex {
+  return (LIVESTOCK_SEXES as readonly string[]).includes(value);
+}
+
 export function validateNewLivestock(
   input: NewLivestockInput,
-  options?: { existingTags?: Iterable<string>; todayIso?: string }
+  options?: {
+    existingTags?: Iterable<string>;
+    todayIso?: string;
+    allLivestock?: readonly Livestock[];
+  }
 ): ValidationResult<Required<NewLivestockInput>> {
   const errors: ValidationErrors<NewLivestockInput> = {};
 
@@ -125,6 +166,8 @@ export function validateNewLivestock(
     errors.tagNumber = 'Tag number is required.';
   } else if (tagNumber.length > 40) {
     errors.tagNumber = 'Tag number must be 40 characters or fewer.';
+  } else if (!/[A-Z0-9]/i.test(tagNumber)) {
+    errors.tagNumber = 'Tag number must include at least one letter or number.';
   } else if (options?.existingTags) {
     for (const existing of options.existingTags) {
       if (normalizeTagNumber(existing) === tagNumber) {
@@ -139,6 +182,11 @@ export function validateNewLivestock(
     errors.species = 'Invalid species selection.';
   }
 
+  const sex: LivestockSex = input.sex ?? inferDefaultLivestockSex(tagNumber);
+  if (!isValidSex(sex)) {
+    errors.sex = 'Sex must be female or male.';
+  }
+
   const status: LivestockStatus = input.status ?? 'active';
   if (!LIVESTOCK_STATUSES.includes(status)) {
     errors.status = 'Invalid livestock status.';
@@ -148,6 +196,8 @@ export function validateNewLivestock(
   if (dob !== null) {
     if (!isValidIsoDate(dob)) {
       errors.dob = 'Date of birth must use YYYY-MM-DD format.';
+    } else if (dob < MIN_SENSIBLE_FARM_DATE) {
+      errors.dob = 'Date of birth must be 1980-01-01 or later.';
     } else {
       const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
       if (dob > today) {
@@ -162,6 +212,32 @@ export function validateNewLivestock(
     errors.damId = 'Sire and Dam must be two different animals.';
   }
 
+  if (options?.allLivestock && (sireId || damId)) {
+    const byId = new Map(options.allLivestock.map((a) => [a.id, a]));
+    const sire = sireId ? byId.get(sireId) : undefined;
+    const dam = damId ? byId.get(damId) : undefined;
+    if (sire && sire.species !== species) {
+      errors.sireId = 'Sire must be the same species as the animal.';
+    } else if (
+      sire &&
+      (sire.sex ?? inferDefaultLivestockSex(sire.tagNumber, 'sire')) !== 'male'
+    ) {
+      errors.sireId = 'Sire (Father) must be a male animal.';
+    } else if (dob && sire?.dob && sire.dob >= dob) {
+      errors.sireId = 'Sire date of birth must be earlier than the offspring date of birth.';
+    }
+    if (dam && dam.species !== species) {
+      errors.damId = 'Dam must be the same species as the animal.';
+    } else if (
+      dam &&
+      (dam.sex ?? inferDefaultLivestockSex(dam.tagNumber, 'dam')) !== 'female'
+    ) {
+      errors.damId = 'Dam (Mother) must be a female animal.';
+    } else if (dob && dam?.dob && dam.dob >= dob) {
+      errors.damId = 'Dam date of birth must be earlier than the offspring date of birth.';
+    }
+  }
+
   if (Object.keys(errors).length > 0) {
     return { ok: false, errors };
   }
@@ -171,6 +247,7 @@ export function validateNewLivestock(
     errors: {},
     data: {
       species,
+      sex,
       tagNumber,
       name: normalizeOptionalText(input.name),
       breed: normalizeOptionalText(input.breed),
@@ -189,7 +266,10 @@ export function validateUpdateLivestock(
     existingTags?: Iterable<string>;
     currentTag?: string;
     currentId?: string;
+    currentSpecies?: Species;
+    currentDob?: string | null;
     todayIso?: string;
+    allLivestock?: readonly Livestock[];
   }
 ): ValidationResult<UpdateLivestockInput> {
   const errors: ValidationErrors<UpdateLivestockInput> = {};
@@ -201,6 +281,8 @@ export function validateUpdateLivestock(
       errors.tagNumber = 'Tag number cannot be empty.';
     } else if (tagNumber.length > 40) {
       errors.tagNumber = 'Tag number must be 40 characters or fewer.';
+    } else if (!/[A-Z0-9]/i.test(tagNumber)) {
+      errors.tagNumber = 'Tag number must include at least one letter or number.';
     } else if (
       options?.existingTags &&
       (!options.currentTag || normalizeTagNumber(options.currentTag) !== tagNumber)
@@ -220,6 +302,14 @@ export function validateUpdateLivestock(
       errors.species = 'Invalid species selection.';
     } else {
       sanitized.species = input.species;
+    }
+  }
+
+  if (input.sex !== undefined) {
+    if (!isValidSex(input.sex)) {
+      errors.sex = 'Sex must be female or male.';
+    } else {
+      sanitized.sex = input.sex;
     }
   }
 
@@ -246,6 +336,8 @@ export function validateUpdateLivestock(
     if (dob !== null) {
       if (!isValidIsoDate(dob)) {
         errors.dob = 'Date of birth must use YYYY-MM-DD format.';
+      } else if (dob < MIN_SENSIBLE_FARM_DATE) {
+        errors.dob = 'Date of birth must be 1980-01-01 or later.';
       } else {
         const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
         if (dob > today) {
@@ -282,6 +374,75 @@ export function validateUpdateLivestock(
     errors.damId = 'Sire and Dam must be two different animals.';
   }
 
+  if (options?.allLivestock) {
+    const byId = new Map(options.allLivestock.map((a) => [a.id, a]));
+    const currentAnimal = options.currentId ? byId.get(options.currentId) : undefined;
+    const effectiveSpecies =
+      sanitized.species ?? options.currentSpecies ?? currentAnimal?.species;
+    const effectiveDob =
+      sanitized.dob !== undefined
+        ? sanitized.dob
+        : (options.currentDob ?? currentAnimal?.dob ?? null);
+    const effectiveSireId =
+      sanitized.sireId !== undefined ? sanitized.sireId : currentAnimal?.sireId ?? null;
+    const effectiveDamId =
+      sanitized.damId !== undefined ? sanitized.damId : currentAnimal?.damId ?? null;
+
+    if (effectiveSireId && !errors.sireId) {
+      const sire = byId.get(effectiveSireId);
+      if (sire && effectiveSpecies && sire.species !== effectiveSpecies) {
+        errors.sireId = 'Sire must be the same species as the animal.';
+      } else if (
+        sire &&
+        (sire.sex ?? inferDefaultLivestockSex(sire.tagNumber, 'sire')) !== 'male'
+      ) {
+        errors.sireId = 'Sire (Father) must be a male animal.';
+      } else if (effectiveDob && sire?.dob && sire.dob >= effectiveDob) {
+        errors.sireId = 'Sire date of birth must be earlier than the offspring date of birth.';
+      } else if (
+        options.currentId &&
+        wouldCreateAncestorCycle(options.currentId, effectiveSireId, byId)
+      ) {
+        errors.sireId = 'Cannot link a descendant as a parent (circular family tree).';
+      }
+    }
+
+    if (effectiveDamId && !errors.damId) {
+      const dam = byId.get(effectiveDamId);
+      if (dam && effectiveSpecies && dam.species !== effectiveSpecies) {
+        errors.damId = 'Dam must be the same species as the animal.';
+      } else if (
+        dam &&
+        (dam.sex ?? inferDefaultLivestockSex(dam.tagNumber, 'dam')) !== 'female'
+      ) {
+        errors.damId = 'Dam (Mother) must be a female animal.';
+      } else if (effectiveDob && dam?.dob && dam.dob >= effectiveDob) {
+        errors.damId = 'Dam date of birth must be earlier than the offspring date of birth.';
+      } else if (
+        options.currentId &&
+        wouldCreateAncestorCycle(options.currentId, effectiveDamId, byId)
+      ) {
+        errors.damId = 'Cannot link a descendant as a parent (circular family tree).';
+      }
+    }
+
+    if (options.currentId && sanitized.sex && !errors.sex) {
+      if (
+        sanitized.sex === 'female' &&
+        options.allLivestock.some((a) => a.sireId === options.currentId)
+      ) {
+        errors.sex =
+          'Cannot change sex to female while recorded as Sire (Father) of existing offspring.';
+      } else if (
+        sanitized.sex === 'male' &&
+        options.allLivestock.some((a) => a.damId === options.currentId)
+      ) {
+        errors.sex =
+          'Cannot change sex to male while recorded as Dam (Mother) of existing offspring.';
+      }
+    }
+  }
+
   if (Object.keys(errors).length > 0) {
     return { ok: false, errors };
   }
@@ -291,28 +452,46 @@ export function validateUpdateLivestock(
 
 export function validateNewProductRecord(
   input: NewProductRecordInput,
-  options?: { todayIso?: string }
+  options?: {
+    todayIso?: string;
+    animal?: Pick<Livestock, 'species' | 'dob' | 'status'> & {
+      sex?: LivestockSex | null;
+    };
+  }
 ): ValidationResult<Required<NewProductRecordInput>> {
   const errors: ValidationErrors<NewProductRecordInput> = {};
 
   const livestockId = (input.livestockId ?? '').trim();
   if (!livestockId) {
     errors.livestockId = 'Please select an animal.';
+  } else if (options?.animal && !isMilkProducingSpecies(options.animal.species)) {
+    errors.livestockId =
+      'Only milk-producing animals (Cow, Goat, Sheep) can log milk yields.';
+  } else if (options?.animal?.sex === 'male') {
+    errors.livestockId =
+      'Selected animal is male and cannot log milk yields. Only female milk-producing animals can log milk production.';
   }
 
   const date = (input.date ?? '').trim();
   if (!isValidIsoDate(date)) {
     errors.date = 'Date must use YYYY-MM-DD format.';
+  } else if (date < MIN_SENSIBLE_FARM_DATE) {
+    errors.date = 'Production date cannot be before 1980-01-01.';
   } else {
     const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
     if (date > today) {
       errors.date = 'Production date cannot be in the future.';
+    } else if (options?.animal?.dob && date < options.animal.dob) {
+      errors.date = 'Production date cannot be earlier than the animal’s date of birth.';
     }
   }
 
   const yieldAmount = Number(input.yieldAmount);
   if (!Number.isFinite(yieldAmount) || yieldAmount <= 0) {
     errors.yieldAmount = 'Milk yield must be greater than 0 liters.';
+  } else if (yieldAmount > MAX_MILK_YIELD_LITERS_PER_LOG) {
+    errors.yieldAmount =
+      'Milk yield cannot exceed 120 liters for a single log.';
   }
 
   if (Object.keys(errors).length > 0) {
@@ -333,7 +512,12 @@ export function validateNewProductRecord(
 
 export function validateUpdateProductRecord(
   input: UpdateProductRecordInput,
-  options?: { todayIso?: string }
+  options?: {
+    todayIso?: string;
+    animal?: Pick<Livestock, 'species' | 'dob' | 'status'> & {
+      sex?: LivestockSex | null;
+    };
+  }
 ): ValidationResult<UpdateProductRecordInput> {
   const errors: ValidationErrors<UpdateProductRecordInput> = {};
   const sanitized: UpdateProductRecordInput = {};
@@ -342,19 +526,36 @@ export function validateUpdateProductRecord(
     const livestockId = input.livestockId.trim();
     if (!livestockId) {
       errors.livestockId = 'Animal selection is required.';
+    } else if (options?.animal && !isMilkProducingSpecies(options.animal.species)) {
+      errors.livestockId =
+        'Only milk-producing animals (Cow, Goat, Sheep) can log milk yields.';
+    } else if (options?.animal?.sex === 'male') {
+      errors.livestockId =
+        'Selected animal is male and cannot log milk yields. Only female milk-producing animals can log milk production.';
     } else {
       sanitized.livestockId = livestockId;
     }
+  } else if (options?.animal && !isMilkProducingSpecies(options.animal.species)) {
+    errors.livestockId =
+      'Only milk-producing animals (Cow, Goat, Sheep) can log milk yields.';
+  } else if (options?.animal?.sex === 'male') {
+    errors.livestockId =
+      'Selected animal is male and cannot log milk yields. Only female milk-producing animals can log milk production.';
   }
 
   if (input.date !== undefined) {
     const date = input.date.trim();
     if (!isValidIsoDate(date)) {
       errors.date = 'Date must use YYYY-MM-DD format.';
+    } else if (date < MIN_SENSIBLE_FARM_DATE) {
+      errors.date = 'Production date cannot be before 1980-01-01.';
     } else {
       const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
       if (date > today) {
         errors.date = 'Production date cannot be in the future.';
+      } else if (options?.animal?.dob && date < options.animal.dob) {
+        errors.date =
+          'Production date cannot be earlier than the animal’s date of birth.';
       } else {
         sanitized.date = date;
       }
@@ -365,6 +566,9 @@ export function validateUpdateProductRecord(
     const yieldAmount = Number(input.yieldAmount);
     if (!Number.isFinite(yieldAmount) || yieldAmount <= 0) {
       errors.yieldAmount = 'Milk yield must be greater than 0 liters.';
+    } else if (yieldAmount > MAX_MILK_YIELD_LITERS_PER_LOG) {
+      errors.yieldAmount =
+        'Milk yield cannot exceed 120 liters for a single log.';
     } else {
       sanitized.yieldAmount = roundToTwo(yieldAmount);
     }
@@ -382,7 +586,8 @@ export function validateUpdateProductRecord(
 }
 
 export function validateNewFinancialLog(
-  input: NewFinancialLogInput
+  input: NewFinancialLogInput,
+  options?: { todayIso?: string }
 ): ValidationResult<Required<NewFinancialLogInput>> {
   const errors: ValidationErrors<NewFinancialLogInput> = {};
 
@@ -394,16 +599,29 @@ export function validateNewFinancialLog(
   const category = input.category as FinancialCategory;
   if (!FINANCIAL_CATEGORIES.includes(category)) {
     errors.category = 'Invalid financial category.';
+  } else if (transactionType === 'income' && !INCOME_CATEGORIES.includes(category)) {
+    errors.category = 'Selected category is not valid for an income entry.';
+  } else if (transactionType === 'expense' && !EXPENSE_CATEGORIES.includes(category)) {
+    errors.category = 'Selected category is not valid for an expense entry.';
   }
 
   const amount = Number(input.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
     errors.amount = 'Amount must be greater than 0.';
+  } else if (amount > MAX_FINANCIAL_AMOUNT) {
+    errors.amount = 'Amount exceeds the maximum allowed limit.';
   }
 
   const date = (input.date ?? '').trim();
   if (!isValidIsoDate(date)) {
     errors.date = 'Date must use YYYY-MM-DD format.';
+  } else if (date < MIN_SENSIBLE_FARM_DATE) {
+    errors.date = 'Transaction date cannot be before 1980-01-01.';
+  } else {
+    const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
+    if (date > today) {
+      errors.date = 'Transaction date cannot be in the future.';
+    }
   }
 
   if (Object.keys(errors).length > 0) {
@@ -426,7 +644,8 @@ export function validateNewFinancialLog(
 }
 
 export function validateUpdateFinancialLog(
-  input: UpdateFinancialLogInput
+  input: UpdateFinancialLogInput,
+  options?: { todayIso?: string; currentTransactionType?: TransactionType }
 ): ValidationResult<UpdateFinancialLogInput> {
   const errors: ValidationErrors<UpdateFinancialLogInput> = {};
   const sanitized: UpdateFinancialLogInput = {};
@@ -439,9 +658,21 @@ export function validateUpdateFinancialLog(
     }
   }
 
+  const effectiveType = sanitized.transactionType ?? options?.currentTransactionType;
+
   if (input.category !== undefined) {
     if (!FINANCIAL_CATEGORIES.includes(input.category)) {
       errors.category = 'Invalid financial category.';
+    } else if (
+      effectiveType === 'income' &&
+      !INCOME_CATEGORIES.includes(input.category)
+    ) {
+      errors.category = 'Selected category is not valid for an income entry.';
+    } else if (
+      effectiveType === 'expense' &&
+      !EXPENSE_CATEGORIES.includes(input.category)
+    ) {
+      errors.category = 'Selected category is not valid for an expense entry.';
     } else {
       sanitized.category = input.category;
     }
@@ -451,6 +682,8 @@ export function validateUpdateFinancialLog(
     const amount = Number(input.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
       errors.amount = 'Amount must be greater than 0.';
+    } else if (amount > MAX_FINANCIAL_AMOUNT) {
+      errors.amount = 'Amount exceeds the maximum allowed limit.';
     } else {
       sanitized.amount = roundToTwo(amount);
     }
@@ -460,8 +693,15 @@ export function validateUpdateFinancialLog(
     const date = input.date.trim();
     if (!isValidIsoDate(date)) {
       errors.date = 'Date must use YYYY-MM-DD format.';
+    } else if (date < MIN_SENSIBLE_FARM_DATE) {
+      errors.date = 'Transaction date cannot be before 1980-01-01.';
     } else {
-      sanitized.date = date;
+      const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
+      if (date > today) {
+        errors.date = 'Transaction date cannot be in the future.';
+      } else {
+        sanitized.date = date;
+      }
     }
   }
 
@@ -678,7 +918,7 @@ export function validateFarmSettings(
 
 export function validateNewMedicalRecord(
   input: NewMedicalRecordInput,
-  options?: { todayIso?: string }
+  options?: { todayIso?: string; animal?: Pick<Livestock, 'dob'> }
 ): ValidationResult<Required<NewMedicalRecordInput>> {
   const errors: ValidationErrors<NewMedicalRecordInput> = {};
 
@@ -690,10 +930,15 @@ export function validateNewMedicalRecord(
   const date = (input.date ?? '').trim();
   if (!isValidIsoDate(date)) {
     errors.date = 'Date must use YYYY-MM-DD format.';
+  } else if (date < MIN_SENSIBLE_FARM_DATE) {
+    errors.date = 'Medical record date cannot be before 1980-01-01.';
   } else {
     const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
     if (date > today) {
       errors.date = 'Medical record date cannot be in the future.';
+    } else if (options?.animal?.dob && date < options.animal.dob) {
+      errors.date =
+        'Medical record date cannot be earlier than the animal’s date of birth.';
     }
   }
 
@@ -710,6 +955,8 @@ export function validateNewMedicalRecord(
   const cost = Number(input.cost ?? 0);
   if (!Number.isFinite(cost) || cost < 0) {
     errors.cost = 'Cost cannot be negative.';
+  } else if (cost > MAX_MEDICAL_COST) {
+    errors.cost = 'Cost exceeds the maximum allowed limit.';
   }
 
   if (Object.keys(errors).length > 0) {
@@ -732,7 +979,7 @@ export function validateNewMedicalRecord(
 
 export function validateUpdateMedicalRecord(
   input: UpdateMedicalRecordInput,
-  options?: { todayIso?: string }
+  options?: { todayIso?: string; animal?: Pick<Livestock, 'dob'> }
 ): ValidationResult<UpdateMedicalRecordInput> {
   const errors: ValidationErrors<UpdateMedicalRecordInput> = {};
   const sanitized: UpdateMedicalRecordInput = {};
@@ -750,10 +997,15 @@ export function validateUpdateMedicalRecord(
     const date = input.date.trim();
     if (!isValidIsoDate(date)) {
       errors.date = 'Date must use YYYY-MM-DD format.';
+    } else if (date < MIN_SENSIBLE_FARM_DATE) {
+      errors.date = 'Medical record date cannot be before 1980-01-01.';
     } else {
       const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
       if (date > today) {
         errors.date = 'Medical record date cannot be in the future.';
+      } else if (options?.animal?.dob && date < options.animal.dob) {
+        errors.date =
+          'Medical record date cannot be earlier than the animal’s date of birth.';
       } else {
         sanitized.date = date;
       }
@@ -782,6 +1034,8 @@ export function validateUpdateMedicalRecord(
     const cost = Number(input.cost);
     if (!Number.isFinite(cost) || cost < 0) {
       errors.cost = 'Cost cannot be negative.';
+    } else if (cost > MAX_MEDICAL_COST) {
+      errors.cost = 'Cost exceeds the maximum allowed limit.';
     } else {
       sanitized.cost = roundToTwo(cost);
     }
@@ -926,11 +1180,30 @@ export function validateNewFarmWorker(
   const nextPaymentDueDate = (input.nextPaymentDueDate ?? fallbackToday).trim();
   if (!isValidIsoDate(nextPaymentDueDate)) {
     errors.nextPaymentDueDate = 'Next payment due date must use YYYY-MM-DD format.';
+  } else if (nextPaymentDueDate < MIN_SENSIBLE_FARM_DATE) {
+    errors.nextPaymentDueDate = 'Next payment due date must be 1980-01-01 or later.';
   }
 
   const hireDate = normalizeOptionalText(input.hireDate);
-  if (hireDate !== null && !isValidIsoDate(hireDate)) {
-    errors.hireDate = 'Hire date must use YYYY-MM-DD format.';
+  if (hireDate !== null) {
+    if (!isValidIsoDate(hireDate)) {
+      errors.hireDate = 'Hire date must use YYYY-MM-DD format.';
+    } else if (hireDate < MIN_SENSIBLE_HIRE_DATE) {
+      errors.hireDate = 'Hire date must be 1960-01-01 or later.';
+    } else if (hireDate > fallbackToday) {
+      errors.hireDate = 'Hire date cannot be in the future.';
+    } else if (
+      isValidIsoDate(nextPaymentDueDate) &&
+      nextPaymentDueDate < hireDate
+    ) {
+      errors.nextPaymentDueDate =
+        'Next payment due date cannot be earlier than the hire date.';
+    }
+  }
+
+  const phone = normalizeOptionalText(input.phone);
+  if (phone !== null && (phone.match(/\d/g)?.length ?? 0) < 5) {
+    errors.phone = 'Enter a valid phone number with at least 5 digits.';
   }
 
   if (Object.keys(errors).length > 0) {
@@ -943,7 +1216,7 @@ export function validateNewFarmWorker(
     data: {
       name,
       role,
-      phone: normalizeOptionalText(input.phone),
+      phone,
       responsibilities: normalizeOptionalText(input.responsibilities),
       salaryAmount: roundToTwo(salaryAmount),
       payFrequency,
@@ -955,7 +1228,12 @@ export function validateNewFarmWorker(
 }
 
 export function validateUpdateFarmWorker(
-  input: UpdateFarmWorkerInput
+  input: UpdateFarmWorkerInput,
+  options?: {
+    todayIso?: string;
+    currentHireDate?: string | null;
+    currentNextPaymentDueDate?: string;
+  }
 ): ValidationResult<UpdateFarmWorkerInput> {
   const errors: ValidationErrors<UpdateFarmWorkerInput> = {};
   const sanitized: UpdateFarmWorkerInput = {};
@@ -983,7 +1261,12 @@ export function validateUpdateFarmWorker(
   }
 
   if (input.phone !== undefined) {
-    sanitized.phone = normalizeOptionalText(input.phone);
+    const phone = normalizeOptionalText(input.phone);
+    if (phone !== null && (phone.match(/\d/g)?.length ?? 0) < 5) {
+      errors.phone = 'Enter a valid phone number with at least 5 digits.';
+    } else {
+      sanitized.phone = phone;
+    }
   }
   if (input.responsibilities !== undefined) {
     sanitized.responsibilities = normalizeOptionalText(input.responsibilities);
@@ -1018,18 +1301,46 @@ export function validateUpdateFarmWorker(
     const dueDate = input.nextPaymentDueDate.trim();
     if (!isValidIsoDate(dueDate)) {
       errors.nextPaymentDueDate = 'Next payment due date must use YYYY-MM-DD format.';
+    } else if (dueDate < MIN_SENSIBLE_FARM_DATE) {
+      errors.nextPaymentDueDate = 'Next payment due date must be 1980-01-01 or later.';
     } else {
       sanitized.nextPaymentDueDate = dueDate;
     }
   }
 
+  const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
   if (input.hireDate !== undefined) {
     const hireDate = normalizeOptionalText(input.hireDate);
-    if (hireDate !== null && !isValidIsoDate(hireDate)) {
-      errors.hireDate = 'Hire date must use YYYY-MM-DD format.';
+    if (hireDate !== null) {
+      if (!isValidIsoDate(hireDate)) {
+        errors.hireDate = 'Hire date must use YYYY-MM-DD format.';
+      } else if (hireDate < MIN_SENSIBLE_HIRE_DATE) {
+        errors.hireDate = 'Hire date must be 1960-01-01 or later.';
+      } else if (hireDate > today) {
+        errors.hireDate = 'Hire date cannot be in the future.';
+      } else {
+        sanitized.hireDate = hireDate;
+      }
     } else {
-      sanitized.hireDate = hireDate;
+      sanitized.hireDate = null;
     }
+  }
+
+  const effectiveHire =
+    sanitized.hireDate !== undefined
+      ? sanitized.hireDate
+      : (options?.currentHireDate ?? null);
+  const effectiveDue =
+    sanitized.nextPaymentDueDate ?? options?.currentNextPaymentDueDate;
+  if (
+    effectiveHire &&
+    effectiveDue &&
+    isValidIsoDate(effectiveHire) &&
+    isValidIsoDate(effectiveDue) &&
+    effectiveDue < effectiveHire
+  ) {
+    errors.nextPaymentDueDate =
+      'Next payment due date cannot be earlier than the hire date.';
   }
 
   if (Object.keys(errors).length > 0) {
@@ -1058,6 +1369,8 @@ export function validateNewWorkerPayment(
   const dueDate = (input.dueDate ?? '').trim();
   if (!isValidIsoDate(dueDate)) {
     errors.dueDate = 'Due date must use YYYY-MM-DD format.';
+  } else if (dueDate < MIN_SENSIBLE_FARM_DATE) {
+    errors.dueDate = 'Due date must be 1980-01-01 or later.';
   }
 
   const status = (input.status ?? 'pending') as WorkerPaymentStatus;
@@ -1070,8 +1383,14 @@ export function validateNewWorkerPayment(
   if (status === 'paid' && paidDate === null) {
     paidDate = fallbackToday;
   }
-  if (paidDate !== null && !isValidIsoDate(paidDate)) {
-    errors.paidDate = 'Paid date must use YYYY-MM-DD format.';
+  if (paidDate !== null) {
+    if (!isValidIsoDate(paidDate)) {
+      errors.paidDate = 'Paid date must use YYYY-MM-DD format.';
+    } else if (paidDate < MIN_SENSIBLE_FARM_DATE) {
+      errors.paidDate = 'Paid date must be 1980-01-01 or later.';
+    } else if (paidDate > fallbackToday) {
+      errors.paidDate = 'Paid date cannot be in the future.';
+    }
   }
 
   if (Object.keys(errors).length > 0) {
@@ -1094,7 +1413,8 @@ export function validateNewWorkerPayment(
 }
 
 export function validateUpdateWorkerPayment(
-  input: UpdateWorkerPaymentInput
+  input: UpdateWorkerPaymentInput,
+  options?: { todayIso?: string }
 ): ValidationResult<UpdateWorkerPaymentInput> {
   const errors: ValidationErrors<UpdateWorkerPaymentInput> = {};
   const sanitized: UpdateWorkerPaymentInput = {};
@@ -1121,6 +1441,8 @@ export function validateUpdateWorkerPayment(
     const dueDate = input.dueDate.trim();
     if (!isValidIsoDate(dueDate)) {
       errors.dueDate = 'Due date must use YYYY-MM-DD format.';
+    } else if (dueDate < MIN_SENSIBLE_FARM_DATE) {
+      errors.dueDate = 'Due date must be 1980-01-01 or later.';
     } else {
       sanitized.dueDate = dueDate;
     }
@@ -1134,12 +1456,21 @@ export function validateUpdateWorkerPayment(
     }
   }
 
+  const today = options?.todayIso ?? new Date().toISOString().slice(0, 10);
   if (input.paidDate !== undefined) {
     const paidDate = normalizeOptionalText(input.paidDate);
-    if (paidDate !== null && !isValidIsoDate(paidDate)) {
-      errors.paidDate = 'Paid date must use YYYY-MM-DD format.';
+    if (paidDate !== null) {
+      if (!isValidIsoDate(paidDate)) {
+        errors.paidDate = 'Paid date must use YYYY-MM-DD format.';
+      } else if (paidDate < MIN_SENSIBLE_FARM_DATE) {
+        errors.paidDate = 'Paid date must be 1980-01-01 or later.';
+      } else if (paidDate > today) {
+        errors.paidDate = 'Paid date cannot be in the future.';
+      } else {
+        sanitized.paidDate = paidDate;
+      }
     } else {
-      sanitized.paidDate = paidDate;
+      sanitized.paidDate = null;
     }
   }
 
@@ -1312,11 +1643,19 @@ export function validateNewAnimalOwnership(
   const startDate = (input.startDate ?? fallbackToday).trim();
   if (!isValidIsoDate(startDate)) {
     errors.startDate = 'Start date must use YYYY-MM-DD format.';
+  } else if (startDate < MIN_SENSIBLE_FARM_DATE) {
+    errors.startDate = 'Start date cannot be before 1980-01-01.';
   }
 
   const expectedEndDate = normalizeOptionalText(input.expectedEndDate);
-  if (expectedEndDate !== null && !isValidIsoDate(expectedEndDate)) {
-    errors.expectedEndDate = 'Expected return / pickup date must use YYYY-MM-DD format.';
+  if (expectedEndDate !== null) {
+    if (!isValidIsoDate(expectedEndDate)) {
+      errors.expectedEndDate =
+        'Expected return / pickup date must use YYYY-MM-DD format.';
+    } else if (isValidIsoDate(startDate) && expectedEndDate < startDate) {
+      errors.expectedEndDate =
+        'Expected return / pickup date cannot be earlier than the start date.';
+    }
   }
 
   const status = (input.status ?? 'active') as OwnershipStatus;
@@ -1349,7 +1688,8 @@ export function validateNewAnimalOwnership(
 }
 
 export function validateUpdateAnimalOwnership(
-  input: UpdateAnimalOwnershipInput
+  input: UpdateAnimalOwnershipInput,
+  options?: { currentStartDate?: string }
 ): ValidationResult<UpdateAnimalOwnershipInput> {
   const errors: ValidationErrors<UpdateAnimalOwnershipInput> = {};
   const sanitized: UpdateAnimalOwnershipInput = {};
@@ -1410,6 +1750,8 @@ export function validateUpdateAnimalOwnership(
     const startDate = input.startDate.trim();
     if (!isValidIsoDate(startDate)) {
       errors.startDate = 'Start date must use YYYY-MM-DD format.';
+    } else if (startDate < MIN_SENSIBLE_FARM_DATE) {
+      errors.startDate = 'Start date cannot be before 1980-01-01.';
     } else {
       sanitized.startDate = startDate;
     }
@@ -1422,6 +1764,18 @@ export function validateUpdateAnimalOwnership(
     } else {
       sanitized.expectedEndDate = expectedEndDate;
     }
+  }
+
+  const effectiveStartDate = sanitized.startDate ?? options?.currentStartDate;
+  if (
+    effectiveStartDate &&
+    sanitized.expectedEndDate &&
+    isValidIsoDate(effectiveStartDate) &&
+    isValidIsoDate(sanitized.expectedEndDate) &&
+    sanitized.expectedEndDate < effectiveStartDate
+  ) {
+    errors.expectedEndDate =
+      'Expected return / pickup date cannot be earlier than the start date.';
   }
 
   if (input.boardingFee !== undefined) {
@@ -1490,6 +1844,23 @@ export function validateNewFarmAccount(
     errors.status = 'Select a valid account status.';
   }
 
+  const accessCode = normalizeOptionalText(input.accessCode);
+  if (
+    accessCode !== null &&
+    (accessCode.length < 4 || accessCode.length > 32)
+  ) {
+    errors.accessCode = 'Login PIN / passcode must be between 4 and 32 characters.';
+  }
+
+  const rawSupabaseUrl = normalizeOptionalText(input.supabaseUrl);
+  const supabaseUrl =
+    rawSupabaseUrl !== null ? normalizeSupabaseBaseUrl(rawSupabaseUrl) : null;
+  if (supabaseUrl !== null && !/^https?:\/\/.+/i.test(supabaseUrl)) {
+    errors.supabaseUrl = 'Supabase URL must start with https:// or http://.';
+  }
+  const supabaseAnonKey = normalizeOptionalText(input.supabaseAnonKey);
+  const cloudWorkspaceId = normalizeOptionalText(input.cloudWorkspaceId);
+
   if (Object.keys(errors).length > 0) {
     return { ok: false, errors };
   }
@@ -1508,7 +1879,10 @@ export function validateNewFarmAccount(
       role: effectiveRole,
       relationship: normalizeOptionalText(input.relationship),
       avatarKey,
-      accessCode: normalizeOptionalText(input.accessCode),
+      accessCode,
+      supabaseUrl,
+      supabaseAnonKey,
+      cloudWorkspaceId,
       isPrimaryAdmin,
       canManageNetwork: Boolean(
         input.canManageNetwork ?? effectiveRole === 'admin'
@@ -1563,7 +1937,32 @@ export function validateUpdateFarmAccount(
     sanitized.relationship = normalizeOptionalText(input.relationship);
   }
   if (input.accessCode !== undefined) {
-    sanitized.accessCode = normalizeOptionalText(input.accessCode);
+    const accessCode = normalizeOptionalText(input.accessCode);
+    if (
+      accessCode !== null &&
+      (accessCode.length < 4 || accessCode.length > 32)
+    ) {
+      errors.accessCode =
+        'Login PIN / passcode must be between 4 and 32 characters.';
+    } else {
+      sanitized.accessCode = accessCode;
+    }
+  }
+
+  if (input.supabaseUrl !== undefined) {
+    const rawUrl = normalizeOptionalText(input.supabaseUrl);
+    const cleaned = rawUrl !== null ? normalizeSupabaseBaseUrl(rawUrl) : null;
+    if (cleaned !== null && !/^https?:\/\/.+/i.test(cleaned)) {
+      errors.supabaseUrl = 'Supabase URL must start with https:// or http://.';
+    } else {
+      sanitized.supabaseUrl = cleaned;
+    }
+  }
+  if (input.supabaseAnonKey !== undefined) {
+    sanitized.supabaseAnonKey = normalizeOptionalText(input.supabaseAnonKey);
+  }
+  if (input.cloudWorkspaceId !== undefined) {
+    sanitized.cloudWorkspaceId = normalizeOptionalText(input.cloudWorkspaceId);
   }
 
   const nextRole = input.role ?? currentRole;

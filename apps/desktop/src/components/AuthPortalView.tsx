@@ -16,7 +16,7 @@ import {
   useCreateFarmAccount,
   useFarmAccountList,
   useFarmSettings,
-  useJoinFarmNetwork,
+  useRecoverAdminFromCloud,
   useSwitchFarmAccount,
   useTriggerCloudSync,
   useUpdateFarmAccount,
@@ -26,7 +26,7 @@ import { APP_ICONS } from '../assets/icons';
 import { FileTabs } from './FileTabs';
 import { ModernSelect } from './ModernSelect';
 
-type PortalTab = 'signin' | 'signup' | 'connect_key';
+type PortalTab = 'signin' | 'signup';
 type SignupMode = 'user_account' | 'admin_account';
 
 interface AuthPortalViewProps {
@@ -63,16 +63,14 @@ export function AuthPortalView({
 
   const switchMut = useSwitchFarmAccount();
   const createAccountMut = useCreateFarmAccount();
-  const joinMut = useJoinFarmNetwork();
+  const recoverAdminMut = useRecoverAdminFromCloud();
   const syncMut = useTriggerCloudSync();
   const updateSettingsMut = useUpdateFarmSettings();
   const updateAccountMut = useUpdateFarmAccount();
 
   const isPendingGate = activeAccount?.status === 'pending';
 
-  const [tab, setTab] = useState<PortalTab>(
-    isPendingGate ? 'signin' : 'signin'
-  );
+  const [tab, setTab] = useState<PortalTab>('signin');
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -81,6 +79,15 @@ export function AuthPortalView({
     accounts[0]?.id ?? 'owner-admin'
   );
   const [loginPin, setLoginPin] = useState('');
+  const [showCloudRecovery, setShowCloudRecovery] = useState(false);
+  const [recoverCloudKey, setRecoverCloudKey] = useState('');
+  const [recoverUrl, setRecoverUrl] = useState(settings.supabaseUrl);
+  const [recoverAnonKey, setRecoverAnonKey] = useState(settings.supabaseAnonKey);
+  const [recoverWorkspace, setRecoverWorkspace] = useState(
+    settings.cloudWorkspaceId || 'farmdb-homestead-main'
+  );
+  const [recoverEmail, setRecoverEmail] = useState('');
+  const [recoverPin, setRecoverPin] = useState('');
 
   // Sign-Up state
   const [signupMode, setSignupMode] = useState<SignupMode>('user_account');
@@ -89,18 +96,12 @@ export function AuthPortalView({
   const [sPhone, setSPhone] = useState('');
   const [sPin, setSPin] = useState('');
   const [sRole, setSRole] = useState<FarmAccountRole>('family_member');
-  const [sJoinKey, setSJoinKey] = useState('');
   const [sFarmName, setSFarmName] = useState(settings.farmName);
-
-  // Connect existing user with Key state
-  const [connectAccountId, setConnectAccountId] = useState<string>(
-    () => accounts.find((a) => !a.isPrimaryAdmin)?.id ?? ''
-  );
-  const [connectKeyInput, setConnectKeyInput] = useState('');
-
-  const selectableNonAdminAccounts = useMemo(
-    () => accounts.filter((a) => !a.isPrimaryAdmin),
-    [accounts]
+  const [showAdminCloudSetup, setShowAdminCloudSetup] = useState(false);
+  const [sSupabaseUrl, setSSupabaseUrl] = useState(settings.supabaseUrl);
+  const [sSupabaseAnonKey, setSSupabaseAnonKey] = useState(settings.supabaseAnonKey);
+  const [sCloudWorkspace, setSCloudWorkspace] = useState(
+    settings.cloudWorkspaceId || 'farmdb-homestead-main'
   );
 
   const selectedLoginAccount = useMemo(
@@ -142,7 +143,12 @@ export function AuthPortalView({
     setNotice(null);
     try {
       if (signupMode === 'user_account') {
-        const trimmedKey = sJoinKey.trim();
+        if (sPin.trim().length < 4) {
+          setErrorMsg(
+            'Please set a Login PIN / passcode (at least 4 characters) for this user account.'
+          );
+          return;
+        }
         const avatarKey: FarmAccountAvatar =
           sRole === 'external_owner'
             ? 'peasant'
@@ -150,50 +156,43 @@ export function AuthPortalView({
               ? 'farmerFemale'
               : 'farmer';
 
-        if (trimmedKey) {
-          const res = await joinMut.mutateAsync({
-            joinKey: trimmedKey,
-            newAccount: {
-              displayName: sName,
-              email: sEmail || null,
-              phone: sPhone || null,
-              role: sRole,
-              accessCode: sPin || null,
-              avatarKey,
-            },
-          });
-          setNotice(
-            `Account "${res.account.displayName}" submitted in Pending Approval state for ${res.farmName}${
-              res.syncedWithCloud ? ' and synced to cloud' : ''
-            }. An administrator will assign privileges and accept your request.`
-          );
-        } else {
-          const created = await createAccountMut.mutateAsync({
-            displayName: sName,
-            email: sEmail || null,
-            phone: sPhone || null,
-            role: sRole,
-            accessCode: sPin || null,
-            avatarKey,
-            isPrimaryAdmin: false,
-            canManageNetwork: false,
-            canSyncCloud: false,
-            status: 'active',
-            permissions: buildStandardUserPermissions(),
-          });
-          await switchMut.mutateAsync({
-            accountId: created.id,
-            accessCode: sPin || undefined,
-          });
-          onSuccessEnterApp?.();
-        }
+        const created = await createAccountMut.mutateAsync({
+          displayName: sName,
+          email: sEmail || null,
+          phone: sPhone || null,
+          role: sRole,
+          accessCode: sPin || null,
+          avatarKey,
+          isPrimaryAdmin: false,
+          canManageNetwork: false,
+          canSyncCloud: false,
+          status: 'active',
+          permissions: buildStandardUserPermissions(),
+        });
+        await switchMut.mutateAsync({
+          accountId: created.id,
+          accessCode: sPin || undefined,
+        });
+        onSuccessEnterApp?.();
       } else {
         const adminAccount =
           accounts.find((a) => a.isPrimaryAdmin) ?? accounts[0];
-        if (sFarmName.trim()) {
+        const hasCloudSetup =
+          sSupabaseUrl.trim().length > 0 && sSupabaseAnonKey.trim().length > 0;
+        const cleanWorkspace =
+          sCloudWorkspace.trim() || 'farmdb-homestead-main';
+        if (sFarmName.trim() || hasCloudSetup) {
           await updateSettingsMut.mutateAsync({
-            farmName: sFarmName.trim(),
+            ...(sFarmName.trim() ? { farmName: sFarmName.trim() } : {}),
             activeAccountId: adminAccount?.id ?? 'owner-admin',
+            ...(hasCloudSetup
+              ? {
+                  cloudSyncEnabled: true,
+                  supabaseUrl: sSupabaseUrl.trim(),
+                  supabaseAnonKey: sSupabaseAnonKey.trim(),
+                  cloudWorkspaceId: cleanWorkspace,
+                }
+              : {}),
           });
         }
         if (adminAccount) {
@@ -204,6 +203,13 @@ export function AuthPortalView({
               email: sEmail || null,
               phone: sPhone || null,
               accessCode: sPin || null,
+              ...(hasCloudSetup
+                ? {
+                    supabaseUrl: sSupabaseUrl.trim(),
+                    supabaseAnonKey: sSupabaseAnonKey.trim(),
+                    cloudWorkspaceId: cleanWorkspace,
+                  }
+                : {}),
             },
           });
         }
@@ -214,25 +220,28 @@ export function AuthPortalView({
     }
   }
 
-  async function handleConnectExistingWithKey(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleCloudAdminRecover() {
     setErrorMsg(null);
     setNotice(null);
     try {
-      if (!connectAccountId) {
-        setErrorMsg('Select a non-admin account to connect, or use the Sign Up tab.');
-        return;
-      }
-      const res = await joinMut.mutateAsync({
-        joinKey: connectKeyInput,
-        accountId: connectAccountId,
+      const res = await recoverAdminMut.mutateAsync({
+        cloudKey: recoverCloudKey.trim() || undefined,
+        supabaseUrl: recoverUrl.trim() || undefined,
+        supabaseAnonKey: recoverAnonKey.trim() || undefined,
+        cloudWorkspaceId: recoverWorkspace.trim() || undefined,
+        email: recoverEmail.trim() || undefined,
+        accessCode: recoverPin,
       });
+      setRecoverPin('');
       setNotice(
-        `${res.account.displayName} is now Pending Approval in ${res.farmName}.`
+        `Signed in as ${res.account.displayName} (${res.farmName}) and downloaded ${res.recordsPulled} records.`
       );
+      onSuccessEnterApp?.();
     } catch (err) {
       setErrorMsg(
-        err instanceof Error ? err.message : 'Unable to connect using key.'
+        err instanceof Error
+          ? err.message
+          : 'Could not download Admin account from cloud.'
       );
     }
   }
@@ -272,7 +281,7 @@ export function AuthPortalView({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18, position: 'relative' }}>
             <div className="auth-hero-brand">
               <div className="brand-mark">
-                <img src={APP_ICONS.barn} alt="farmDB barn logo" />
+                <img src={APP_ICONS.field} alt="farmDB logo" />
               </div>
               <div>
                 <div style={{ fontWeight: 800, fontSize: '1.08rem', color: '#ffffff' }}>
@@ -342,11 +351,7 @@ export function AuthPortalView({
           <div className="auth-portal-brand-row">
             <div>
               <h2 style={{ margin: 0, fontSize: '1.26rem', fontWeight: 800, color: 'var(--text)' }}>
-                {tab === 'signin'
-                  ? 'Sign In'
-                  : tab === 'signup'
-                    ? 'Create Account'
-                    : 'Enter Join Key'}
+                {tab === 'signin' ? 'Sign In' : 'Create Account'}
               </h2>
             </div>
 
@@ -447,11 +452,6 @@ export function AuthPortalView({
               label: 'Sign Up',
               iconSrc: APP_ICONS.plus,
             },
-            {
-              id: 'connect_key',
-              label: 'Enter Join Key',
-              iconSrc: APP_ICONS.networking,
-            },
           ]}
         />
 
@@ -494,7 +494,9 @@ export function AuthPortalView({
               })}
             </div>
 
-            {selectedLoginAccount?.accessCode && (
+            {selectedLoginAccount &&
+            (!selectedLoginAccount.isPrimaryAdmin ||
+              Boolean(selectedLoginAccount.accessCode)) && (
               <div className="form-field">
                 <label className="form-label">
                   Passcode / PIN for {selectedLoginAccount.displayName}
@@ -520,8 +522,121 @@ export function AuthPortalView({
                 ? 'View Pending Status'
                 : `Sign In as ${selectedLoginAccount?.displayName ?? 'Selected Account'}`}
             </button>
+
+            <div
+              style={{
+                borderTop: '1px solid var(--border)',
+                paddingTop: 12,
+                marginTop: 4,
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowCloudRecovery((prev) => !prev)}
+              >
+                <img src={APP_ICONS.cloud} alt="" className="app-icon-sm" />
+                {showCloudRecovery
+                  ? 'Hide Cross-Device Cloud Sign-In'
+                  : 'Moving from another device? Sign In from Cloud'}
+              </button>
+
+              {showCloudRecovery && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: 12,
+                    borderRadius: 12,
+                    border: '1px solid var(--border)',
+                    background: 'var(--surface-muted)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    farmDB stores accounts inside your own Supabase workspace. Paste your
+                    Full Cloud Key (<code>FDB1:...</code>) or enter your Supabase details once
+                    to download your Admin account, credentials, and herd database to this device.
+                  </p>
+                  <div className="form-field">
+                    <label className="form-label">Full Cloud Key (FDB1:...) — Shortcut</label>
+                    <input
+                      className="input"
+                      value={recoverCloudKey}
+                      onChange={(e) => setRecoverCloudKey(e.target.value)}
+                      placeholder="Paste FDB1:... key (or enter Supabase URL & Key below)"
+                    />
+                  </div>
+                  {!recoverCloudKey.trim() && (
+                    <div className="form-grid">
+                      <div className="form-field full">
+                        <label className="form-label">Supabase Project URL *</label>
+                        <input
+                          className="input"
+                          value={recoverUrl}
+                          onChange={(e) => setRecoverUrl(e.target.value)}
+                          placeholder="https://your-project.supabase.co"
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label className="form-label">Supabase Anon Key *</label>
+                        <input
+                          className="input"
+                          type="password"
+                          value={recoverAnonKey}
+                          onChange={(e) => setRecoverAnonKey(e.target.value)}
+                          placeholder="sb_publishable_... or eyJ..."
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label className="form-label">Cloud Workspace ID</label>
+                        <input
+                          className="input"
+                          value={recoverWorkspace}
+                          onChange={(e) => setRecoverWorkspace(e.target.value)}
+                          placeholder="farmdb-homestead-main"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <div className="form-grid">
+                    <div className="form-field">
+                      <label className="form-label">Admin Email (Optional)</label>
+                      <input
+                        className="input"
+                        value={recoverEmail}
+                        onChange={(e) => setRecoverEmail(e.target.value)}
+                        placeholder="Matches specific Admin email"
+                      />
+                    </div>
+                    <div className="form-field">
+                      <label className="form-label">Admin PIN / Password</label>
+                      <input
+                        className="input"
+                        type="password"
+                        value={recoverPin}
+                        onChange={(e) => setRecoverPin(e.target.value)}
+                        placeholder="Enter PIN if set on Admin"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={recoverAdminMut.isPending}
+                    onClick={() => void handleCloudAdminRecover()}
+                  >
+                    <img src={APP_ICONS.downloadDrive} alt="" className="app-icon-sm" />
+                    {recoverAdminMut.isPending
+                      ? 'Downloading Farm DB...'
+                      : 'Download Cloud DB & Sign In as Admin'}
+                  </button>
+                </div>
+              )}
+            </div>
           </form>
-        ) : tab === 'signup' ? (
+        ) : (
           <form onSubmit={handleSignUpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="segmented-group" role="group" aria-label="Account type">
               <button
@@ -597,90 +712,91 @@ export function AuthPortalView({
                 />
               </div>
               <div className="form-field">
-                <label className="form-label">Password / Switch PIN</label>
+                <label className="form-label">
+                  {signupMode === 'user_account'
+                    ? 'Login PIN / Passcode *'
+                    : 'Password / Switch PIN'}
+                </label>
                 <input
                   className="input"
                   type="password"
                   value={sPin}
                   onChange={(e) => setSPin(e.target.value)}
-                  placeholder="Optional 4+ digit PIN"
+                  placeholder={
+                    signupMode === 'user_account'
+                      ? 'Required 4+ character PIN'
+                      : 'Optional 4+ digit PIN'
+                  }
                 />
               </div>
-              {signupMode === 'user_account' && (
-                <div className="form-field full">
-                  <label className="form-label">
-                    Admin&apos;s Network Join Key (Optional — leave blank to use Local DB only)
-                  </label>
-                  <input
-                    className="input"
-                    value={sJoinKey}
-                    onChange={(e) => setSJoinKey(e.target.value)}
-                    placeholder="Leave blank for standalone local User Account, or paste FARM-XXXX / FDB1:..."
-                  />
-                </div>
-              )}
             </div>
+
+            {signupMode === 'admin_account' && (
+              <div
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 10,
+                  padding: 10,
+                  background: 'var(--surface-muted)',
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowAdminCloudSetup((prev) => !prev)}
+                >
+                  <img src={APP_ICONS.cloud} alt="" className="app-icon-sm" />
+                  {showAdminCloudSetup
+                    ? 'Hide Supabase Credentials'
+                    : 'Store Supabase Credentials on Admin Account (Optional)'}
+                </button>
+                {showAdminCloudSetup && (
+                  <div className="form-grid" style={{ marginTop: 10 }}>
+                    <div className="form-field full">
+                      <label className="form-label">Supabase Project URL</label>
+                      <input
+                        className="input"
+                        value={sSupabaseUrl}
+                        onChange={(e) => setSSupabaseUrl(e.target.value)}
+                        placeholder="https://your-project.supabase.co"
+                      />
+                    </div>
+                    <div className="form-field">
+                      <label className="form-label">Supabase Anon Key</label>
+                      <input
+                        className="input"
+                        type="password"
+                        value={sSupabaseAnonKey}
+                        onChange={(e) => setSSupabaseAnonKey(e.target.value)}
+                        placeholder="sb_publishable_... or eyJ..."
+                      />
+                    </div>
+                    <div className="form-field">
+                      <label className="form-label">Cloud Workspace ID</label>
+                      <input
+                        className="input"
+                        value={sCloudWorkspace}
+                        onChange={(e) => setSCloudWorkspace(e.target.value)}
+                        placeholder="farmdb-homestead-main"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <button
               type="submit"
               className="btn btn-primary"
               disabled={
-                joinMut.isPending ||
                 createAccountMut.isPending ||
                 updateSettingsMut.isPending
               }
             >
               <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
               {signupMode === 'user_account'
-                ? sJoinKey.trim()
-                  ? 'Sign Up & Request Admin Network Approval'
-                  : 'Create Local User Account & Enter'
+                ? 'Create User Account & Enter'
                 : 'Save Admin Account & Enter Farm'}
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleConnectExistingWithKey} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="form-field">
-              <label className="form-label">Existing Non-Admin Account</label>
-              <ModernSelect
-                fullWidth
-                value={connectAccountId}
-                options={
-                  selectableNonAdminAccounts.length > 0
-                    ? selectableNonAdminAccounts.map((acc) => ({
-                        value: acc.id,
-                        label: acc.displayName,
-                        hint: formatAccountRoleLabel(acc.role),
-                        iconSrc: getAvatarIcon(acc.avatarKey),
-                      }))
-                    : [
-                        {
-                          value: '',
-                          label: 'No secondary account yet — use Sign Up tab',
-                          iconSrc: APP_ICONS.farmer,
-                        },
-                      ]
-                }
-                onChange={setConnectAccountId}
-              />
-            </div>
-            <div className="form-field">
-              <label className="form-label">Admin&apos;s Network Join Key *</label>
-              <input
-                className="input"
-                value={connectKeyInput}
-                onChange={(e) => setConnectKeyInput(e.target.value)}
-                placeholder="Paste FARM-XXXX or FDB1:... Join Key"
-                required
-              />
-            </div>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={!connectAccountId || joinMut.isPending}
-            >
-              <img src={APP_ICONS.networking} alt="" className="app-icon-sm" />
-              Connect to Admin&apos;s Database (Pending Review)
             </button>
           </form>
         )}

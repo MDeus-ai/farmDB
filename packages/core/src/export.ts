@@ -1,16 +1,21 @@
 import { DEFAULT_FARM_SETTINGS } from './analytics';
-import type {
-  AlertItem,
-  AnimalOwnership,
-  FarmAccount,
-  FarmSettings,
-  FarmWorker,
-  FinancialLog,
-  Livestock,
-  MedicalRecord,
-  ProductRecord,
-  WorkerPayment,
-  WorkerTask,
+import { normalizeAccountPermissions } from './network';
+import {
+  inferDefaultLivestockSex,
+  LIVESTOCK_SEXES,
+  type AlertItem,
+  type AnimalOwnership,
+  type CloudSyncLog,
+  type FarmAccount,
+  type FarmSettings,
+  type FarmWorker,
+  type FinancialLog,
+  type Livestock,
+  type LivestockSex,
+  type MedicalRecord,
+  type ProductRecord,
+  type WorkerPayment,
+  type WorkerTask,
 } from './types';
 import { validateFarmSettings } from './validation';
 
@@ -19,6 +24,7 @@ export interface FarmDbSnapshot {
   app: 'farmDB';
   exportedAt: string;
   settings: FarmSettings;
+  settingsUpdatedAt?: number;
   livestock: Livestock[];
   productRecords: ProductRecord[];
   medicalRecords: MedicalRecord[];
@@ -29,6 +35,7 @@ export interface FarmDbSnapshot {
   workerTasks?: WorkerTask[];
   animalOwnerships?: AnimalOwnership[];
   farmAccounts?: FarmAccount[];
+  cloudSyncLogs?: CloudSyncLog[];
 }
 
 export type ExportTableKey =
@@ -73,6 +80,7 @@ export function exportLivestockToCsv(rows: readonly Livestock[]): string {
     [
       'id',
       'species',
+      'sex',
       'tag_number',
       'name',
       'breed',
@@ -87,6 +95,7 @@ export function exportLivestockToCsv(rows: readonly Livestock[]): string {
     rows.map((r) => [
       r.id,
       r.species,
+      r.sex ?? inferDefaultLivestockSex(r.tagNumber),
       r.tagNumber,
       r.name,
       r.breed,
@@ -490,8 +499,15 @@ export function parseFarmSnapshotJson(raw: string): FarmDbSnapshot {
     settings: validatedSettings.ok && validatedSettings.data
       ? validatedSettings.data
       : { ...DEFAULT_FARM_SETTINGS },
+    ...(typeof candidate.settingsUpdatedAt === 'number' &&
+    Number.isFinite(candidate.settingsUpdatedAt)
+      ? { settingsUpdatedAt: candidate.settingsUpdatedAt }
+      : {}),
     livestock: candidate.livestock.map((row) => ({
       ...row,
+      sex: (LIVESTOCK_SEXES as readonly string[]).includes(row.sex)
+        ? (row.sex as LivestockSex)
+        : inferDefaultLivestockSex(row.tagNumber),
       sireId: row.sireId ?? null,
       damId: row.damId ?? null,
     })),
@@ -510,7 +526,22 @@ export function parseFarmSnapshotJson(raw: string): FarmDbSnapshot {
       ? { animalOwnerships: candidate.animalOwnerships }
       : {}),
     ...(Array.isArray(candidate.farmAccounts)
-      ? { farmAccounts: candidate.farmAccounts }
+      ? {
+          farmAccounts: candidate.farmAccounts.map((acc) => ({
+            ...acc,
+            accessCode: acc.accessCode ?? null,
+            supabaseUrl: acc.supabaseUrl ?? null,
+            supabaseAnonKey: acc.supabaseAnonKey ?? null,
+            cloudWorkspaceId: acc.cloudWorkspaceId ?? null,
+            canManageNetwork: Boolean(acc.canManageNetwork ?? acc.isPrimaryAdmin),
+            canSyncCloud: acc.canSyncCloud ?? true,
+            permissions: normalizeAccountPermissions(acc.permissions, acc.role),
+            status: acc.status ?? 'active',
+          })),
+        }
+      : {}),
+    ...(Array.isArray(candidate.cloudSyncLogs)
+      ? { cloudSyncLogs: candidate.cloudSyncLogs }
       : {}),
   };
 }

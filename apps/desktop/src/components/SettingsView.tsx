@@ -3,6 +3,7 @@ import {
   CURRENCY_OPTIONS,
   DATE_FORMATS,
   DEFAULT_FARM_SETTINGS,
+  describeModuleAccessLevel,
   FONT_SCALES,
   formatCurrency,
   formatSpeciesLabel,
@@ -25,8 +26,10 @@ import {
   useClearCloudSyncLogs,
   useCloudSyncLogs,
   useFarmSettings,
+  useModulePermissions,
   useResetFarmSettings,
   useTriggerCloudSync,
+  useUpdateFarmAccount,
   useUpdateFarmSettings,
 } from '@farmdb/db';
 import {
@@ -34,11 +37,21 @@ import {
   getCurrencyFlagIcon,
   getSpeciesPngIcon,
 } from '../assets/icons';
+import type { TauriSqlController } from '../db/tauriDriver';
+import {
+  getDesktopSqliteStorageInfo,
+  relocateDesktopSqliteStorage,
+  resetDesktopSqliteStorage,
+  setDesktopSqliteReadOnlyProtection,
+  type SqliteStorageInfo,
+} from '../services/exportBackup';
+import { isTauriEnvironment } from '../services/imageStorage';
 import { FileTabs } from './FileTabs';
 import { ModernSelect, type ModernSelectOption } from './ModernSelect';
 import { NumberStepper } from './NumberStepper';
 
 interface SettingsViewProps {
+  sqlController?: TauriSqlController | null;
   onOpenBackup: () => void;
   onOpenTutorial?: () => void;
 }
@@ -134,13 +147,16 @@ function getSyncStrategyLabel(strategy: SyncConflictStrategy): string {
 }
 
 export function SettingsView({
+  sqlController,
   onOpenBackup,
   onOpenTutorial,
 }: SettingsViewProps) {
   const settingsQuery = useFarmSettings();
   const updateMutation = useUpdateFarmSettings();
+  const updateAccountMutation = useUpdateFarmAccount();
   const resetMutation = useResetFarmSettings();
   const activeAccountQuery = useActiveFarmAccount();
+  const { canEdit, canDelete, accessLevel } = useModulePermissions('settings');
   const logsQuery = useCloudSyncLogs(30);
   const syncMut = useTriggerCloudSync();
   const clearLogsMut = useClearCloudSyncLogs();
@@ -150,6 +166,82 @@ export function SettingsView({
   const syncLogs = logsQuery.data ?? [];
   const isAdmin = isAdminAccount(activeAccount);
   const isAdminOrManager = isAdmin;
+  const inTauri = isTauriEnvironment();
+  const [storageInfo, setStorageInfo] = useState<SqliteStorageInfo | null>(null);
+  const [storageBusy, setStorageBusy] = useState(false);
+
+  useEffect(() => {
+    if (!inTauri) return;
+    void getDesktopSqliteStorageInfo()
+      .then(setStorageInfo)
+      .catch(() => setStorageInfo(null));
+  }, [inTauri]);
+
+  async function handleChangeStorageDir() {
+    if (!sqlController) return;
+    setStorageFeedback(null);
+    setStorageBusy(true);
+    try {
+      const updated = await relocateDesktopSqliteStorage(sqlController);
+      if (updated) {
+        setStorageInfo(updated);
+        setStorageFeedback({
+          kind: 'ok',
+          text: `Moved native SQLite database to ${updated.dbPath}. External writes are ${updated.readOnlyProtection ? 'blocked (read-only protected)' : 'unlocked'}.`,
+        });
+      }
+    } catch (err) {
+      setStorageFeedback({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Unable to move SQLite database folder.',
+      });
+    } finally {
+      setStorageBusy(false);
+    }
+  }
+
+  async function handleResetStorageDir() {
+    if (!sqlController) return;
+    setStorageFeedback(null);
+    setStorageBusy(true);
+    try {
+      const updated = await resetDesktopSqliteStorage(sqlController);
+      setStorageInfo(updated);
+      setStorageFeedback({
+        kind: 'ok',
+        text: `Restored native SQLite database to default folder: ${updated.dbPath}`,
+      });
+    } catch (err) {
+      setStorageFeedback({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Unable to reset SQLite storage folder.',
+      });
+    } finally {
+      setStorageBusy(false);
+    }
+  }
+
+  async function handleToggleReadOnlyProtection(enabled: boolean) {
+    setStorageFeedback(null);
+    setStorageBusy(true);
+    try {
+      const updated = await setDesktopSqliteReadOnlyProtection(enabled);
+      setStorageInfo(updated);
+      setStorageFeedback({
+        kind: 'ok',
+        text: enabled
+          ? 'Read-only file protection enabled: native SQLite .db is read-only outside farmDB.'
+          : 'Read-only file protection paused.',
+      });
+    } catch (err) {
+      setStorageFeedback({
+        kind: 'err',
+        text: err instanceof Error ? err.message : 'Unable to update read-only protection.',
+      });
+    } finally {
+      setStorageBusy(false);
+    }
+  }
 
   const [farmName, setFarmName] = useState(settings.farmName);
   const [currencySymbol, setCurrencySymbol] = useState(settings.currencySymbol);
@@ -162,9 +254,17 @@ export function SettingsView({
   const [leadDaysText, setLeadDaysText] = useState(
     String(settings.paymentAlertLeadDays)
   );
-  const [activeTab, setActiveTab] = useState<'settings' | 'logs'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'advanced' | 'logs'>('settings');
   const [confirmReset, setConfirmReset] = useState(false);
   const [feedback, setFeedback] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+  const [storageFeedback, setStorageFeedback] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+  const [cloudFeedback, setCloudFeedback] = useState<{
     kind: 'ok' | 'err';
     text: string;
   } | null>(null);
@@ -222,27 +322,47 @@ export function SettingsView({
     }
   }, [settingsQuery.data]);
 
+  async function persistCloudAndAdminCredentials() {
+    await updateMutation.mutateAsync({
+      cloudSyncEnabled: cloudEnabled,
+      supabaseUrl,
+      supabaseAnonKey: supabaseKey,
+      cloudWorkspaceId: workspaceId,
+      autoSyncOnInternet: autoSync,
+      cloudSyncIntervalSeconds: Number(syncIntervalSec),
+      syncConflictStrategy: conflictStrategy,
+      syncIncludeFinancials: syncFinancials,
+      syncIncludeHr: syncHr,
+    });
+    const activeAcc = activeAccountQuery.data;
+    if (
+      activeAcc &&
+      isAdminAccount(activeAcc) &&
+      supabaseUrl.trim().length > 0 &&
+      supabaseKey.trim().length > 0
+    ) {
+      await updateAccountMutation.mutateAsync({
+        id: activeAcc.id,
+        input: {
+          supabaseUrl: supabaseUrl.trim(),
+          supabaseAnonKey: supabaseKey.trim(),
+          cloudWorkspaceId: workspaceId.trim() || 'farmdb-homestead-main',
+        },
+      });
+    }
+  }
+
   async function handleSaveCloudSettings(e: React.FormEvent) {
     e.preventDefault();
-    setFeedback(null);
+    setCloudFeedback(null);
     try {
-      await updateMutation.mutateAsync({
-        cloudSyncEnabled: cloudEnabled,
-        supabaseUrl,
-        supabaseAnonKey: supabaseKey,
-        cloudWorkspaceId: workspaceId,
-        autoSyncOnInternet: autoSync,
-        cloudSyncIntervalSeconds: Number(syncIntervalSec),
-        syncConflictStrategy: conflictStrategy,
-        syncIncludeFinancials: syncFinancials,
-        syncIncludeHr: syncHr,
-      });
-      setFeedback({
+      await persistCloudAndAdminCredentials();
+      setCloudFeedback({
         kind: 'ok',
-        text: 'Saved Supabase & cloud sync configuration to local SQLite.',
+        text: 'Saved Supabase credentials to local SQLite and active Admin account.',
       });
     } catch (err) {
-      setFeedback({
+      setCloudFeedback({
         kind: 'err',
         text: err instanceof Error ? err.message : 'Invalid Supabase settings.',
       });
@@ -250,26 +370,16 @@ export function SettingsView({
   }
 
   async function handleSyncAction(direction: CloudSyncDirection) {
-    setFeedback(null);
+    setCloudFeedback(null);
     try {
-      await updateMutation.mutateAsync({
-        cloudSyncEnabled: cloudEnabled,
-        supabaseUrl,
-        supabaseAnonKey: supabaseKey,
-        cloudWorkspaceId: workspaceId,
-        autoSyncOnInternet: autoSync,
-        cloudSyncIntervalSeconds: Number(syncIntervalSec),
-        syncConflictStrategy: conflictStrategy,
-        syncIncludeFinancials: syncFinancials,
-        syncIncludeHr: syncHr,
-      });
+      await persistCloudAndAdminCredentials();
       const res = await syncMut.mutateAsync(direction);
-      setFeedback({
+      setCloudFeedback({
         kind: res.ok ? 'ok' : 'err',
         text: res.message,
       });
     } catch (err) {
-      setFeedback({
+      setCloudFeedback({
         kind: 'err',
         text: err instanceof Error ? err.message : 'Supabase sync failed.',
       });
@@ -280,6 +390,7 @@ export function SettingsView({
     patch: Partial<FarmSettings>,
     successText = 'Preference updated.'
   ) {
+    if (!canEdit) return;
     setFeedback(null);
     try {
       await updateMutation.mutateAsync(patch);
@@ -294,6 +405,7 @@ export function SettingsView({
 
   async function handleSaveNumericAndText(event: React.FormEvent) {
     event.preventDefault();
+    if (!canEdit) return;
     setFeedback(null);
     try {
       await updateMutation.mutateAsync({
@@ -316,6 +428,7 @@ export function SettingsView({
   }
 
   async function handleResetDefaults() {
+    if (!canDelete) return;
     setFeedback(null);
     try {
       await resetMutation.mutateAsync();
@@ -363,6 +476,11 @@ export function SettingsView({
         </div>
 
         <div className="row-actions">
+          {(!canEdit || !canDelete) && (
+            <span className="status-pill status-sold">
+              {describeModuleAccessLevel(accessLevel)}
+            </span>
+          )}
           {!isAdmin && (
             <span className="status-pill status-active">
               {activeAccount?.canSyncCloud
@@ -391,28 +509,43 @@ export function SettingsView({
         </div>
       </div>
 
-      {isAdmin && (
-        <FileTabs
-          ariaLabel="Settings sections"
-          surface="page"
-          activeId={activeTab}
-          onChange={setActiveTab}
-          tabs={[
-            {
-              id: 'settings',
-              label: 'Settings & Cloud DB',
-              iconSrc: APP_ICONS.settings,
-            },
-            {
-              id: 'logs',
-              label: `Sync Logs (${syncLogs.length})`,
-              iconSrc: APP_ICONS.dataSync,
-            },
-          ]}
-        />
+      {!canEdit && (
+        <div className="notice-banner" role="status" style={{ marginBottom: 14 }}>
+          <span>
+            Settings are currently read-only for your account ({describeModuleAccessLevel(accessLevel)}). Ask your Farm Admin to grant Edit or Full permission to modify preferences.
+          </span>
+        </div>
       )}
 
-      {feedback && (
+      <FileTabs
+        ariaLabel="Settings sections"
+        surface="page"
+        activeId={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            id: 'settings',
+            label: 'Settings',
+            iconSrc: APP_ICONS.settings,
+          },
+          {
+            id: 'advanced',
+            label: 'Advanced Settings',
+            iconSrc: APP_ICONS.databaseCloud,
+          },
+          ...(isAdmin
+            ? [
+                {
+                  id: 'logs' as const,
+                  label: `Sync Logs (${syncLogs.length})`,
+                  iconSrc: APP_ICONS.dataSync,
+                },
+              ]
+            : []),
+        ]}
+      />
+
+      {activeTab === 'settings' && feedback && (
         <div
           className={
             feedback.kind === 'ok' ? 'alert-toast-banner' : 'notice-banner'
@@ -433,6 +566,25 @@ export function SettingsView({
 
       {isAdmin && activeTab === 'logs' ? (
         <section className="card">
+          {cloudFeedback && (
+            <div
+              className={
+                cloudFeedback.kind === 'ok' ? 'alert-toast-banner' : 'notice-banner'
+              }
+              role={cloudFeedback.kind === 'err' ? 'alert' : 'status'}
+              style={{ marginBottom: 14 }}
+            >
+              <span>{cloudFeedback.text}</span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setCloudFeedback(null)}
+              >
+                <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                Dismiss
+              </button>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div className="settings-card-icon">
@@ -515,9 +667,8 @@ export function SettingsView({
             </div>
           )}
         </section>
-      ) : (
-        <>
-          <div className="settings-grid">
+      ) : activeTab === 'settings' ? (
+        <div className="settings-grid">
             <div className="settings-column">
               <section className="card settings-card">
                 <div className="settings-card-header">
@@ -541,6 +692,7 @@ export function SettingsView({
                       <button
                         key={scale}
                         type="button"
+                        disabled={!canEdit}
                         className={`segmented-btn ${settings.fontScale === scale ? 'active' : ''
                           }`}
                         onClick={() =>
@@ -567,6 +719,7 @@ export function SettingsView({
                       <button
                         key={density}
                         type="button"
+                        disabled={!canEdit}
                         className={`segmented-btn ${settings.uiDensity === density ? 'active' : ''
                           }`}
                         onClick={() =>
@@ -608,6 +761,7 @@ export function SettingsView({
                     </div>
                     <input
                       type="checkbox"
+                      disabled={!canEdit}
                       checked={settings.autoRecordMilkSaleByDefault}
                       onChange={(e) =>
                         void patchSetting(
@@ -627,6 +781,7 @@ export function SettingsView({
                     </div>
                     <input
                       type="checkbox"
+                      disabled={!canEdit}
                       checked={settings.autoRecordMedicalExpenseByDefault}
                       onChange={(e) =>
                         void patchSetting(
@@ -646,6 +801,7 @@ export function SettingsView({
                     </div>
                     <input
                       type="checkbox"
+                      disabled={!canEdit}
                       checked={settings.autoRecordPayrollExpenseByDefault}
                       onChange={(e) =>
                         void patchSetting(
@@ -665,6 +821,7 @@ export function SettingsView({
                     </div>
                     <input
                       type="checkbox"
+                      disabled={!canEdit}
                       checked={settings.enableNotifications}
                       onChange={(e) =>
                         void patchSetting(
@@ -686,6 +843,7 @@ export function SettingsView({
                     </div>
                     <input
                       type="checkbox"
+                      disabled={!canEdit}
                       checked={settings.confirmBeforeDelete}
                       onChange={(e) =>
                         void patchSetting(
@@ -709,35 +867,39 @@ export function SettingsView({
                     </span>
                   </div>
 
-                  {confirmReset ? (
-                    <div className="row-actions">
-                      <button
-                        type="button"
-                        className="btn btn-danger btn-sm"
-                        disabled={resetMutation.isPending}
-                        onClick={() => void handleResetDefaults()}
-                      >
-                        <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                        Confirm Reset
-                      </button>
+                  {canDelete ? (
+                    confirmReset ? (
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          disabled={resetMutation.isPending}
+                          onClick={() => void handleResetDefaults()}
+                        >
+                          <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                          Confirm Reset
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setConfirmReset(false)}
+                        >
+                          <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                          Keep Current
+                        </button>
+                      </div>
+                    ) : (
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
-                        onClick={() => setConfirmReset(false)}
+                        onClick={() => setConfirmReset(true)}
                       >
-                        <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
-                        Keep Current
+                        <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
+                        Reset Defaults
                       </button>
-                    </div>
+                    )
                   ) : (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => setConfirmReset(true)}
-                    >
-                      <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
-                      Reset Defaults
-                    </button>
+                    <span className="rate-preview">Full privilege required to reset defaults</span>
                   )}
                 </div>
               </section>
@@ -766,6 +928,7 @@ export function SettingsView({
                       <button
                         key={fmt}
                         type="button"
+                        disabled={!canEdit}
                         className={`segmented-btn ${settings.dateFormat === fmt ? 'active' : ''
                           }`}
                         onClick={() =>
@@ -792,6 +955,7 @@ export function SettingsView({
                       <button
                         key={unit}
                         type="button"
+                        disabled={!canEdit}
                         className={`segmented-btn ${settings.volumeUnit === unit ? 'active' : ''
                           }`}
                         style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
@@ -824,6 +988,7 @@ export function SettingsView({
                       <button
                         key={sp}
                         type="button"
+                        disabled={!canEdit}
                         className={`segmented-btn ${settings.defaultSpecies === sp ? 'active' : ''
                           }`}
                         style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
@@ -858,137 +1023,145 @@ export function SettingsView({
                 </div>
 
                 <form className="settings-form" onSubmit={handleSaveNumericAndText}>
-                  <div className="form-grid">
-                    <div className="form-field full">
-                      <label className="form-label" htmlFor="set-farm-name">
-                        Farm / Operation Name
-                      </label>
-                      <input
-                        id="set-farm-name"
-                        className="input"
-                        value={farmName}
-                        maxLength={60}
-                        onChange={(e) => setFarmName(e.target.value)}
-                        placeholder="farmDB Homestead"
-                      />
-                    </div>
-
-                    <div className="form-field">
-                      <label className="form-label" htmlFor="set-currency-preset">
-                        Currency
-                      </label>
-                      <ModernSelect
-                        id="set-currency-preset"
-                        fullWidth
-                        value={isPresetCurrency ? currencySymbol : '__custom__'}
-                        options={currencyPresetOptions}
-                        ariaLabel="Select currency"
-                        onChange={(next) => {
-                          if (next === '__custom__') {
-                            setCurrencySymbol((prev) =>
-                              CURRENCY_OPTIONS.some((o) => o.symbol === prev)
-                                ? ''
-                                : prev
-                            );
-                          } else {
-                            setCurrencySymbol(next);
-                            void patchSetting(
-                              { currencySymbol: next },
-                              `Currency set to ${next}.`
-                            );
-                          }
-                        }}
-                      />
-                      {!isPresetCurrency && (
+                  <fieldset
+                    disabled={!canEdit}
+                    style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
+                  >
+                    <div className="form-grid">
+                      <div className="form-field full">
+                        <label className="form-label" htmlFor="set-farm-name">
+                          Farm / Operation Name
+                        </label>
                         <input
-                          id="set-currency"
+                          id="set-farm-name"
                           className="input"
-                          style={{ marginTop: 6 }}
-                          value={currencySymbol}
-                          maxLength={6}
-                          onChange={(e) => setCurrencySymbol(e.target.value)}
-                          placeholder="Enter symbol (e.g. KES)"
-                        />
-                      )}
-                    </div>
-
-                    <div className="form-field">
-                      <label className="form-label" htmlFor="set-milk-rate">
-                        Default Milk Rate ({currencySymbol || '$'} / Liter)
-                      </label>
-                      <NumberStepper
-                        id="set-milk-rate"
-                        ariaLabel="Default Milk Rate"
-                        min={0}
-                        step={currencySymbol === 'UGX' ? 100 : 0.05}
-                        decimals={currencySymbol === 'UGX' ? 0 : 2}
-                        value={rateText}
-                        onChange={setRateText}
-                      />
-                    </div>
-
-                    <div className="form-field full">
-                      <label className="form-label" htmlFor="set-alert-interval">
-                        Alert Check Interval (seconds: 15–3600)
-                      </label>
-                      <div className="inline-rate-row">
-                        <img src={APP_ICONS.hourglass} alt="" className="app-icon-md" />
-                        <NumberStepper
-                          id="set-alert-interval"
-                          ariaLabel="Alert Check Interval"
-                          compact
-                          min={15}
-                          max={3600}
-                          step={5}
-                          decimals={0}
-                          value={intervalText}
-                          onChange={setIntervalText}
-                        />
-                        <PresetStrip
-                          label="Alert check interval presets"
-                          value={intervalText}
-                          presets={INTERVAL_PRESETS}
-                          onSelect={setIntervalText}
+                          value={farmName}
+                          maxLength={60}
+                          onChange={(e) => setFarmName(e.target.value)}
+                          placeholder="farmDB Homestead"
                         />
                       </div>
-                    </div>
 
-                    <div className="form-field full">
-                      <label className="form-label" htmlFor="set-payment-lead-days">
-                        Alert Before Worker Payment Due (days: 0–30)
-                      </label>
-                      <div className="inline-rate-row">
-                        <img src={APP_ICONS.money} alt="" className="app-icon-md" />
+                      <div className="form-field">
+                        <label className="form-label" htmlFor="set-currency-preset">
+                          Currency
+                        </label>
+                        <ModernSelect
+                          id="set-currency-preset"
+                          fullWidth
+                          value={isPresetCurrency ? currencySymbol : '__custom__'}
+                          options={currencyPresetOptions}
+                          ariaLabel="Select currency"
+                          onChange={(next) => {
+                            if (!canEdit) return;
+                            if (next === '__custom__') {
+                              setCurrencySymbol((prev) =>
+                                CURRENCY_OPTIONS.some((o) => o.symbol === prev)
+                                  ? ''
+                                  : prev
+                              );
+                            } else {
+                              setCurrencySymbol(next);
+                              void patchSetting(
+                                { currencySymbol: next },
+                                `Currency set to ${next}.`
+                              );
+                            }
+                          }}
+                        />
+                        {!isPresetCurrency && (
+                          <input
+                            id="set-currency"
+                            className="input"
+                            style={{ marginTop: 6 }}
+                            value={currencySymbol}
+                            maxLength={6}
+                            onChange={(e) => setCurrencySymbol(e.target.value)}
+                            placeholder="Enter symbol (e.g. KES)"
+                          />
+                        )}
+                      </div>
+
+                      <div className="form-field">
+                        <label className="form-label" htmlFor="set-milk-rate">
+                          Default Milk Rate ({currencySymbol || '$'} / Liter)
+                        </label>
                         <NumberStepper
-                          id="set-payment-lead-days"
-                          ariaLabel="Payment Alert Lead Days"
-                          compact
+                          id="set-milk-rate"
+                          ariaLabel="Default Milk Rate"
                           min={0}
-                          max={30}
-                          step={1}
-                          decimals={0}
-                          value={leadDaysText}
-                          onChange={setLeadDaysText}
-                        />
-                        <PresetStrip
-                          label="Payment lead days presets"
-                          value={leadDaysText}
-                          presets={LEAD_DAYS_PRESETS}
-                          onSelect={setLeadDaysText}
+                          step={currencySymbol === 'UGX' ? 100 : 0.05}
+                          decimals={currencySymbol === 'UGX' ? 0 : 2}
+                          value={rateText}
+                          onChange={setRateText}
                         />
                       </div>
+
+                      <div className="form-field full">
+                        <label className="form-label" htmlFor="set-alert-interval">
+                          Alert Check Interval (seconds: 15–3600)
+                        </label>
+                        <div className="inline-rate-row">
+                          <img src={APP_ICONS.hourglass} alt="" className="app-icon-md" />
+                          <NumberStepper
+                            id="set-alert-interval"
+                            ariaLabel="Alert Check Interval"
+                            compact
+                            min={15}
+                            max={3600}
+                            step={5}
+                            decimals={0}
+                            value={intervalText}
+                            onChange={setIntervalText}
+                          />
+                          <PresetStrip
+                            label="Alert check interval presets"
+                            value={intervalText}
+                            presets={INTERVAL_PRESETS}
+                            onSelect={setIntervalText}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="form-field full">
+                        <label className="form-label" htmlFor="set-payment-lead-days">
+                          Alert Before Worker Payment Due (days: 0–30)
+                        </label>
+                        <div className="inline-rate-row">
+                          <img src={APP_ICONS.money} alt="" className="app-icon-md" />
+                          <NumberStepper
+                            id="set-payment-lead-days"
+                            ariaLabel="Payment Alert Lead Days"
+                            compact
+                            min={0}
+                            max={30}
+                            step={1}
+                            decimals={0}
+                            value={leadDaysText}
+                            onChange={setLeadDaysText}
+                          />
+                          <PresetStrip
+                            label="Payment lead days presets"
+                            value={leadDaysText}
+                            presets={LEAD_DAYS_PRESETS}
+                            onSelect={setLeadDaysText}
+                          />
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  </fieldset>
 
                   <div className="settings-actions" style={{ marginTop: 6 }}>
-                    <button
-                      type="submit"
-                      className="btn btn-primary"
-                      disabled={updateMutation.isPending}
-                    >
-                      <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                      {updateMutation.isPending ? 'Saving...' : 'Save Profile & Rates'}
-                    </button>
+                    {canEdit && (
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={updateMutation.isPending}
+                      >
+                        <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                        {updateMutation.isPending ? 'Saving...' : 'Save Profile & Rates'}
+                      </button>
+                    )}
                     <span className="rate-preview">
                       10 L est.:{' '}
                       <strong>
@@ -1003,10 +1176,128 @@ export function SettingsView({
               </section>
             </div>
           </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <section className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div className="settings-card-icon">
+                  <img src={APP_ICONS.databaseLeaf} alt="" className="app-icon-sm" />
+                </div>
+                <div>
+                  <h2 className="card-section-title" style={{ margin: 0 }}>
+                    Native SQLite Database Storage &amp; Read-Only Protection
+                  </h2>
+                  <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
+                    Choose where your native SQLite database file is stored and lock it against external modification outside farmDB.
+                  </p>
+                </div>
+              </div>
 
-          {/* Database Cloud Sync & Supabase (Admin only) */}
-          {isAdmin && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginTop: 18 }}>
+              {inTauri && storageInfo && (
+                <div className="row-actions">
+                  <span className={`status-pill ${storageInfo.isCustomLocation ? 'status-active' : 'status-sold'}`}>
+                    {storageInfo.isCustomLocation ? 'Custom Storage Folder' : 'Default App Folder'}
+                  </span>
+                  <span className={`status-pill ${storageInfo.isFileReadOnly ? 'status-active' : 'status-sold'}`}>
+                    {storageInfo.isFileReadOnly ? 'Read-Only Outside App Active' : 'Unlocked'}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {!inTauri ? (
+              <p className="rate-preview" style={{ margin: 0 }}>
+                Running in web preview mode. Native SQLite folder relocation and OS-level read-only file protection are active in the Desktop Tauri app.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div className="toggle-card" style={{ alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
+                  <div className="form-label">Active SQLite Database File</div>
+                  <code style={{ wordBreak: 'break-all', fontSize: '0.82rem' }}>
+                    {storageInfo?.dbPath ?? 'Inspecting SQLite storage path...'}
+                  </code>
+                  {storageInfo && (
+                    <span className="rate-preview">
+                      File size: {(storageInfo.fileSizeBytes / 1024).toFixed(1)} KB
+                      {storageInfo.isFileReadOnly
+                        ? ' · Protected by OS read-only attribute + verified shadow copy when idle'
+                        : ' · External write protection currently paused'}
+                    </span>
+                  )}
+                </div>
+
+                <label className="toggle-card">
+                  <div>
+                    <div className="form-label">
+                      Read-Only File Protection (Prevent External Modification / Corruption)
+                    </div>
+                    <div className="rate-preview">
+                      Keeps native SQLite <code>.db</code> files read-only on disk except during verified transactions inside farmDB, and maintains an internal verified copy against tampering.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={storageInfo?.readOnlyProtection ?? true}
+                    disabled={storageBusy || !(isAdmin || canDelete)}
+                    onChange={(e) => void handleToggleReadOnlyProtection(e.target.checked)}
+                  />
+                </label>
+
+                {storageFeedback && (
+                  <div
+                    className={
+                      storageFeedback.kind === 'ok'
+                        ? 'alert-toast-banner'
+                        : 'notice-banner'
+                    }
+                    role={storageFeedback.kind === 'err' ? 'alert' : 'status'}
+                  >
+                    <span>{storageFeedback.text}</span>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setStorageFeedback(null)}
+                    >
+                      <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                <div className="settings-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={storageBusy || !sqlController || !(isAdmin || canDelete)}
+                    onClick={() => void handleChangeStorageDir()}
+                  >
+                    <img src={APP_ICONS.databaseLeaf} alt="" className="app-icon-sm" />
+                    {storageBusy ? 'Updating SQLite Storage...' : 'Change Storage Folder...'}
+                  </button>
+                  {storageInfo?.isCustomLocation && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={storageBusy || !sqlController || !(isAdmin || canDelete)}
+                      onClick={() => void handleResetStorageDir()}
+                    >
+                      <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
+                      Reset to Default Folder
+                    </button>
+                  )}
+                  {!(isAdmin || canDelete) && (
+                    <span className="rate-preview">
+                      Admin or Full Settings access required to relocate database files or toggle file lock.
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Database Cloud Sync & Supabase */}
+          {isAdmin ? (
             <section className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1046,6 +1337,28 @@ export function SettingsView({
                       : 'Supabase Not Configured'}
                 </span>
               </div>
+
+              {cloudFeedback && (
+                <div
+                  className={
+                    cloudFeedback.kind === 'ok'
+                      ? 'alert-toast-banner'
+                      : 'notice-banner'
+                  }
+                  role={cloudFeedback.kind === 'err' ? 'alert' : 'status'}
+                  style={{ marginBottom: 12 }}
+                >
+                  <span>{cloudFeedback.text}</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setCloudFeedback(null)}
+                  >
+                    <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                    Dismiss
+                  </button>
+                </div>
+              )}
 
               <div className="network-sync-actions-bar" style={{ marginBottom: 16 }}>
                 <button
@@ -1252,7 +1565,7 @@ export function SettingsView({
                       className="btn btn-secondary btn-sm"
                       onClick={() => {
                         void navigator.clipboard?.writeText(supabaseSql);
-                        setFeedback({
+                        setCloudFeedback({
                           kind: 'ok',
                           text: 'Copied Supabase SQL setup script to clipboard.',
                         });
@@ -1268,9 +1581,37 @@ export function SettingsView({
                 </div>
               </form>
             </section>
-          </div>
+          ) : (
+            <section className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div className="settings-card-icon">
+                    <img src={APP_ICONS.cloudHosting} alt="" className="app-icon-sm" />
+                  </div>
+                  <div>
+                    <h2 className="card-section-title" style={{ margin: 0 }}>
+                      Cloud Sync &amp; Supabase Database
+                    </h2>
+                    <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
+                      {activeAccount?.canSyncCloud
+                        ? 'Your User Account is linked to the Admin cloud workspace via Network Join Key.'
+                        : 'Running on local SQLite storage only. Join an Admin network from Farm Network to link a cloud database.'}
+                    </p>
+                  </div>
+                </div>
+                <span
+                  className={`cloud-status-pill ${isOnline && settings.supabaseUrl ? 'is-online' : 'is-offline'}`}
+                >
+                  {!isOnline
+                    ? 'Offline · Local SQLite Active'
+                    : settings.supabaseUrl
+                      ? 'Connected to Admin Cloud DB'
+                      : 'Local SQLite Only'}
+                </span>
+              </div>
+            </section>
           )}
-        </>
+        </div>
       )}
     </>
   );
