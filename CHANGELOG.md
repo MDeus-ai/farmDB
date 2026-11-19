@@ -6,6 +6,17 @@
 
 # farmDB Changelog
 
+## [1.5.4] - 2026-11-19
+
+Fixed Desktop SQLite read-only write errors, enforced strict device-local account isolation on Farm Network join, added member Leave Network, added a full-app Refresh button, and allowed custom Admin Display Name renaming with an `Admin` badge.
+
+### Fixes & Improvements
+- Fixed Desktop SQLite read-only errors (`SQLITE_READONLY`) when adding or editing livestock by keeping live database handles writable while the app is open, refreshing the verified shadow copy in the background, locking on close/exit, and extracting friendly SQLite error messages.
+- Enforced strict device-local Sign-In isolation (`__local_device_account_ids`) so joining a Farm Network via Join Key never exposes remote Admin accounts or signs into them from a member's phone or PC.
+- Added self-service **Leave Network** in Farm Network and on the Pending Approval screen so connected or waiting users can disconnect cleanly back to standalone offline mode.
+- Added a full-app **Refresh** button in the Desktop titlebar and Mobile top bar / drawer that re-syncs cloud data (when configured) and refreshes all settings, themes, accounts, and farm records immediately.
+- Added **Admin Display Name** customization paired with an `Admin` tag across Settings, Farm Network Profile Edit, Sign-In tiles, Titlebar, and Mobile headers.
+
 ## [1.5.3] - 2026-11-19
 
 Fixed Join Key Farm Network onboarding for non-admin users, added real-time Admin join notifications and automatic approval polling, removed unused invite flows, and updated the in-app Guide.

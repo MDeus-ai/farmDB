@@ -1,5 +1,6 @@
 import { and, desc, eq, or, sql, type SQL } from 'drizzle-orm';
 import {
+  buildStandardUserPermissions,
   decodeFarmNetworkJoinKey,
   DEFAULT_ADMIN_ACCOUNT,
   generateId,
@@ -28,10 +29,24 @@ import {
 } from '@farmdb/core';
 import type { FarmDrizzleDb } from '../driver';
 import type { DatabaseEventBus } from '../events';
-import { cloudSyncLogs, farmAccounts } from '../schema';
-import type {
-  RestoreSnapshotOptions,
-  RestoreSnapshotResult,
+import {
+  alerts,
+  animalOwnerships,
+  cloudSyncLogs,
+  farmAccounts,
+  farmSettings,
+  financialLogs,
+  livestock,
+  medicalRecords,
+  productRecords,
+  workerPayments,
+  workers,
+  workerTasks,
+} from '../schema';
+import {
+  LOCAL_DEVICE_ACCOUNTS_SETTING_KEY,
+  type RestoreSnapshotOptions,
+  type RestoreSnapshotResult,
 } from './backupRepository';
 import type { SettingsRepository } from './settingsRepository';
 
@@ -134,6 +149,12 @@ export interface JoinFarmNetworkResult {
   farmName: string;
 }
 
+export interface LeaveFarmNetworkResult {
+  leftFarmName: string;
+  mode: 'disconnected_standalone' | 'removed_from_shared_device';
+  syncedWithCloud: boolean;
+}
+
 export interface AcceptPendingAccountOptions {
   role?: FarmAccountRole;
   permissions?: Partial<FarmAccountPermissions>;
@@ -163,6 +184,7 @@ export interface NetworkRepositoryOptions {
 export interface NetworkRepository {
   listAccounts(filter?: FarmAccountFilter): Promise<FarmAccount[]>;
   listAccountsRaw(): Promise<FarmAccount[]>;
+  listLocalSignInAccounts(): Promise<FarmAccount[]>;
   getAccountById(id: string): Promise<FarmAccount | null>;
   ensureAdminAccount(): Promise<FarmAccount>;
   getActiveAccount(): Promise<FarmAccount | null>;
@@ -175,10 +197,10 @@ export interface NetworkRepository {
   updateAccount(id: string, input: UpdateFarmAccountInput): Promise<FarmAccount>;
   removeAccount(id: string): Promise<boolean>;
   removeAccountWithCredentials(id: string, accessCode?: string): Promise<boolean>;
-  removeAccountWithCredentials(id: string, accessCode?: string): Promise<boolean>;
 
   rotateNetworkJoinKey(): Promise<string>;
   joinNetworkWithKey(input: JoinFarmNetworkInput): Promise<JoinFarmNetworkResult>;
+  leaveNetwork(accountId: string): Promise<LeaveFarmNetworkResult>;
   recoverAdminFromCloud(
     input: RecoverAdminCloudInput
   ): Promise<RecoverAdminCloudResult>;
@@ -298,6 +320,109 @@ export function createNetworkRepository(
     return mapSyncLogRow(entry as CloudSyncLogRow);
   }
 
+  async function readLocalDeviceAccountIds(): Promise<Set<string> | null> {
+    const row = await db
+      .select()
+      .from(farmSettings)
+      .where(eq(farmSettings.key, LOCAL_DEVICE_ACCOUNTS_SETTING_KEY))
+      .get();
+    if (!row) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(row.value);
+      if (Array.isArray(parsed)) {
+        return new Set(
+          parsed.filter(
+            (item): item is string =>
+              typeof item === 'string' && item.trim().length > 0
+          )
+        );
+      }
+    } catch {
+      // Ignore malformed JSON and fall back to empty set.
+    }
+    return new Set<string>();
+  }
+
+  async function writeLocalDeviceAccountIds(
+    ids: Iterable<string>
+  ): Promise<Set<string>> {
+    const next = new Set(
+      Array.from(ids)
+        .map((id) => id.trim())
+        .filter(Boolean)
+    );
+    const serialized = JSON.stringify(Array.from(next));
+    const now = Date.now();
+    const existing = await db
+      .select()
+      .from(farmSettings)
+      .where(eq(farmSettings.key, LOCAL_DEVICE_ACCOUNTS_SETTING_KEY))
+      .get();
+    if (existing) {
+      await db
+        .update(farmSettings)
+        .set({ value: serialized, updatedAt: now })
+        .where(eq(farmSettings.key, LOCAL_DEVICE_ACCOUNTS_SETTING_KEY))
+        .run();
+    } else {
+      await db
+        .insert(farmSettings)
+        .values({
+          key: LOCAL_DEVICE_ACCOUNTS_SETTING_KEY,
+          value: serialized,
+          updatedAt: now,
+        })
+        .run();
+    }
+    return next;
+  }
+
+  async function ensureLocalDeviceAccountIdsInitialized(): Promise<Set<string>> {
+    const existing = await readLocalDeviceAccountIds();
+    if (existing !== null) {
+      return existing;
+    }
+    const allRows = await db.select().from(farmAccounts);
+    const all = allRows.map(mapAccountRow);
+    if (all.length === 0) {
+      return writeLocalDeviceAccountIds([]);
+    }
+    const currentSettings = await settingsRepo.get();
+    const activeAcc = currentSettings.activeAccountId
+      ? all.find((a) => a.id === currentSettings.activeAccountId)
+      : undefined;
+    // Upgrade safety: if this device was synced onto an Admin cloud network while
+    // running as a non-admin member, only keep the member's own account local.
+    if (
+      currentSettings.cloudSyncEnabled &&
+      activeAcc &&
+      !isAdminAccount(activeAcc) &&
+      activeAcc.canSyncCloud &&
+      all.some((a) => isAdminAccount(a))
+    ) {
+      return writeLocalDeviceAccountIds([activeAcc.id]);
+    }
+    return writeLocalDeviceAccountIds(all.map((a) => a.id));
+  }
+
+  async function addLocalDeviceAccountId(id: string): Promise<void> {
+    const ids = await ensureLocalDeviceAccountIdsInitialized();
+    if (!ids.has(id)) {
+      ids.add(id);
+      await writeLocalDeviceAccountIds(ids);
+    }
+  }
+
+  async function removeLocalDeviceAccountId(id: string): Promise<Set<string>> {
+    const ids = await ensureLocalDeviceAccountIdsInitialized();
+    if (ids.delete(id)) {
+      await writeLocalDeviceAccountIds(ids);
+    }
+    return ids;
+  }
+
   async function insertValidatedAccount(
     input: NewFarmAccountInput
   ): Promise<FarmAccount> {
@@ -341,6 +466,7 @@ export function createNetworkRepository(
 
     await db.insert(farmAccounts).values(record).run();
     const createdAccount = mapAccountRow(record as FarmAccountRow);
+    await addLocalDeviceAccountId(createdAccount.id);
     const currentSettings = await settingsRepo.get();
     if (isAdminRole && currentSettings.activeAccountId === createdAccount.id) {
       await applyAdminCloudCredentialsIfEmpty(createdAccount);
@@ -484,6 +610,12 @@ export function createNetworkRepository(
       return rows.map(mapAccountRow);
     },
 
+    async listLocalSignInAccounts(): Promise<FarmAccount[]> {
+      const localIds = await ensureLocalDeviceAccountIdsInitialized();
+      const all = await this.listAccountsRaw();
+      return all.filter((acc) => localIds.has(acc.id));
+    },
+
     async listAccounts(filter?: FarmAccountFilter): Promise<FarmAccount[]> {
       if (autoSeedDefaultAdmin) {
         await this.ensureAdminAccount();
@@ -570,14 +702,19 @@ export function createNetworkRepository(
         updatedAt: 1,
       };
       await db.insert(farmAccounts).values(adminRow).run();
+      await addLocalDeviceAccountId(adminRow.id);
       events.emit(['network'], adminRow.id);
       return mapAccountRow(adminRow as FarmAccountRow);
     },
 
     async getActiveAccount(): Promise<FarmAccount | null> {
+      const localIds = await ensureLocalDeviceAccountIdsInitialized();
       if (!autoSeedDefaultAdmin) {
         const currentSettings = await settingsRepo.get();
-        if (currentSettings.activeAccountId) {
+        if (
+          currentSettings.activeAccountId &&
+          localIds.has(currentSettings.activeAccountId)
+        ) {
           const found = await this.getAccountById(
             currentSettings.activeAccountId
           );
@@ -586,9 +723,12 @@ export function createNetworkRepository(
           }
         }
         const all = await this.listAccountsRaw();
+        const localAccounts = all.filter((acc) => localIds.has(acc.id));
         const fallback =
-          all.find((acc) => acc.isPrimaryAdmin && acc.status !== 'suspended') ??
-          all.find((acc) => acc.status !== 'suspended') ??
+          localAccounts.find(
+            (acc) => acc.isPrimaryAdmin && acc.status !== 'suspended'
+          ) ??
+          localAccounts.find((acc) => acc.status !== 'suspended') ??
           null;
         if (fallback) {
           await settingsRepo.update({ activeAccountId: fallback.id });
@@ -597,13 +737,22 @@ export function createNetworkRepository(
       }
 
       const admin = await this.ensureAdminAccount();
+      const freshLocalIds = await ensureLocalDeviceAccountIdsInitialized();
       const currentSettings = await settingsRepo.get();
-      if (currentSettings.activeAccountId === admin.id) {
+      if (
+        currentSettings.activeAccountId === admin.id &&
+        freshLocalIds.has(admin.id)
+      ) {
         return admin;
       }
-      const found = await this.getAccountById(currentSettings.activeAccountId);
-      if (found && found.status !== 'suspended') {
-        return found;
+      if (
+        currentSettings.activeAccountId &&
+        freshLocalIds.has(currentSettings.activeAccountId)
+      ) {
+        const found = await this.getAccountById(currentSettings.activeAccountId);
+        if (found && found.status !== 'suspended') {
+          return found;
+        }
       }
       await settingsRepo.update({ activeAccountId: admin.id });
       return admin;
@@ -616,9 +765,19 @@ export function createNetworkRepository(
       if (autoSeedDefaultAdmin) {
         await this.ensureAdminAccount();
       }
+      const localIds = await ensureLocalDeviceAccountIdsInitialized();
       const account = await this.getAccountById(accountId);
       if (!account) {
         throw new FarmAccountNotFoundError(accountId);
+      }
+      if (!localIds.has(accountId)) {
+        throw new NetworkValidationError(
+          {
+            displayName:
+              'This account belongs to another device on the Farm Network and cannot be signed into from here.',
+          },
+          'This account belongs to another device on the Farm Network and cannot be signed into from here.'
+        );
       }
       if (account.status === 'suspended' && !account.isPrimaryAdmin) {
         throw new NetworkValidationError(
@@ -690,6 +849,7 @@ export function createNetworkRepository(
 
       const currentSettings = await settingsRepo.get();
       await db.delete(farmAccounts).where(eq(farmAccounts.id, id)).run();
+      const remainingLocalIds = await removeLocalDeviceAccountId(id);
 
       let remaining = await this.listAccountsRaw();
       if (existing.isPrimaryAdmin) {
@@ -718,9 +878,14 @@ export function createNetworkRepository(
       }
 
       if (currentSettings.activeAccountId === id) {
+        const remainingLocal = remaining.filter((acc) =>
+          remainingLocalIds.has(acc.id)
+        );
         const nextActive =
-          remaining.find((acc) => acc.isPrimaryAdmin && acc.status !== 'suspended') ??
-          remaining.find((acc) => acc.status !== 'suspended') ??
+          remainingLocal.find(
+            (acc) => acc.isPrimaryAdmin && acc.status !== 'suspended'
+          ) ??
+          remainingLocal.find((acc) => acc.status !== 'suspended') ??
           null;
         await settingsRepo.update({
           activeAccountId: nextActive?.id ?? '',
@@ -747,8 +912,18 @@ export function createNetworkRepository(
       id: string,
       accessCode?: string
     ): Promise<boolean> {
+      const localIds = await ensureLocalDeviceAccountIdsInitialized();
       const existing = await this.getAccountById(id);
       if (!existing) return false;
+      if (!localIds.has(id)) {
+        throw new NetworkValidationError(
+          {
+            displayName:
+              'Only accounts created or recovered on this device can be deleted from the Sign-In Portal.',
+          },
+          'Only accounts created or recovered on this device can be deleted from the Sign-In Portal.'
+        );
+      }
       if (existing.accessCode && existing.accessCode.trim().length > 0) {
         if ((accessCode ?? '').trim() !== existing.accessCode.trim()) {
           throw new NetworkValidationError(
@@ -789,6 +964,9 @@ export function createNetworkRepository(
           'Enter a valid Farm Network Join Key (FARM-XXXX or FDB1:...).'
         );
       }
+
+      // Freeze local device ownership before pulling remote Admin & member accounts
+      await ensureLocalDeviceAccountIdsInitialized();
 
       let syncedWithCloud = false;
       if (
@@ -908,6 +1086,7 @@ export function createNetworkRepository(
       const finalSettings = await settingsRepo.update({
         activeAccountId: targetAccount.id,
       });
+      await addLocalDeviceAccountId(targetAccount.id);
 
       if (finalSettings.supabaseUrl && finalSettings.supabaseAnonKey) {
         try {
@@ -928,6 +1107,154 @@ export function createNetworkRepository(
         account: targetAccount,
         syncedWithCloud,
         farmName: finalSettings.farmName,
+      };
+    },
+
+    async leaveNetwork(accountId: string): Promise<LeaveFarmNetworkResult> {
+      const existing = await this.getAccountById(accountId);
+      if (!existing) {
+        throw new FarmAccountNotFoundError(accountId);
+      }
+      if (existing.isPrimaryAdmin) {
+        throw new NetworkValidationError(
+          {
+            role: 'Primary Farm Administrator cannot leave their own Farm Network. Disable Cloud Sync in Settings or delete the account instead.',
+          },
+          'Primary Farm Administrator cannot leave their own Farm Network. Disable Cloud Sync in Settings or delete the account instead.'
+        );
+      }
+
+      const currentSettings = await settingsRepo.get();
+      const leftFarmName = currentSettings.farmName || 'Farm Network';
+      let syncedWithCloud = false;
+
+      const baseUrl = currentSettings.supabaseUrl
+        ? normalizeSupabaseBaseUrl(currentSettings.supabaseUrl)
+        : '';
+      const anonKey = currentSettings.supabaseAnonKey.trim();
+      const workspaceId =
+        currentSettings.cloudWorkspaceId.trim() || 'farmdb-homestead-main';
+
+      if (baseUrl && anonKey && workspaceId) {
+        try {
+          const fetchSupabase = createSupabaseFetcher(anonKey);
+          const restEndpoint = `${baseUrl}/rest/v1/farmdb_cloud_snapshots`;
+          const pullRes = await fetchSupabase(
+            `${restEndpoint}?workspace_id=eq.${encodeURIComponent(workspaceId)}&select=workspace_id,farm_name,snapshot,updated_at`,
+            { method: 'GET' }
+          );
+          if (pullRes.ok) {
+            const rows = (await pullRes.json()) as Array<{
+              workspace_id: string;
+              farm_name?: string;
+              snapshot?: unknown;
+            }>;
+            if (rows.length > 0 && rows[0]?.snapshot) {
+              const remoteSnapshot = parseFarmSnapshotJson(
+                JSON.stringify(rows[0].snapshot)
+              );
+              const nextRemoteAccounts = (
+                remoteSnapshot.farmAccounts ?? []
+              ).filter((acc) => acc.id !== accountId);
+              const nextSnapshot: FarmDbSnapshot = {
+                ...remoteSnapshot,
+                farmAccounts: nextRemoteAccounts,
+              };
+              const pushRes = await fetchSupabase(
+                `${restEndpoint}?on_conflict=workspace_id`,
+                {
+                  method: 'POST',
+                  extraHeaders: {
+                    Prefer: 'resolution=merge-duplicates,return=minimal',
+                  },
+                  body: JSON.stringify([
+                    {
+                      workspace_id: workspaceId,
+                      farm_name:
+                        rows[0].farm_name || remoteSnapshot.settings.farmName,
+                      updated_by_account_id: accountId,
+                      snapshot: nextSnapshot,
+                      updated_at: new Date().toISOString(),
+                    },
+                  ]),
+                }
+              );
+              if (pushRes.ok) {
+                syncedWithCloud = true;
+              }
+            }
+          }
+        } catch {
+          // Allow leaving locally even if device is offline.
+        }
+      }
+
+      const localIds = await ensureLocalDeviceAccountIdsInitialized();
+      const allAccounts = await this.listAccountsRaw();
+      const hasLocalAdmin = allAccounts.some(
+        (acc) =>
+          isAdminAccount(acc) && localIds.has(acc.id) && acc.id !== accountId
+      );
+
+      if (!hasLocalAdmin) {
+        // Standalone member device: remove synced remote accounts & remote farm data,
+        // clear the Admin's Supabase credentials, and restore independent local mode.
+        for (const acc of allAccounts) {
+          if (!localIds.has(acc.id)) {
+            await db.delete(farmAccounts).where(eq(farmAccounts.id, acc.id)).run();
+          }
+        }
+
+        await db.delete(workerTasks).run();
+        await db.delete(workerPayments).run();
+        await db.delete(workers).run();
+        await db.delete(animalOwnerships).run();
+        await db.delete(financialLogs).run();
+        await db.delete(alerts).run();
+        await db.delete(medicalRecords).run();
+        await db.delete(productRecords).run();
+        await db.delete(livestock).run();
+        await db.delete(cloudSyncLogs).run();
+
+        await db
+          .update(farmAccounts)
+          .set({
+            status: 'active',
+            canManageNetwork: false,
+            canSyncCloud: false,
+            permissionsJson: JSON.stringify(buildStandardUserPermissions()),
+            lastSyncedAt: null,
+            updatedAt: Date.now(),
+          })
+          .where(eq(farmAccounts.id, existing.id))
+          .run();
+
+        await addLocalDeviceAccountId(existing.id);
+
+        const standaloneFarmName = `${existing.displayName}'s Farm`.slice(0, 60);
+        await settingsRepo.update({
+          farmName: standaloneFarmName,
+          activeAccountId: existing.id,
+          cloudSyncEnabled: false,
+          supabaseUrl: '',
+          supabaseAnonKey: '',
+          cloudWorkspaceId: 'farmdb-homestead-main',
+          networkJoinKey: generateShortJoinCode(),
+        });
+
+        events.emit(['*'], existing.id);
+        return {
+          leftFarmName,
+          mode: 'disconnected_standalone',
+          syncedWithCloud,
+        };
+      }
+
+      await this.removeAccount(accountId);
+      return {
+        leftFarmName,
+        mode: 'removed_from_shared_device',
+        syncedWithCloud,
       };
     },
 
@@ -1037,6 +1364,8 @@ export function createNetworkRepository(
         );
       }
 
+      await ensureLocalDeviceAccountIdsInitialized();
+
       const targetAdminId = targetAdmin?.id ?? DEFAULT_ADMIN_ACCOUNT.id;
       await settingsRepo.update({
         supabaseUrl: baseUrl,
@@ -1062,6 +1391,8 @@ export function createNetworkRepository(
           throw new Error('No Admin account was found in this cloud workspace.');
         }
       }
+
+      await addLocalDeviceAccountId(ensuredAdmin.id);
 
       const now = Date.now();
       await db
@@ -1433,6 +1764,7 @@ export function createNetworkRepository(
             }
           );
           recordsPulled = countSnapshotRecords(mergeRes.merged);
+          await ensureLocalDeviceAccountIdsInitialized();
           await backupBridge.restoreSnapshot(mergeRes.merged, {
             preserveLocalSession: true,
           });
@@ -1453,6 +1785,7 @@ export function createNetworkRepository(
             recordsPulled = mergeRes.recordsPulled;
             recordsPushed = mergeRes.recordsPushed;
             finalSnapshotToPush = buildPushPayload(mergeRes.merged);
+            await ensureLocalDeviceAccountIdsInitialized();
             await backupBridge.restoreSnapshot(mergeRes.merged, {
               preserveLocalSession: true,
             });

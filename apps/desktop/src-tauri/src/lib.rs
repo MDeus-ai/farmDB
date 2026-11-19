@@ -390,6 +390,19 @@ fn set_sqlite_write_lock(app: tauri::AppHandle, locked: bool) -> Result<(), Stri
     if !locked {
         set_db_files_readonly(&db_path, false)?;
     } else if cfg.read_only_protection {
+        // Keep the live SQLite file writable while the connection pool is open so
+        // pooled connections never cache SQLITE_READONLY; refresh the read-only shadow
+        // copy now and lock the live file cleanly upon app exit / db close.
+        let _ = update_shadow_backup(&app, &db_path);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn lock_sqlite_on_close(app: tauri::AppHandle) -> Result<(), String> {
+    let cfg = load_storage_config(&app);
+    let db_path = resolve_sqlite_db_path(&app)?;
+    if cfg.read_only_protection {
         let _ = update_shadow_backup(&app, &db_path);
         let _ = set_db_files_readonly(&db_path, true);
     }
@@ -406,11 +419,9 @@ fn set_sqlite_readonly_protection(
     save_storage_config(&app, &cfg)?;
 
     let db_path = resolve_sqlite_db_path(&app)?;
+    set_db_files_readonly(&db_path, false)?;
     if enabled {
         let _ = update_shadow_backup(&app, &db_path);
-        let _ = set_db_files_readonly(&db_path, true);
-    } else {
-        set_db_files_readonly(&db_path, false)?;
     }
     build_storage_info(&app)
 }
@@ -454,11 +465,9 @@ fn relocate_sqlite_storage(
         save_storage_config(&app, &cfg)?;
     }
 
+    let _ = set_db_files_readonly(&new_path, false);
     if cfg.read_only_protection {
         let _ = update_shadow_backup(&app, &new_path);
-        let _ = set_db_files_readonly(&new_path, true);
-    } else {
-        let _ = set_db_files_readonly(&new_path, false);
     }
 
     build_storage_info(&app)
@@ -489,11 +498,9 @@ fn reset_sqlite_storage_location(app: tauri::AppHandle) -> Result<SqliteStorageI
     cfg.custom_db_dir = None;
     save_storage_config(&app, &cfg)?;
 
+    let _ = set_db_files_readonly(&default_path, false);
     if cfg.read_only_protection {
         let _ = update_shadow_backup(&app, &default_path);
-        let _ = set_db_files_readonly(&default_path, true);
-    } else {
-        let _ = set_db_files_readonly(&default_path, false);
     }
 
     build_storage_info(&app)
@@ -608,17 +615,15 @@ fn replace_sqlite_db_from_backup(
     }
 
     let _ = set_single_file_readonly(&db_path, false);
+    let _ = set_db_files_readonly(&db_path, false);
     let _ = update_shadow_backup(&app, &db_path);
-    if cfg.read_only_protection {
-        let _ = set_db_files_readonly(&db_path, true);
-    }
 
     Ok(db_path.to_string_lossy().into_owned())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -636,6 +641,7 @@ pub fn run() {
             get_sqlite_storage_info,
             prepare_sqlite_storage,
             set_sqlite_write_lock,
+            lock_sqlite_on_close,
             set_sqlite_readonly_protection,
             relocate_sqlite_storage,
             reset_sqlite_storage_location,
@@ -643,6 +649,18 @@ pub fn run() {
             validate_sqlite_backup_file,
             replace_sqlite_db_from_backup
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running farmDB desktop application");
+        .build(tauri::generate_context!())
+        .expect("error while building farmDB desktop application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            let cfg = load_storage_config(app_handle);
+            if cfg.read_only_protection {
+                if let Ok(db_path) = resolve_sqlite_db_path(app_handle) {
+                    let _ = update_shadow_backup(app_handle, &db_path);
+                    let _ = set_db_files_readonly(&db_path, true);
+                }
+            }
+        }
+    });
 }

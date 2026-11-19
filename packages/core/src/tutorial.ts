@@ -36,9 +36,9 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
       'farmDB keeps your entire livestock operation organized in one offline-first SQLite database on Desktop and Mobile, with optional Admin-controlled Supabase cloud synchronization and automatic update alerts.',
     cardsAndFeatures: [
       {
-        name: 'Navigation Menu, Custom Desktop Titlebar & Compact Icon UI',
+        name: 'Navigation Menu, Custom Desktop Titlebar, Refresh & Compact Icon UI',
         explanation:
-          'On Desktop, use the dark-green sidebar to switch modules and the top titlebar for quick Cloud Sync status, Alert shortcuts, Settings, Account, and custom window controls. On Mobile, toggle Compact Icon UI in Setup or Settings to switch between the floating bottom icon dock or labeled menu via the top-left ☰ drawer, with Android keyboard-aware scrolling keeping lower form fields visible above the keyboard.',
+          'On Desktop, use the dark-green sidebar to switch modules and the top titlebar for Refresh, Cloud Sync status, Alert shortcuts, Settings, Account, and custom window controls. On Mobile, tap the top-right Refresh icon (or Refresh App in the ☰ drawer) anytime to re-sync settings, cloud data, and views immediately, or toggle Compact Icon UI in Setup/Settings with Android keyboard-aware form scrolling.',
       },
       {
         name: 'Live Record Counters, Pending Join Banner & Update Alerts',
@@ -426,14 +426,14 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
           'farmDB strictly launches on the Sign In / Sign Up portal so no farm records appear before authentication. On a new account’s first sign-in, First-Time Setup walks through SQLite protection, Volume Units, Currency, and real-time Font Size, UI Element Size, and Mobile Compact Icon UI previews before opening your dashboard.',
       },
       {
-        name: 'Joining via Key & Automatic Approval Check (Every 20 Seconds)',
+        name: 'Joining via Key, Automatic Polling & Leave Network',
         explanation:
-          'Sign into your created User or Admin account, open Farm Network -> Join Network, and paste an Admin’s Short Code (FARM-XXXX) or Full Cloud Key (FDB1:...). Your device verifies the key first, notifies the Admin, and automatically polls for approval every 20 seconds on the Pending Administrator Approval screen (or anytime via Check Approval).',
+          'Sign into your created User or Admin account, open Farm Network -> Join Network, and paste an Admin’s Short Code (FARM-XXXX) or Full Cloud Key (FDB1:...). Your device verifies the key first, notifies the Admin, and automatically polls every 20 seconds on Pending Administrator Approval. You can leave a connected Farm Network anytime via Leave Network (either from the Pending screen or inside Farm Network) to return to standalone offline mode cleanly — and joined devices never expose remote Admin accounts on Sign In.',
       },
       {
-        name: 'Delete Account & Strict Sign Out Flow',
+        name: 'Admin Display Name, Delete Account & Strict Sign Out',
         explanation:
-          'Click Sign Out before switching accounts on a shared device. You can safely use Delete Account for either an Admin or User account right inside Farm Network or directly from the Sign-In Portal (with confirmation and PIN verification for protected accounts) without erasing farm records — if other Admins exist, Primary Admin promotes automatically.',
+          'Admins can customize both Farm Name and their Admin Display Name (paired with an Admin badge) in Settings or Farm Network -> Edit Profile. Click Sign Out before switching local accounts on a shared device, or use Delete Account inside Farm Network or on the Sign-In Portal without erasing farm records.',
       },
       {
         name: 'Admin Cloud Recovery & Credential Isolation',
@@ -470,14 +470,14 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
           'When a user pastes your key inside Join Network, Admins receive an instant OS notification, a top amber Pending Network Join Request banner, and a live count badge on Farm Network. Click Assign Privileges & Accept to choose module-by-module access (Hidden, View Only, View & Edit, or Full Access), use Quick Accept, or Decline to clear the request locally and in Supabase.',
       },
       {
-        name: 'Join Network (In-Account Connection)',
+        name: 'Join Network & Leave Network (Member Self-Service)',
         explanation:
-          'Any signed-in User or Admin account connects to a shared network exclusively via Farm Network -> Join Network (with automatic 20-second pending approval polling once submitted).',
+          'Signed-in accounts connect to a shared network via Farm Network -> Join Network (with 20-second pending approval polling) and can disconnect themselves anytime via Leave Network without waiting for an Admin. Each device keeps Sign-In strictly isolated to local accounts only.',
       },
       {
-        name: 'Member Contact Links, Change Password / PIN & Delete Account',
+        name: 'Admin Profile Rename, Member Contacts, Password & Delete Account',
         explanation:
-          'Tap member phone numbers or emails on Mobile to call or email teammates directly, let each user change their own Password / PIN, and use Delete Account cleanly on any Admin or User profile without affecting farm livestock or ledger records.',
+          'Admins can rename their Admin Display Name (while keeping the Admin tag) via Rename / Edit Profile or Settings, tap member phone numbers or emails on Mobile to contact teammates, change Password / PIN, and use Delete Account cleanly without touching farm records.',
       },
     ],
     howToSteps: [

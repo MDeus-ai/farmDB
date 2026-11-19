@@ -15,7 +15,11 @@ import {
   type UpdateLivestockInput,
   type ValidationErrors,
 } from '@farmdb/core';
-import type { FarmDrizzleDb } from '../driver';
+import {
+  extractDatabaseErrorCause,
+  formatFriendlyDatabaseError,
+  type FarmDrizzleDb,
+} from '../driver';
 import type { DatabaseEventBus } from '../events';
 import {
   alerts,
@@ -192,8 +196,9 @@ export function createLivestockRepository(
       try {
         await db.insert(livestock).values(record).run();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.toLowerCase().includes('unique')) {
+        const msg = extractDatabaseErrorCause(err);
+        const lower = msg.toLowerCase();
+        if (lower.includes('unique')) {
           throw new LivestockValidationError(
             {
               tagNumber: `Tag "${validation.data.tagNumber}" is already assigned to another animal.`,
@@ -201,7 +206,20 @@ export function createLivestockRepository(
             `Tag "${validation.data.tagNumber}" is already assigned to another animal.`
           );
         }
-        throw err;
+        if (lower.includes('foreign key')) {
+          throw new LivestockValidationError(
+            {
+              damId: 'Selected Sire or Dam parent record no longer exists in the database.',
+            },
+            'Selected Sire or Dam parent record no longer exists. Refresh Herd Registry and try again.'
+          );
+        }
+        if (/readonly|read-only|code:\s*(?:8|1032)\b/i.test(msg)) {
+          throw new Error(
+            'Unable to save animal because the local database file is locked read-only. Click Refresh or restart farmDB and try again.'
+          );
+        }
+        throw formatFriendlyDatabaseError(err);
       }
 
       events.emit(['livestock'], record.id);
@@ -250,11 +268,38 @@ export function createLivestockRepository(
         updatedAt: now,
       };
 
-      await db
-        .update(livestock)
-        .set(updatedFields)
-        .where(eq(livestock.id, id))
-        .run();
+      try {
+        await db
+          .update(livestock)
+          .set(updatedFields)
+          .where(eq(livestock.id, id))
+          .run();
+      } catch (err) {
+        const msg = extractDatabaseErrorCause(err);
+        const lower = msg.toLowerCase();
+        if (lower.includes('unique')) {
+          throw new LivestockValidationError(
+            {
+              tagNumber: `Tag "${updatedFields.tagNumber ?? existing.tagNumber}" is already assigned to another animal.`,
+            },
+            `Tag "${updatedFields.tagNumber ?? existing.tagNumber}" is already assigned to another animal.`
+          );
+        }
+        if (lower.includes('foreign key')) {
+          throw new LivestockValidationError(
+            {
+              damId: 'Selected Sire or Dam parent record no longer exists in the database.',
+            },
+            'Selected Sire or Dam parent record no longer exists. Refresh Herd Registry and try again.'
+          );
+        }
+        if (/readonly|read-only|code:\s*(?:8|1032)\b/i.test(msg)) {
+          throw new Error(
+            'Unable to update animal because the local database file is locked read-only. Click Refresh or restart farmDB and try again.'
+          );
+        }
+        throw formatFriendlyDatabaseError(err);
+      }
 
       events.emit(['livestock'], id);
 

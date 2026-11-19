@@ -4,6 +4,7 @@ import {
   QueryClientProvider,
   useMutation,
   useQuery,
+  useQueryClient,
 } from '@tanstack/react-query';
 import {
   canAccountDeleteInModule,
@@ -108,6 +109,7 @@ import {
   type CloudSyncResult,
   type JoinFarmNetworkInput,
   type JoinFarmNetworkResult,
+  type LeaveFarmNetworkResult,
   type NetworkRepository,
   type RecoverAdminCloudInput,
   type RecoverAdminCloudResult,
@@ -775,6 +777,14 @@ export function useFarmAccountList(filter?: FarmAccountFilter) {
   });
 }
 
+export function useLocalSignInAccounts() {
+  const { network } = useFarmDb();
+  return useQuery<FarmAccount[]>({
+    queryKey: FARMDB_QUERY_KEYS.localSignInAccounts(),
+    queryFn: () => network.listLocalSignInAccounts(),
+  });
+}
+
 export function useActiveFarmAccount() {
   const { network } = useFarmDb();
   return useQuery<FarmAccount | null>({
@@ -875,6 +885,23 @@ export function useJoinFarmNetwork() {
   return useMutation<JoinFarmNetworkResult, Error, JoinFarmNetworkInput>({
     mutationFn: (input) => network.joinNetworkWithKey(input),
   });
+}
+
+export function useLeaveFarmNetwork() {
+  const { network } = useFarmDb();
+  return useMutation<LeaveFarmNetworkResult, Error, string>({
+    mutationFn: (accountId) => network.leaveNetwork(accountId),
+  });
+}
+
+export function useRefreshFarmDb() {
+  const session = useFarmDb();
+  const queryClient = useQueryClient();
+  return useCallback(async () => {
+    session.events.emit(['*']);
+    await queryClient.invalidateQueries();
+    await queryClient.refetchQueries({ type: 'all' });
+  }, [session, queryClient]);
 }
 
 export function useRecoverAdminFromCloud() {

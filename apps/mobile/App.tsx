@@ -45,6 +45,8 @@ import {
   useCloudAutoSyncWorker,
   useFarmAccountList,
   useFarmSummary,
+  useRefreshFarmDb,
+  useTriggerCloudSync,
   type AlertNotificationPayload,
 } from '@farmdb/db';
 import {
@@ -152,11 +154,15 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
   const [updateBannerDismissedVersion, setUpdateBannerDismissedVersion] = useState<string | null>(null);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [updateInstallError, setUpdateInstallError] = useState<string | null>(null);
+  const [isRefreshingApp, setIsRefreshingApp] = useState(false);
+  const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null);
   const notifiedUpdateVersionRef = useRef<string | null>(null);
   const autoUpdateCheckedRef = useRef(false);
   const summaryQuery = useFarmSummary();
   const activeAccountQuery = useActiveFarmAccount();
   const accountsListQuery = useFarmAccountList({});
+  const cloudSyncMut = useTriggerCloudSync();
+  const refreshAllDb = useRefreshFarmDb();
   const summary = summaryQuery.data;
   const activeAccount = activeAccountQuery.data;
   const ui = useUiScale();
@@ -234,6 +240,61 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
       !showOnboarding &&
       (isAdminAccount(activeAccount) || Boolean(activeAccount?.canSyncCloud)),
   });
+
+  useEffect(() => {
+    if (!refreshFeedback) return;
+    const timer = setTimeout(() => setRefreshFeedback(null), 2200);
+    return () => clearTimeout(timer);
+  }, [refreshFeedback]);
+
+  const handleRefreshApp = useCallback(async () => {
+    if (isRefreshingApp) return;
+    setIsRefreshingApp(true);
+    setRefreshFeedback(null);
+    try {
+      const canCloudSync = Boolean(
+        !isSignedOut &&
+          !showAuthPortal &&
+          !showOnboarding &&
+          ui.settings.cloudSyncEnabled &&
+          ui.settings.supabaseUrl.trim() &&
+          ui.settings.supabaseAnonKey.trim() &&
+          (isAdminAccount(activeAccount) || Boolean(activeAccount?.canSyncCloud))
+      );
+      if (canCloudSync) {
+        try {
+          await cloudSyncMut.mutateAsync('bidirectional');
+        } catch {
+          // Offline safe fallback: local queries and settings still refresh cleanly.
+        }
+      }
+      await refreshAllDb();
+      if (
+        !isSignedOut &&
+        !showAuthPortal &&
+        !showOnboarding &&
+        ui.settings.enableNotifications
+      ) {
+        void checkNow();
+      }
+      setRefreshFeedback('Refreshed');
+    } finally {
+      setIsRefreshingApp(false);
+    }
+  }, [
+    isRefreshingApp,
+    isSignedOut,
+    showAuthPortal,
+    showOnboarding,
+    ui.settings.cloudSyncEnabled,
+    ui.settings.supabaseUrl,
+    ui.settings.supabaseAnonKey,
+    ui.settings.enableNotifications,
+    activeAccount,
+    cloudSyncMut,
+    refreshAllDb,
+    checkNow,
+  ]);
 
   const runMobileUpdateCheck = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -552,9 +613,21 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
               />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={[styles.brand, { fontSize: ui.font(15) }]} numberOfLines={1}>
-                {activeAccount?.displayName ?? ui.settings.farmName}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <Text
+                  style={[styles.brand, { fontSize: ui.font(15), flexShrink: 1 }]}
+                  numberOfLines={1}
+                >
+                  {activeAccount?.displayName ?? ui.settings.farmName}
+                </Text>
+                {isAdminAccount(activeAccount) ? (
+                  <View style={styles.headerAdminPill}>
+                    <Text style={[styles.headerAdminPillText, { fontSize: ui.font(9.5) }]}>
+                      Admin
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
               <Text
                 style={[styles.subBrand, { fontSize: ui.font(11) }]}
                 numberOfLines={1}
@@ -562,6 +635,41 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
                 {activeSectionMeta?.label ?? 'farmDB'}
               </Text>
             </View>
+          </Pressable>
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {refreshFeedback ? (
+            <View style={styles.headerRefreshedPill}>
+              <Text style={[styles.headerRefreshedText, { fontSize: ui.font(10) }]}>
+                {refreshFeedback}
+              </Text>
+            </View>
+          ) : null}
+          <Pressable
+            onPress={() => void handleRefreshApp()}
+            disabled={isRefreshingApp}
+            style={[
+              styles.hamburgerBtn,
+              {
+                width: sysBtnSize,
+                height: sysBtnSize,
+                borderRadius: 11,
+                opacity: isRefreshingApp ? 0.65 : 1,
+              },
+            ]}
+            accessibilityLabel="Refresh app data and settings"
+            hitSlop={6}
+          >
+            {isRefreshingApp ? (
+              <ActivityIndicator size="small" color={FARMDB_COLORS.accent} />
+            ) : (
+              <AppIcon
+                name="refresh"
+                size={Math.max(18, ui.font(18))}
+                color={FARMDB_COLORS.darkHeader}
+              />
+            )}
           </Pressable>
         </View>
       </View>
@@ -1143,6 +1251,27 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
                     styles.drawerNavItem,
                     { minHeight: Math.max(40, ui.chipHeight + 2), paddingVertical: ui.space(8) },
                   ]}
+                  onPress={() => closeDrawer(() => void handleRefreshApp())}
+                >
+                  <View style={styles.drawerNavLeft}>
+                    <AppIcon name="refresh" size={ui.font(18)} color="#b7e4c7" />
+                    <Text
+                      style={[
+                        styles.drawerNavText,
+                        { fontSize: ui.font(14), color: '#e6f2ec' },
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {isRefreshingApp ? 'Refreshing App...' : 'Refresh App'}
+                    </Text>
+                  </View>
+                </Pressable>
+
+                <Pressable
+                  style={[
+                    styles.drawerNavItem,
+                    { minHeight: Math.max(40, ui.chipHeight + 2), paddingVertical: ui.space(8) },
+                  ]}
                   onPress={() => closeDrawer(() => handleSignOut())}
                 >
                   <View style={styles.drawerNavLeft}>
@@ -1341,6 +1470,31 @@ const styles = StyleSheet.create({
     borderColor: FARMDB_COLORS.border,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerAdminPill: {
+    flexShrink: 0,
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    borderWidth: 1,
+    borderColor: '#a8d5be',
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 1,
+  },
+  headerAdminPillText: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.accent,
+  },
+  headerRefreshedPill: {
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    borderWidth: 1,
+    borderColor: '#a8d5be',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  headerRefreshedText: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.accent,
   },
   alertBanner: {
     flexDirection: 'row',

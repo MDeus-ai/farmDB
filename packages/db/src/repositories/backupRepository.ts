@@ -34,6 +34,8 @@ import type { OwnershipRepository } from './ownershipRepository';
 import type { ProductionRepository } from './productionRepository';
 import type { SettingsRepository } from './settingsRepository';
 
+export const LOCAL_DEVICE_ACCOUNTS_SETTING_KEY = '__local_device_account_ids';
+
 export interface RestoreSnapshotResult {
   livestockCount: number;
   productCount: number;
@@ -133,6 +135,28 @@ export function createBackupRepository(
       const localSettings = options?.preserveLocalSession
         ? await repos.settings.get()
         : null;
+      const existingLocalIdsRow = options?.preserveLocalSession
+        ? await db
+            .select()
+            .from(farmSettings)
+            .where(eq(farmSettings.key, LOCAL_DEVICE_ACCOUNTS_SETTING_KEY))
+            .get()
+        : undefined;
+      const localDeviceAccountIds = new Set<string>();
+      if (existingLocalIdsRow?.value) {
+        try {
+          const parsed = JSON.parse(existingLocalIdsRow.value);
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (typeof item === 'string' && item.trim()) {
+                localDeviceAccountIds.add(item.trim());
+              }
+            }
+          }
+        } catch {
+          // Ignore malformed local device account list
+        }
+      }
 
       // Delete child tables before parent tables to satisfy foreign keys
       await db.delete(workerTasks).run();
@@ -167,9 +191,11 @@ export function createBackupRepository(
           localSettings.activeAccountId
         )
           ? localSettings.activeAccountId
-          : snapshot.farmAccounts?.find((a) => a.isPrimaryAdmin)?.id ??
-            snapshot.farmAccounts?.[0]?.id ??
-            'owner-admin';
+          : (snapshot.farmAccounts ?? []).find(
+              (a) =>
+                localDeviceAccountIds.has(a.id) &&
+                a.status !== 'suspended'
+            )?.id ?? '';
       }
 
       const validated = validateFarmSettings(rawMergedSettings);
@@ -192,6 +218,17 @@ export function createBackupRepository(
           }))
         )
         .run();
+
+      if (existingLocalIdsRow) {
+        await db
+          .insert(farmSettings)
+          .values({
+            key: LOCAL_DEVICE_ACCOUNTS_SETTING_KEY,
+            value: existingLocalIdsRow.value,
+            updatedAt: existingLocalIdsRow.updatedAt,
+          })
+          .run();
+      }
 
       const restoredLivestockIds = new Set(snapshot.livestock.map((r) => r.id));
 

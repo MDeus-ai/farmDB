@@ -1,5 +1,6 @@
 import {
   advancePayDueDate,
+  buildStandardUserPermissions,
   computeHrSummary,
   decodeFarmNetworkJoinKey,
   DEFAULT_ADMIN_ACCOUNT,
@@ -123,6 +124,7 @@ import {
   type HrRepository,
   type JoinFarmNetworkInput,
   type JoinFarmNetworkResult,
+  type LeaveFarmNetworkResult,
   type LivestockRepository,
   type LogMilkYieldOptions,
   type MarkWorkerPaymentPaidOptions,
@@ -147,6 +149,7 @@ const WORKER_PAYMENTS_KEY = 'farmdb_browser_preview_worker_payments_v1';
 const WORKER_TASKS_KEY = 'farmdb_browser_preview_worker_tasks_v1';
 const OWNERSHIPS_KEY = 'farmdb_browser_preview_ownerships_v1';
 const ACCOUNTS_KEY = 'farmdb_browser_preview_accounts_v1';
+const LOCAL_DEVICE_ACCOUNTS_KEY = 'farmdb_preview_local_account_ids';
 const SYNC_LOGS_KEY = 'farmdb_browser_preview_sync_logs_v1';
 const SETTINGS_KEY = 'farmdb_browser_preview_settings_v1';
 const SETTINGS_UPDATED_AT_KEY = 'farmdb_browser_preview_settings_updated_at_v1';
@@ -1641,6 +1644,71 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     writeJson(ACCOUNTS_KEY, filteredAccounts);
   }
 
+  function readPreviewLocalAccountIds(): Set<string> | null {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_DEVICE_ACCOUNTS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(
+          parsed.filter(
+            (id): id is string => typeof id === 'string' && id.trim().length > 0
+          )
+        );
+      }
+    } catch {
+      // Ignore malformed preview local account list
+    }
+    return new Set<string>();
+  }
+
+  function writePreviewLocalAccountIds(ids: Iterable<string>): Set<string> {
+    const next = new Set(
+      Array.from(ids)
+        .map((id) => id.trim())
+        .filter(Boolean)
+    );
+    writeJson(LOCAL_DEVICE_ACCOUNTS_KEY, Array.from(next));
+    return next;
+  }
+
+  async function ensurePreviewLocalAccountIdsInitialized(): Promise<Set<string>> {
+    const existing = readPreviewLocalAccountIds();
+    if (existing !== null) return existing;
+    const all = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+    if (all.length === 0) return writePreviewLocalAccountIds([]);
+    const curSettings = await settings.get();
+    const activeAcc = curSettings.activeAccountId
+      ? all.find((a) => a.id === curSettings.activeAccountId)
+      : undefined;
+    if (
+      curSettings.cloudSyncEnabled &&
+      activeAcc &&
+      !isAdminAccount(activeAcc) &&
+      activeAcc.canSyncCloud &&
+      all.some((a) => isAdminAccount(a))
+    ) {
+      return writePreviewLocalAccountIds([activeAcc.id]);
+    }
+    return writePreviewLocalAccountIds(all.map((a) => a.id));
+  }
+
+  async function addPreviewLocalAccountId(id: string): Promise<void> {
+    const ids = await ensurePreviewLocalAccountIdsInitialized();
+    if (!ids.has(id)) {
+      ids.add(id);
+      writePreviewLocalAccountIds(ids);
+    }
+  }
+
+  async function removePreviewLocalAccountId(id: string): Promise<Set<string>> {
+    const ids = await ensurePreviewLocalAccountIdsInitialized();
+    if (ids.delete(id)) {
+      writePreviewLocalAccountIds(ids);
+    }
+    return ids;
+  }
+
   const network: NetworkRepository = {
     async listAccountsRaw(): Promise<FarmAccount[]> {
       return readJson<FarmAccount[]>(ACCOUNTS_KEY, []).sort(
@@ -1648,6 +1716,11 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           (b.isPrimaryAdmin ? 1 : 0) - (a.isPrimaryAdmin ? 1 : 0) ||
           a.displayName.localeCompare(b.displayName)
       );
+    },
+    async listLocalSignInAccounts(): Promise<FarmAccount[]> {
+      const localIds = await ensurePreviewLocalAccountIdsInitialized();
+      const all = await this.listAccountsRaw();
+      return all.filter((a) => localIds.has(a.id));
     },
     async listAccounts(filter?: FarmAccountFilter): Promise<FarmAccount[]> {
       const search = filter?.search?.trim().toLowerCase() ?? '';
@@ -1688,21 +1761,26 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         updatedAt: now,
       };
       writeJson(ACCOUNTS_KEY, [created, ...rows]);
+      await addPreviewLocalAccountId(created.id);
       events.emit(['network'], created.id);
       return created;
     },
     async getActiveAccount(): Promise<FarmAccount | null> {
+      const localIds = await ensurePreviewLocalAccountIdsInitialized();
       const s = await settings.get();
-      if (s.activeAccountId) {
+      if (s.activeAccountId && localIds.has(s.activeAccountId)) {
         const found = await this.getAccountById(s.activeAccountId);
         if (found && found.status !== 'suspended') {
           return found;
         }
       }
       const all = await this.listAccountsRaw();
+      const localAccounts = all.filter((acc) => localIds.has(acc.id));
       const fallback =
-        all.find((acc) => acc.isPrimaryAdmin && acc.status !== 'suspended') ??
-        all.find((acc) => acc.status !== 'suspended') ??
+        localAccounts.find(
+          (acc) => acc.isPrimaryAdmin && acc.status !== 'suspended'
+        ) ??
+        localAccounts.find((acc) => acc.status !== 'suspended') ??
         null;
       if (fallback) {
         await settings.update({ activeAccountId: fallback.id });
@@ -1713,8 +1791,18 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       accountId: string,
       accessCode?: string
     ): Promise<FarmAccount> {
+      const localIds = await ensurePreviewLocalAccountIdsInitialized();
       const account = await this.getAccountById(accountId);
       if (!account) throw new FarmAccountNotFoundError(accountId);
+      if (!localIds.has(accountId)) {
+        throw new NetworkValidationError(
+          {
+            displayName:
+              'This account belongs to another device on the Farm Network and cannot be signed into from here.',
+          },
+          'This account belongs to another device on the Farm Network and cannot be signed into from here.'
+        );
+      }
       if (account.status === 'suspended' && !account.isPrimaryAdmin) {
         throw new NetworkValidationError(
           { status: 'This account is suspended.' },
@@ -1787,6 +1875,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       };
       const rows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
       writeJson(ACCOUNTS_KEY, [created, ...rows]);
+      await addPreviewLocalAccountId(created.id);
       events.emit(['network'], created.id);
       return created;
     },
@@ -1904,10 +1993,14 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         }
       }
       writeJson(ACCOUNTS_KEY, nextRows);
+      const remainingLocalIds = await removePreviewLocalAccountId(id);
       if (s.activeAccountId === id) {
+        const remainingLocal = nextRows.filter((a) => remainingLocalIds.has(a.id));
         const nextActive =
-          nextRows.find((a) => a.isPrimaryAdmin && a.status !== 'suspended') ??
-          nextRows.find((a) => a.status !== 'suspended') ??
+          remainingLocal.find(
+            (a) => a.isPrimaryAdmin && a.status !== 'suspended'
+          ) ??
+          remainingLocal.find((a) => a.status !== 'suspended') ??
           null;
         await settings.update({ activeAccountId: nextActive?.id ?? '' });
       }
@@ -1918,8 +2011,18 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       id: string,
       accessCode?: string
     ): Promise<boolean> {
+      const localIds = await ensurePreviewLocalAccountIdsInitialized();
       const existing = await this.getAccountById(id);
       if (!existing) return false;
+      if (!localIds.has(id)) {
+        throw new NetworkValidationError(
+          {
+            displayName:
+              'Only accounts created or recovered on this device can be deleted from the Sign-In Portal.',
+          },
+          'Only accounts created or recovered on this device can be deleted from the Sign-In Portal.'
+        );
+      }
       if (existing.accessCode && existing.accessCode.trim().length > 0) {
         if ((accessCode ?? '').trim() !== existing.accessCode.trim()) {
           throw new NetworkValidationError(
@@ -1946,6 +2049,8 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           'Enter a valid Farm Network Join Key (FARM-XXXX or FDB1:...).'
         );
       }
+
+      await ensurePreviewLocalAccountIdsInitialized();
 
       let syncedWithCloud = false;
       if (
@@ -2030,6 +2135,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       const updatedSettings = await settings.update({
         activeAccountId: targetAccount.id,
       });
+      await addPreviewLocalAccountId(targetAccount.id);
 
       if (updatedSettings.supabaseUrl && updatedSettings.supabaseAnonKey) {
         try {
@@ -2048,6 +2154,134 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         account: targetAccount,
         syncedWithCloud,
         farmName: updatedSettings.farmName,
+      };
+    },
+    async leaveNetwork(accountId: string): Promise<LeaveFarmNetworkResult> {
+      const existing = await this.getAccountById(accountId);
+      if (!existing) throw new FarmAccountNotFoundError(accountId);
+      if (existing.isPrimaryAdmin) {
+        throw new NetworkValidationError(
+          {
+            role: 'Primary Farm Administrator cannot leave their own Farm Network. Disable Cloud Sync in Settings or delete the account instead.',
+          },
+          'Primary Farm Administrator cannot leave their own Farm Network. Disable Cloud Sync in Settings or delete the account instead.'
+        );
+      }
+
+      const cur = await settings.get();
+      const leftFarmName = cur.farmName || 'Farm Network';
+      let syncedWithCloud = false;
+      const baseUrl = normalizeSupabaseBaseUrl(cur.supabaseUrl);
+      const anonKey = cur.supabaseAnonKey.trim();
+      const workspaceId = cur.cloudWorkspaceId.trim() || 'farmdb-homestead-main';
+
+      if (baseUrl && anonKey && workspaceId) {
+        try {
+          const fetchSupabase = createPreviewSupabaseFetcher(anonKey);
+          const restEndpoint = `${baseUrl}/rest/v1/farmdb_cloud_snapshots`;
+          const pullRes = await fetchSupabase(
+            `${restEndpoint}?workspace_id=eq.${encodeURIComponent(workspaceId)}&select=workspace_id,farm_name,snapshot`,
+            { method: 'GET' }
+          );
+          if (pullRes.ok) {
+            const rows = (await pullRes.json()) as Array<{
+              farm_name?: string;
+              snapshot?: unknown;
+            }>;
+            if (rows[0]?.snapshot) {
+              const remoteSnap = parseFarmSnapshotJson(
+                JSON.stringify(rows[0].snapshot)
+              );
+              const nextRemoteAccounts = (
+                remoteSnap.farmAccounts ?? []
+              ).filter((a) => a.id !== accountId);
+              const pushRes = await fetchSupabase(
+                `${restEndpoint}?on_conflict=workspace_id`,
+                {
+                  method: 'POST',
+                  extraHeaders: {
+                    Prefer: 'resolution=merge-duplicates,return=minimal',
+                  },
+                  body: JSON.stringify([
+                    {
+                      workspace_id: workspaceId,
+                      farm_name:
+                        rows[0].farm_name || remoteSnap.settings.farmName,
+                      updated_by_account_id: accountId,
+                      snapshot: {
+                        ...remoteSnap,
+                        farmAccounts: nextRemoteAccounts,
+                      },
+                      updated_at: new Date().toISOString(),
+                    },
+                  ]),
+                }
+              );
+              if (pushRes.ok) syncedWithCloud = true;
+            }
+          }
+        } catch {
+          // Offline safe
+        }
+      }
+
+      const localIds = await ensurePreviewLocalAccountIdsInitialized();
+      const allAccounts = await this.listAccountsRaw();
+      const hasLocalAdmin = allAccounts.some(
+        (a) => isAdminAccount(a) && localIds.has(a.id) && a.id !== accountId
+      );
+
+      if (!hasLocalAdmin) {
+        const localRemainingAccounts = allAccounts
+          .filter((a) => localIds.has(a.id))
+          .map((a) =>
+            a.id === existing.id
+              ? {
+                  ...a,
+                  status: 'active' as const,
+                  canManageNetwork: false,
+                  canSyncCloud: false,
+                  permissions: buildStandardUserPermissions(),
+                  lastSyncedAt: null,
+                  updatedAt: Date.now(),
+                }
+              : a
+          );
+        writeJson(ACCOUNTS_KEY, localRemainingAccounts);
+        writeJson(LIVESTOCK_KEY, []);
+        writeJson(PRODUCTION_KEY, []);
+        writeJson(MEDICAL_KEY, []);
+        writeJson(FINANCIAL_KEY, []);
+        writeJson(ALERTS_KEY, []);
+        writeJson(WORKERS_KEY, []);
+        writeJson(WORKER_PAYMENTS_KEY, []);
+        writeJson(WORKER_TASKS_KEY, []);
+        writeJson(OWNERSHIPS_KEY, []);
+        writeJson(SYNC_LOGS_KEY, []);
+        await addPreviewLocalAccountId(existing.id);
+
+        await settings.update({
+          farmName: `${existing.displayName}'s Farm`.slice(0, 60),
+          activeAccountId: existing.id,
+          cloudSyncEnabled: false,
+          supabaseUrl: '',
+          supabaseAnonKey: '',
+          cloudWorkspaceId: 'farmdb-homestead-main',
+          networkJoinKey: generateShortJoinCode(),
+        });
+        events.emit(['*'], existing.id);
+        return {
+          leftFarmName,
+          mode: 'disconnected_standalone',
+          syncedWithCloud,
+        };
+      }
+
+      await this.removeAccount(accountId);
+      return {
+        leftFarmName,
+        mode: 'removed_from_shared_device',
+        syncedWithCloud,
       };
     },
     async recoverAdminFromCloud(
@@ -2147,6 +2381,8 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         );
       }
 
+      await ensurePreviewLocalAccountIdsInitialized();
+
       const targetAdminId = targetAdmin?.id ?? DEFAULT_ADMIN_ACCOUNT.id;
       await settings.update({
         supabaseUrl: baseUrl,
@@ -2181,6 +2417,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       if (!recovered) {
         throw new Error('No Admin account was found in this cloud workspace.');
       }
+      await addPreviewLocalAccountId(recovered.id);
       const totalPulled =
         restoredCounts.livestockCount +
         restoredCounts.productCount +
@@ -2560,9 +2797,11 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       snapshot: FarmDbSnapshot,
       options?: RestoreSnapshotOptions
     ): Promise<RestoreSnapshotResult> {
+      await ensurePreviewLocalAccountIdsInitialized();
       const localBefore = options?.preserveLocalSession
         ? await settings.get()
         : null;
+      const localIdsBefore = readPreviewLocalAccountIds() ?? new Set<string>();
       const incomingAccounts = snapshot.farmAccounts ?? [];
       const hasValidLocalAccount = Boolean(
         localBefore?.activeAccountId &&
@@ -2585,7 +2824,9 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         nextSettings.syncIncludeHr = localBefore.syncIncludeHr;
         nextSettings.activeAccountId = hasValidLocalAccount
           ? localBefore.activeAccountId
-          : (snapshot.settings?.activeAccountId ?? 'owner-admin');
+          : incomingAccounts.find(
+              (acc) => localIdsBefore.has(acc.id) && acc.status !== 'suspended'
+            )?.id ?? '';
       }
       await settings.restoreSettings(nextSettings, snapshot.settingsUpdatedAt);
       writeJson(

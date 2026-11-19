@@ -28,6 +28,7 @@ import {
   useFarmAccountList,
   useFarmSettings,
   useJoinFarmNetwork,
+  useLeaveFarmNetwork,
   useRotateNetworkJoinKey,
   useUpdateFarmAccount,
 } from '@farmdb/db';
@@ -64,6 +65,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   const rotateKeyMut = useRotateNetworkJoinKey();
   const acceptPendingMut = useAcceptPendingAccount();
   const joinNetworkMut = useJoinFarmNetwork();
+  const leaveNetworkMut = useLeaveFarmNetwork();
 
   const accounts = accountsQuery.data ?? [];
   const activeAccount = activeAccountQuery.data;
@@ -101,6 +103,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmLeaveNetwork, setConfirmLeaveNetwork] = useState(false);
 
   // Join Network via Key state (user or admin accounts)
   const [joinModalOpen, setJoinModalOpen] = useState(false);
@@ -344,6 +347,27 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
     }
   }
 
+  async function handleLeaveNetwork() {
+    if (!activeAccount) return;
+    setErrorNotice(null);
+    setStatusNotice(null);
+    try {
+      const res = await leaveNetworkMut.mutateAsync(activeAccount.id);
+      setConfirmLeaveNetwork(false);
+      if (res.mode === 'removed_from_shared_device') {
+        onSignOut?.();
+      } else {
+        setStatusNotice(
+          `Left ${res.leftFarmName}. Your account is now back in standalone local mode.`
+        );
+      }
+    } catch (err) {
+      setErrorNotice(
+        err instanceof Error ? err.message : 'Unable to leave Farm Network.'
+      );
+    }
+  }
+
   return (
     <>
       <div className="page-header">
@@ -357,6 +381,16 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
         </div>
 
         <div className="row-actions">
+          {activeAccount && isAdminOrManager && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => openEditAccountModal(activeAccount, false)}
+            >
+              <img src={APP_ICONS.pencil} alt="" className="app-icon-sm" />
+              Rename / Edit Profile
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-secondary"
@@ -369,6 +403,37 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
             <img src={APP_ICONS.networking} alt="" className="app-icon-sm" />
             Join Network
           </button>
+          {activeAccount &&
+            !isAdminOrManager &&
+            Boolean(activeAccount.canSyncCloud) &&
+            (confirmLeaveNetwork ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={leaveNetworkMut.isPending}
+                  onClick={() => void handleLeaveNetwork()}
+                >
+                  {leaveNetworkMut.isPending ? 'Leaving...' : 'Confirm Leave'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={leaveNetworkMut.isPending}
+                  onClick={() => setConfirmLeaveNetwork(false)}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => setConfirmLeaveNetwork(true)}
+              >
+                Leave Network
+              </button>
+            ))}
           <button
             type="button"
             className="btn btn-secondary"
@@ -418,6 +483,18 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   ? formatAccountRoleLabel(activeAccount.role)
                   : 'Admin'}
               </span>
+              {activeAccount &&
+                (activeAccount.isPrimaryAdmin || activeAccount.role === 'admin') && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      color: 'var(--text-muted)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {settings.farmName}
+                  </span>
+                )}
             </div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               {isAdminOrManager
@@ -466,6 +543,11 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                 Share your Full Cloud Key (FDB1:...) for another phone or PC, or Short Code (FARM-XXXX) on this device. Members who join will appear under Pending Network Requests so you can assign privileges before letting them in.
               </p>
+              {!activeAccount?.accessCode?.trim() && (
+                <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: '#8a5300', fontWeight: 600 }}>
+                  Security tip: Click Change Password to set an Admin Password / PIN so Cloud Admin Recovery stays protected.
+                </p>
+              )}
             </div>
             <button
               type="button"
@@ -622,8 +704,16 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                       />
                     </div>
                     <div>
-                      <strong style={{ display: 'block', fontSize: '1rem' }}>
-                        {acc.displayName}
+                      <strong style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: '1rem' }}>
+                        <span>{acc.displayName}</span>
+                        {(acc.isPrimaryAdmin || acc.role === 'admin') && (
+                          <span
+                            className="status-pill status-active"
+                            style={{ fontSize: '0.68rem', padding: '1px 7px' }}
+                          >
+                            Admin
+                          </span>
+                        )}
                       </strong>
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                         {formatAccountRoleLabel(acc.role)}
@@ -704,6 +794,36 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                       {acc.isPrimaryAdmin ? 'Edit Profile' : 'Edit Privileges'}
                     </button>
                   )}
+                  {isCurrent && !isAdminOrManager && Boolean(acc.canSyncCloud) && (
+                    confirmLeaveNetwork ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          disabled={leaveNetworkMut.isPending}
+                          onClick={() => void handleLeaveNetwork()}
+                        >
+                          Confirm Leave
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={leaveNetworkMut.isPending}
+                          onClick={() => setConfirmLeaveNetwork(false)}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        onClick={() => setConfirmLeaveNetwork(true)}
+                      >
+                        Leave Network
+                      </button>
+                    )
+                  )}
                   {(isAdminOrManager || isCurrent) &&
                     (confirmDeleteId === acc.id ? (
                       <>
@@ -749,9 +869,13 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               <h2 className="modal-title">
                 {approvingMode && editingAccount
                   ? `Assign Privileges & Accept: ${editingAccount.displayName}`
-                  : editingAccount
-                    ? `Manage Account: ${editingAccount.displayName}`
-                    : 'Manage Account'}
+                  : editingAccount &&
+                      (editingAccount.isPrimaryAdmin ||
+                        editingAccount.role === 'admin')
+                    ? `Edit Admin Profile: ${editingAccount.displayName}`
+                    : editingAccount
+                      ? `Manage Account: ${editingAccount.displayName}`
+                      : 'Manage Account'}
               </h2>
               <button
                 type="button"
@@ -765,12 +889,36 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
             <form onSubmit={handleSaveAccount}>
               <div className="form-grid">
                 <div className="form-field">
-                  <label className="form-label">Display Name *</label>
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>
+                      {editingAccount &&
+                      (editingAccount.isPrimaryAdmin ||
+                        editingAccount.role === 'admin')
+                        ? 'Admin Display Name *'
+                        : 'Display Name *'}
+                    </span>
+                    {editingAccount &&
+                      (editingAccount.isPrimaryAdmin ||
+                        editingAccount.role === 'admin') && (
+                        <span
+                          className="status-pill status-active"
+                          style={{ fontSize: '0.68rem', padding: '1px 7px' }}
+                        >
+                          Admin
+                        </span>
+                      )}
+                  </label>
                   <input
                     className="input"
                     value={aName}
                     onChange={(e) => setAName(e.target.value)}
-                    placeholder="e.g. Martha Mukasa"
+                    placeholder={
+                      editingAccount &&
+                      (editingAccount.isPrimaryAdmin ||
+                        editingAccount.role === 'admin')
+                        ? 'e.g. Greenfields Owner'
+                        : 'e.g. Martha Mukasa'
+                    }
                     autoFocus
                   />
                 </div>

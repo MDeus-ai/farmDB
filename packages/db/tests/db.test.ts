@@ -7,7 +7,9 @@ import {
 import {
   convertQuestionPlaceholdersToDollar,
   createFarmDbSession,
+  extractDatabaseErrorCause,
   extractProjectedColumns,
+  formatFriendlyDatabaseError,
   LivestockValidationError,
   mapRowObjectToValues,
   runMigrations,
@@ -1152,9 +1154,90 @@ describe('@farmdb/db migrations and repositories', () => {
           )
         )
       ).toBe(true);
+
+      // Device-local isolation: joined user's Sign-In Portal never exposes remote Admin accounts
+      const localSignInAccounts = await session.network.listLocalSignInAccounts();
+      expect(localSignInAccounts.map((a) => a.id)).toEqual([megan.id]);
+      await expect(session.network.switchActiveAccount(admin.id)).rejects.toThrow(
+        /another device/i
+      );
+      await expect(
+        session.network.removeAccountWithCredentials(admin.id)
+      ).rejects.toThrow(/created or recovered on this device/i);
+      expect((await session.network.getActiveAccount())?.id).toBe(megan.id);
+
+      // Member Leave Network removes member from Supabase without deleting Admin records
+      // and restores standalone offline local mode cleanly.
+      const leaveRes = await session.network.leaveNetwork(megan.id);
+      expect(leaveRes).toEqual({
+        leftFarmName: 'Sunrise Dairy',
+        mode: 'disconnected_standalone',
+        syncedWithCloud: true,
+      });
+
+      const lastPosted = pushedBodies[pushedBodies.length - 1];
+      expect(
+        lastPosted?.snapshot?.farmAccounts?.some((a) => a.id === admin.id)
+      ).toBe(true);
+      expect(
+        lastPosted?.snapshot?.farmAccounts?.some((a) => a.id === megan.id)
+      ).toBe(false);
+
+      expect(await session.livestock.list()).toEqual([]);
+      expect((await session.network.listAccountsRaw()).map((a) => a.id)).toEqual([
+        megan.id,
+      ]);
+      const standaloneMegan = await session.network.getActiveAccount();
+      expect(standaloneMegan?.id).toBe(megan.id);
+      expect(standaloneMegan?.status).toBe('active');
+      expect(standaloneMegan?.canSyncCloud).toBe(false);
+      const afterLeaveSettings = await session.settings.get();
+      expect(afterLeaveSettings.cloudSyncEnabled).toBe(false);
+      expect(afterLeaveSettings.supabaseUrl).toBe('');
+      expect(afterLeaveSettings.supabaseAnonKey).toBe('');
     } finally {
       globalThis.fetch = originalFetch;
     }
+
+    raw.close();
+  });
+
+  it('allows renaming Primary Admin accounts and formats nested SQLite driver errors cleanly', async () => {
+    const { driver, raw } = createNodeSqliteDriver(':memory:');
+    await runMigrations(driver);
+    const session = createFarmDbSession(driver, { autoSeedDefaultAdmin: false });
+
+    const admin = await session.network.signUpAccount({
+      displayName: 'Farm Owner (Administrator)',
+      role: 'admin',
+      accessCode: '1234',
+      avatarKey: 'farmer',
+      isPrimaryAdmin: true,
+      canManageNetwork: true,
+      canSyncCloud: true,
+      status: 'active',
+      permissions: getDefaultPermissionsForRole('admin'),
+    });
+    await session.network.switchActiveAccount(admin.id, '1234');
+
+    const renamed = await session.network.updateAccount(admin.id, {
+      displayName: 'Greenfields Owner',
+    });
+    expect(renamed.displayName).toBe('Greenfields Owner');
+    expect(renamed.isPrimaryAdmin).toBe(true);
+    expect(renamed.role).toBe('admin');
+
+    const nestedErr = new Error('Failed query: insert into "livestock" ...', {
+      cause: new Error(
+        'error returned from database: (code: 8) attempt to write a readonly database'
+      ),
+    });
+    expect(extractDatabaseErrorCause(nestedErr)).toContain(
+      'attempt to write a readonly database'
+    );
+    const friendly = formatFriendlyDatabaseError(nestedErr);
+    expect(friendly.message).toMatch(/read-only/i);
+    expect(friendly.message).not.toContain('Failed query:');
 
     raw.close();
   });

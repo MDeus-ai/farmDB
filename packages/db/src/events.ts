@@ -47,6 +47,7 @@ export const FARMDB_QUERY_KEYS = {
   networkAll: () => ['farmdb', 'network'] as const,
   accountsList: (filter?: unknown) =>
     ['farmdb', 'network', 'accounts', filter ?? {}] as const,
+  localSignInAccounts: () => ['farmdb', 'network', 'localAccounts'] as const,
   activeAccount: () => ['farmdb', 'network', 'active'] as const,
   cloudSyncLogs: (limit?: number) =>
     ['farmdb', 'network', 'logs', limit ?? 25] as const,

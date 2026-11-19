@@ -298,6 +298,9 @@ export function SettingsView({
   }
 
   const [farmName, setFarmName] = useState(settings.farmName);
+  const [adminDisplayName, setAdminDisplayName] = useState(
+    activeAccount?.displayName ?? ''
+  );
   const [currencySymbol, setCurrencySymbol] = useState(settings.currencySymbol);
   const [useCustomCurrency, setUseCustomCurrency] = useState(
     !CURRENCY_OPTIONS.some((c) => c.symbol === settings.currencySymbol)
@@ -399,6 +402,12 @@ export function SettingsView({
     setSyncFinancials(settings.syncIncludeFinancials);
     setSyncHr(settings.syncIncludeHr);
   }, [settings]);
+
+  useEffect(() => {
+    if (activeAccount?.displayName) {
+      setAdminDisplayName(activeAccount.displayName);
+    }
+  }, [activeAccount?.displayName]);
 
   async function persistCloudForm() {
     await updateMutation.mutateAsync({
@@ -542,6 +551,18 @@ export function SettingsView({
         alertCheckIntervalSeconds: Number(intervalText),
         paymentAlertLeadDays: Number(leadDaysText),
       });
+      const trimmedAdminName = adminDisplayName.trim();
+      if (
+        isAdmin &&
+        activeAccount &&
+        trimmedAdminName.length > 0 &&
+        trimmedAdminName !== activeAccount.displayName
+      ) {
+        await updateAccountMutation.mutateAsync({
+          id: activeAccount.id,
+          input: { displayName: trimmedAdminName },
+        });
+      }
       setFeedback({
         kind: 'ok',
         text: 'Farm profile, financial rates, and check cadence saved.',
@@ -1054,6 +1075,33 @@ export function SettingsView({
                 placeholderTextColor={FARMDB_COLORS.textMuted}
               />
             </View>
+
+            {isAdmin && activeAccount ? (
+              <View style={{ gap: ui.space(6) }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                    Admin Display Name
+                  </Text>
+                  <View style={styles.updateVersionPill}>
+                    <Text style={[styles.updateVersionPillText, { fontSize: ui.font(10) }]}>
+                      Admin
+                    </Text>
+                  </View>
+                </View>
+                <TextInput
+                  editable={canEdit}
+                  style={[
+                    styles.input,
+                    { minHeight: ui.controlHeight, fontSize: ui.font(14) },
+                  ]}
+                  value={adminDisplayName}
+                  maxLength={60}
+                  onChangeText={setAdminDisplayName}
+                  placeholder="e.g. Greenfields Owner"
+                  placeholderTextColor={FARMDB_COLORS.textMuted}
+                />
+              </View>
+            ) : null}
 
             <View style={{ gap: ui.space(6) }}>
               <Text style={[styles.label, { fontSize: ui.font(12) }]}>

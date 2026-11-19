@@ -90,6 +90,9 @@ export interface DesktopTitlebarProps {
   isSyncing?: boolean;
   syncFeedback?: string | null;
   onTriggerCloudSync?: () => void;
+  isRefreshing?: boolean;
+  refreshFeedback?: string | null;
+  onRefreshApp?: () => void;
   onOpenAlerts?: () => void;
   onOpenSettings?: () => void;
   onOpenAccountPortal?: () => void;
@@ -108,6 +111,9 @@ export function DesktopTitlebar({
   isSyncing = false,
   syncFeedback = null,
   onTriggerCloudSync,
+  isRefreshing = false,
+  refreshFeedback = null,
+  onRefreshApp,
   onOpenAlerts,
   onOpenSettings,
   onOpenAccountPortal,
@@ -340,6 +346,27 @@ export function DesktopTitlebar({
             ) : null}
           </div>
 
+          {onRefreshApp ? (
+            <button
+              type="button"
+              className="titlebar-action-btn"
+              onClick={onRefreshApp}
+              disabled={isRefreshing}
+              title="Refresh all settings, accounts, cloud sync, and farm records across the app"
+              aria-label="Refresh entire app"
+            >
+              <RefreshCw
+                size={13}
+                className={isRefreshing ? 'titlebar-spin' : undefined}
+              />
+              <span className="titlebar-btn-text">
+                {isRefreshing
+                  ? 'Refreshing...'
+                  : refreshFeedback ?? 'Refresh'}
+              </span>
+            </button>
+          ) : null}
+
           <button
             type="button"
             className={`titlebar-action-btn ${
@@ -384,7 +411,9 @@ export function DesktopTitlebar({
               {activeAccount?.displayName ?? settings?.farmName ?? 'farmDB'}
             </span>
             <span className="titlebar-account-tier">
-              {formatAccountTierLabel(activeAccount)}
+              {isAdminAccount(activeAccount)
+                ? 'Admin'
+                : formatAccountTierLabel(activeAccount)}
             </span>
           </button>
         </div>

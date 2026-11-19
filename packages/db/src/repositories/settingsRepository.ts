@@ -139,10 +139,9 @@ function parseStoredSettings(rawMap: Map<string, string>): FarmSettings {
       rawMap.get('mobileIconMode'),
       DEFAULT_FARM_SETTINGS.mobileIconMode
     ),
-    activeAccountId:
-      rawAccountId && rawAccountId.length > 0
-        ? rawAccountId
-        : DEFAULT_FARM_SETTINGS.activeAccountId,
+    activeAccountId: rawMap.has('activeAccountId')
+      ? (rawAccountId ?? '')
+      : DEFAULT_FARM_SETTINGS.activeAccountId,
     cloudSyncEnabled: parseBool(
       rawMap.get('cloudSyncEnabled'),
       DEFAULT_FARM_SETTINGS.cloudSyncEnabled
@@ -236,7 +235,7 @@ export function createSettingsRepository(
       const rows = await db.select().from(farmSettings);
       let maxUpdatedAt = 0;
       for (const row of rows) {
-        if (row.key === 'activeAccountId') continue;
+        if (row.key === 'activeAccountId' || row.key.startsWith('__')) continue;
         if (row.updatedAt > maxUpdatedAt) {
           maxUpdatedAt = row.updatedAt;
         }

@@ -25,8 +25,9 @@ import {
 import {
   useActiveFarmAccount,
   useDeleteFarmAccountWithCredentials,
-  useFarmAccountList,
   useFarmSettings,
+  useLeaveFarmNetwork,
+  useLocalSignInAccounts,
   useRecoverAdminFromCloud,
   useSignUpFarmAccount,
   useSwitchFarmAccount,
@@ -59,12 +60,13 @@ export function AuthPortalView({
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
   const activeAccountQuery = useActiveFarmAccount();
   const activeAccount = activeAccountQuery.data;
-  const accountsQuery = useFarmAccountList({});
+  const accountsQuery = useLocalSignInAccounts();
   const accounts = accountsQuery.data ?? [];
 
   const switchMut = useSwitchFarmAccount();
   const signUpAccountMut = useSignUpFarmAccount();
   const deleteWithCredsMut = useDeleteFarmAccountWithCredentials();
+  const leaveNetworkMut = useLeaveFarmNetwork();
   const recoverAdminMut = useRecoverAdminFromCloud();
   const syncMut = useTriggerCloudSync();
   const updateSettingsMut = useUpdateFarmSettings();
@@ -76,6 +78,7 @@ export function AuthPortalView({
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
+  const [confirmLeaveNetwork, setConfirmLeaveNetwork] = useState(false);
 
   // Sign-In state
   const [selectedLoginId, setSelectedLoginId] = useState<string>(
@@ -366,6 +369,26 @@ export function AuthPortalView({
     }
   }
 
+  async function handleLeavePendingNetwork() {
+    if (!activeAccount) return;
+    setErrorMsg(null);
+    setNotice(null);
+    try {
+      const res = await leaveNetworkMut.mutateAsync(activeAccount.id);
+      setConfirmLeaveNetwork(false);
+      if (res.mode === 'disconnected_standalone') {
+        onSuccessEnterApp?.();
+      } else {
+        setSelectedLoginId('');
+        setNotice(`Left ${res.leftFarmName}.`);
+      }
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Unable to leave Farm Network.'
+      );
+    }
+  }
+
   return (
     <SafeAreaView
       style={styles.safeArea}
@@ -490,30 +513,99 @@ export function AuthPortalView({
                     {syncMut.isPending ? 'Checking...' : 'Check Approval'}
                   </Text>
                 </Pressable>
-                <Pressable
-                  style={[
-                    styles.secondaryBtn,
-                    {
-                      minHeight: ui.chipHeight,
-                      paddingHorizontal: ui.space(12),
-                      paddingVertical: ui.space(6),
-                    },
-                  ]}
-                  onPress={() => {
-                    const adminAcc = accounts.find((a) => a.isPrimaryAdmin);
-                    if (adminAcc) setSelectedLoginId(adminAcc.id);
-                    setTab('signin');
-                  }}
-                >
-                  <Text
+                {confirmLeaveNetwork ? (
+                  <>
+                    <Pressable
+                      style={[
+                        styles.dangerBtn,
+                        {
+                          minHeight: ui.chipHeight,
+                          paddingHorizontal: ui.space(12),
+                          paddingVertical: ui.space(6),
+                        },
+                      ]}
+                      disabled={leaveNetworkMut.isPending}
+                      onPress={() => void handleLeavePendingNetwork()}
+                    >
+                      <Text
+                        style={[
+                          styles.dangerBtnText,
+                          { fontSize: ui.font(12), flexShrink: 1 },
+                        ]}
+                      >
+                        {leaveNetworkMut.isPending ? 'Leaving...' : 'Confirm Leave'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        styles.secondaryBtn,
+                        {
+                          minHeight: ui.chipHeight,
+                          paddingHorizontal: ui.space(12),
+                          paddingVertical: ui.space(6),
+                        },
+                      ]}
+                      disabled={leaveNetworkMut.isPending}
+                      onPress={() => setConfirmLeaveNetwork(false)}
+                    >
+                      <Text
+                        style={[
+                          styles.secondaryBtnText,
+                          { fontSize: ui.font(12), flexShrink: 1 },
+                        ]}
+                      >
+                        Cancel
+                      </Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <Pressable
                     style={[
-                      styles.secondaryBtnText,
-                      { fontSize: ui.font(12), flexShrink: 1 },
+                      styles.dangerBtn,
+                      {
+                        minHeight: ui.chipHeight,
+                        paddingHorizontal: ui.space(12),
+                        paddingVertical: ui.space(6),
+                      },
                     ]}
+                    onPress={() => setConfirmLeaveNetwork(true)}
                   >
-                    Switch Account
-                  </Text>
-                </Pressable>
+                    <Text
+                      style={[
+                        styles.dangerBtnText,
+                        { fontSize: ui.font(12), flexShrink: 1 },
+                      ]}
+                    >
+                      Leave Network
+                    </Text>
+                  </Pressable>
+                )}
+                {accounts.some((a) => a.id !== activeAccount.id) ? (
+                  <Pressable
+                    style={[
+                      styles.secondaryBtn,
+                      {
+                        minHeight: ui.chipHeight,
+                        paddingHorizontal: ui.space(12),
+                        paddingVertical: ui.space(6),
+                      },
+                    ]}
+                    onPress={() => {
+                      const otherAcc = accounts.find((a) => a.id !== activeAccount.id);
+                      if (otherAcc) setSelectedLoginId(otherAcc.id);
+                      setTab('signin');
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.secondaryBtnText,
+                        { fontSize: ui.font(12), flexShrink: 1 },
+                      ]}
+                    >
+                      Switch Account
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
             </View>
           ) : null}
@@ -637,14 +729,23 @@ export function AuthPortalView({
                             size={ui.font(24)}
                           />
                           <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text
-                              style={[
-                                styles.accountName,
-                                { fontSize: ui.font(14) },
-                              ]}
-                            >
-                              {acc.displayName}
-                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                              <Text
+                                style={[
+                                  styles.accountName,
+                                  { fontSize: ui.font(14) },
+                                ]}
+                              >
+                                {acc.displayName}
+                              </Text>
+                              {isAdminAccount(acc) ? (
+                                <View style={styles.adminPill}>
+                                  <Text style={[styles.adminPillText, { fontSize: ui.font(10) }]}>
+                                    Admin
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </View>
                             <Text
                               style={[styles.subText, { fontSize: ui.font(11) }]}
                             >
@@ -1262,6 +1363,18 @@ const styles = StyleSheet.create({
     backgroundColor: FARMDB_COLORS.accentSoft,
   },
   accountName: { fontFamily: FARMDB_FONTS.bold, color: FARMDB_COLORS.text },
+  adminPill: {
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    borderWidth: 1,
+    borderColor: '#a8d5be',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  adminPillText: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.accent,
+  },
   fieldGroup: { gap: 5 },
   label: { fontFamily: FARMDB_FONTS.semibold, color: FARMDB_COLORS.textMuted },
   input: {

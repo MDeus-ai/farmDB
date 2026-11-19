@@ -228,6 +228,7 @@ export function wrapSessionWithRbac(
   const network: FarmDbContextValue['network'] = {
     listAccounts: (filter) => raw.network.listAccounts(filter),
     listAccountsRaw: () => raw.network.listAccountsRaw(),
+    listLocalSignInAccounts: () => raw.network.listLocalSignInAccounts(),
     getAccountById: (id) => raw.network.getAccountById(id),
     ensureAdminAccount: () => raw.network.ensureAdminAccount(),
     getActiveAccount: () => raw.network.getActiveAccount(),
@@ -273,6 +274,15 @@ export function wrapSessionWithRbac(
       return raw.network.rotateNetworkJoinKey();
     },
     joinNetworkWithKey: (input) => raw.network.joinNetworkWithKey(input),
+    async leaveNetwork(accountId) {
+      const actor = await getActiveActor();
+      if (actor && !isNetworkManager(actor) && actor.id !== accountId) {
+        throw new Error(
+          `Permission denied: ${actor.displayName} cannot disconnect another member from the Farm Network.`
+        );
+      }
+      return raw.network.leaveNetwork(accountId);
+    },
     recoverAdminFromCloud: (input) => raw.network.recoverAdminFromCloud(input),
     async acceptPendingAccount(accountId, options) {
       await assertNetworkAdmin('approve pending farm accounts');

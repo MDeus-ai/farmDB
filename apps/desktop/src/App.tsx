@@ -23,6 +23,7 @@ import {
   useFarmSettings,
   useFarmSummary,
   useLivestockList,
+  useRefreshFarmDb,
   useTriggerCloudSync,
   useUpdateLivestock,
   type AlertNotificationPayload,
@@ -102,6 +103,8 @@ function DesktopShell({
   }
   const [dueBanners, setDueBanners] = useState<AlertNotificationPayload[]>([]);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const [isRefreshingApp, setIsRefreshingApp] = useState(false);
+  const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null);
   const [currentAppVersion, setCurrentAppVersion] = useState(FARMDB_APP_VERSION);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
@@ -126,6 +129,7 @@ function DesktopShell({
   const livestockListQuery = useLivestockList({});
   const updateLivestockMut = useUpdateLivestock();
   const cloudSyncMut = useTriggerCloudSync();
+  const refreshAllDb = useRefreshFarmDb();
   const migratedPhotoIdsRef = useRef<Set<string>>(new Set());
   const summary = summaryQuery.data;
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
@@ -188,6 +192,12 @@ function DesktopShell({
     const timer = window.setTimeout(() => setSyncFeedback(null), 3500);
     return () => window.clearTimeout(timer);
   }, [syncFeedback]);
+
+  useEffect(() => {
+    if (!refreshFeedback) return;
+    const timer = window.setTimeout(() => setRefreshFeedback(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [refreshFeedback]);
 
   const dispatcher = useMemo(
     () => ({
@@ -448,6 +458,44 @@ function DesktopShell({
     }
   }
 
+  async function handleRefreshApp() {
+    if (isRefreshingApp) return;
+    setIsRefreshingApp(true);
+    setRefreshFeedback(null);
+    try {
+      const canCloudSync = Boolean(
+        !isLockedShell &&
+          settings.cloudSyncEnabled &&
+          settings.supabaseUrl.trim() &&
+          settings.supabaseAnonKey.trim() &&
+          (isAdminAccount(activeAccount) || activeAccount?.canSyncCloud)
+      );
+      if (canCloudSync) {
+        try {
+          await cloudSyncMut.mutateAsync('bidirectional');
+        } catch {
+          // Offline safe fallback: local database & queries still refresh cleanly.
+        }
+      }
+      await refreshAllDb();
+      const freshSettings = (await settingsQuery.refetch()).data;
+      if (freshSettings) {
+        const root = document.documentElement;
+        root.dataset.fontScale = freshSettings.fontScale;
+        root.dataset.uiDensity = freshSettings.uiDensity;
+      }
+      if (
+        !isLockedShell &&
+        (freshSettings?.enableNotifications ?? settings.enableNotifications)
+      ) {
+        void checkNow();
+      }
+      setRefreshFeedback('Refreshed');
+    } finally {
+      setIsRefreshingApp(false);
+    }
+  }
+
   async function handleTitlebarCloudSync() {
     try {
       const result = await cloudSyncMut.mutateAsync('bidirectional');
@@ -484,6 +532,13 @@ function DesktopShell({
       ? undefined
       : () => {
           void handleTitlebarCloudSync();
+        },
+    isRefreshing: isRefreshingApp,
+    refreshFeedback,
+    onRefreshApp: isLockedShell
+      ? undefined
+      : () => {
+          void handleRefreshApp();
         },
     onOpenAlerts:
       !isLockedShell && canAccountViewModule(activeAccount, 'alerts')
@@ -640,13 +695,40 @@ function DesktopShell({
               <span style={{ minWidth: 0, flex: 1 }}>
                 <span
                   style={{
-                    display: 'block',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    minWidth: 0,
                   }}
                 >
-                  {activeAccount?.displayName ?? settings.farmName}
+                  <span
+                    style={{
+                      display: 'block',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      minWidth: 0,
+                      flexShrink: 1,
+                    }}
+                  >
+                    {activeAccount?.displayName ?? settings.farmName}
+                  </span>
+                  {isAdminAccount(activeAccount) && (
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        padding: '1px 6px',
+                        borderRadius: 999,
+                        background: 'rgba(183, 228, 199, 0.18)',
+                        border: '1px solid rgba(183, 228, 199, 0.3)',
+                        color: '#b7e4c7',
+                        fontSize: '0.66rem',
+                        fontWeight: 700,
+                      }}
+                    >
+                      Admin
+                    </span>
+                  )}
                 </span>
                 <small style={{ display: 'block', opacity: 0.78, fontWeight: 500 }}>
                   {formatAccountTierLabel(activeAccount)}

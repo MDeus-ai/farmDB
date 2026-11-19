@@ -1,16 +1,16 @@
-export const FARMDB_APP_VERSION = '1.5.3';
+export const FARMDB_APP_VERSION = '1.5.4';
 export const FARMDB_GITHUB_REPO = 'MDeus-ai/farmDB';
 export const FARMDB_GITHUB_LATEST_RELEASE_API = `https://api.github.com/repos/${FARMDB_GITHUB_REPO}/releases/latest`;
 export const FARMDB_GITHUB_RELEASES_PAGE = `https://github.com/${FARMDB_GITHUB_REPO}/releases`;
 
 export const CURRENT_RELEASE_HIGHLIGHTS: readonly string[] = [
-  'Fixed non-admin users joining a Farm Network via Full Cloud Key (FDB1:...) or Short Code (FARM-XXXX) with remote key pre-validation.',
-  'Instant Admin join notifications (OS alert, top amber Pending Network Join Request banner, and live Farm Network badge) plus 20-second Pending Approval auto-polling.',
-  'Streamlined Farm Network to Join-Key-only onboarding (removed unused Invite to Network modal) and updated the in-app App Guide across Desktop and Mobile.',
-  'Delete any Admin or User account cleanly from Farm Network or the Sign-In Portal with confirmation and PIN safety.',
-  'Accounts stay strictly user-chosen with zero auto-created default Admin profile, plus custom Farm Name with Admin tag.',
+  'Fixed Desktop SQLite read-only errors when adding or saving livestock by locking on-disk files only at app close while keeping a verified read-only shadow backup.',
+  'Locked down device-local Sign-In isolation so joining a Farm Network never exposes or signs into remote Admin accounts from another phone or PC.',
+  'Added self-service Leave Network for joined or pending members, plus a top-bar Refresh button on Desktop and Mobile to reload all settings and records immediately.',
+  'Added Admin Display Name renaming with an Admin badge in both Settings and Farm Network, alongside instant Admin join alerts and 20s Pending Approval polling.',
+  'Updated the in-app App Guide, removed unused Invite to Network modals, and added full Admin/User account deletion with PIN safety.',
   'Accurate installed version & OTA detection clears update banners immediately once updates are applied.',
-  'Android keyboards keep lower form fields visible above the keyboard, with tappable phone/email links and polished Mobile Large & X-Large UI layouts.',
+  'Android keyboards keep lower form fields visible with tappable phone/email links and refined Mobile Large & X-Large UI layouts.',
 ];
 
 export type UpdateSource = 'tauri_updater' | 'expo_ota' | 'github_release';

@@ -292,6 +292,9 @@ export function SettingsView({
   }
 
   const [farmName, setFarmName] = useState(settings.farmName);
+  const [adminDisplayName, setAdminDisplayName] = useState(
+    activeAccount?.displayName ?? ''
+  );
   const [currencySymbol, setCurrencySymbol] = useState(settings.currencySymbol);
   const [rateText, setRateText] = useState(
     settings.defaultMilkRatePerLiter.toFixed(2)
@@ -369,6 +372,12 @@ export function SettingsView({
       setSyncHr(settingsQuery.data.syncIncludeHr);
     }
   }, [settingsQuery.data]);
+
+  useEffect(() => {
+    if (activeAccount?.displayName) {
+      setAdminDisplayName(activeAccount.displayName);
+    }
+  }, [activeAccount?.displayName]);
 
   async function persistCloudAndAdminCredentials() {
     await updateMutation.mutateAsync({
@@ -463,6 +472,18 @@ export function SettingsView({
         alertCheckIntervalSeconds: Number(intervalText),
         paymentAlertLeadDays: Number(leadDaysText),
       });
+      const trimmedAdminName = adminDisplayName.trim();
+      if (
+        isAdmin &&
+        activeAccount &&
+        trimmedAdminName.length > 0 &&
+        trimmedAdminName !== activeAccount.displayName
+      ) {
+        await updateAccountMutation.mutateAsync({
+          id: activeAccount.id,
+          input: { displayName: trimmedAdminName },
+        });
+      }
       setFeedback({
         kind: 'ok',
         text: 'Farm profile, financial defaults, and alert cadence saved.',
@@ -1090,6 +1111,32 @@ export function SettingsView({
                         />
                       </div>
 
+                      {isAdmin && activeAccount && (
+                        <div className="form-field full">
+                          <label
+                            className="form-label"
+                            htmlFor="set-admin-display-name"
+                            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                          >
+                            <span>Admin Display Name</span>
+                            <span
+                              className="status-pill status-active"
+                              style={{ fontSize: '0.68rem', padding: '1px 7px' }}
+                            >
+                              Admin
+                            </span>
+                          </label>
+                          <input
+                            id="set-admin-display-name"
+                            className="input"
+                            value={adminDisplayName}
+                            maxLength={60}
+                            onChange={(e) => setAdminDisplayName(e.target.value)}
+                            placeholder="e.g. Greenfields Owner"
+                          />
+                        </div>
+                      )}
+
                       <div className="form-field">
                         <label className="form-label" htmlFor="set-currency-preset">
                           Currency
@@ -1247,8 +1294,8 @@ export function SettingsView({
                   <span className={`status-pill ${storageInfo.isCustomLocation ? 'status-active' : 'status-sold'}`}>
                     {storageInfo.isCustomLocation ? 'Custom Storage Folder' : 'Default App Folder'}
                   </span>
-                  <span className={`status-pill ${storageInfo.isFileReadOnly ? 'status-active' : 'status-sold'}`}>
-                    {storageInfo.isFileReadOnly ? 'Read-Only Outside App Active' : 'Unlocked'}
+                  <span className={`status-pill ${storageInfo.readOnlyProtection ? 'status-active' : 'status-sold'}`}>
+                    {storageInfo.readOnlyProtection ? 'Read-Only Outside App Active' : 'Unlocked'}
                   </span>
                 </div>
               )}
@@ -1268,8 +1315,8 @@ export function SettingsView({
                   {storageInfo && (
                     <span className="rate-preview">
                       File size: {(storageInfo.fileSizeBytes / 1024).toFixed(1)} KB
-                      {storageInfo.isFileReadOnly
-                        ? ' · Protected by OS read-only attribute + verified shadow copy when idle'
+                      {storageInfo.readOnlyProtection
+                        ? ' · Protected by verified read-only shadow copy + auto-locks on exit'
                         : ' · External write protection currently paused'}
                     </span>
                   )}

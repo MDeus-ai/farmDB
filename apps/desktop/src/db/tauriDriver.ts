@@ -36,10 +36,10 @@ export async function createTauriSqliteController(
   }
 
   let db: Database | null = await Database.load(currentConnStr);
-  await invoke('set_sqlite_write_lock', { locked: true }).catch(() => {});
+  await db.execute('PRAGMA busy_timeout = 5000;').catch(() => {});
 
-  let pendingWrites = 0;
   let queue: Promise<void> = Promise.resolve();
+  let shadowTimer: ReturnType<typeof setTimeout> | null = null;
 
   function enqueue<T>(task: () => Promise<T>): Promise<T> {
     const run = queue.then(task, task);
@@ -50,11 +50,33 @@ export async function createTauriSqliteController(
     return run;
   }
 
+  function scheduleShadowBackupRefresh() {
+    if (shadowTimer) {
+      clearTimeout(shadowTimer);
+    }
+    shadowTimer = setTimeout(() => {
+      shadowTimer = null;
+      void enqueue(async () => {
+        if (!db) return;
+        try {
+          await db.execute('PRAGMA wal_checkpoint(PASSIVE);');
+        } catch {
+          // Non-fatal in DELETE journal mode.
+        }
+        await invoke('set_sqlite_write_lock', { locked: true }).catch(() => {});
+      });
+    }, 700);
+  }
+
+  const isReadonlyError = (err: unknown): boolean => {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /readonly|read-only|code:\s*(?:8|1032)\b/i.test(msg);
+  };
+
   const driver: SqlDriver = {
     kind: 'tauri-sqlite',
     execute(sql: string, params: unknown[] = []): Promise<SqlRunResult> {
       const translated = convertQuestionPlaceholdersToDollar(sql);
-      pendingWrites += 1;
       return enqueue(async () => {
         if (!db) {
           throw new Error('SQLite connection is currently closed.');
@@ -62,25 +84,30 @@ export async function createTauriSqliteController(
         await invoke('set_sqlite_write_lock', { locked: false }).catch(
           () => {}
         );
-        return db.execute(translated, params).then((result) => ({
-          rowsAffected: result.rowsAffected,
-          lastInsertId: result.lastInsertId,
-        }));
-      }).finally(async () => {
-        pendingWrites = Math.max(0, pendingWrites - 1);
-        if (pendingWrites === 0 && db) {
-          await enqueue(async () => {
-            if (pendingWrites === 0 && db) {
-              try {
-                await db.execute('PRAGMA wal_checkpoint(PASSIVE);');
-              } catch {
-                // Non-fatal in DELETE journal mode.
-              }
-              await invoke('set_sqlite_write_lock', { locked: true }).catch(
-                () => {}
-              );
-            }
-          });
+        try {
+          const result = await db.execute(translated, params);
+          scheduleShadowBackupRefresh();
+          return {
+            rowsAffected: result.rowsAffected,
+            lastInsertId: result.lastInsertId,
+          };
+        } catch (err) {
+          if (!isReadonlyError(err)) {
+            throw err;
+          }
+          // Recover from any pooled connection that opened read-only while the
+          // file was locked: close the pool, unlock the file, reopen, and retry once.
+          await db.close(currentConnStr).catch(() => {});
+          db = null;
+          await invoke('prepare_sqlite_storage').catch(() => {});
+          db = await Database.load(currentConnStr);
+          await db.execute('PRAGMA busy_timeout = 5000;').catch(() => {});
+          const retried = await db.execute(translated, params);
+          scheduleShadowBackupRefresh();
+          return {
+            rowsAffected: retried.rowsAffected,
+            lastInsertId: retried.lastInsertId,
+          };
         }
       });
     },
@@ -105,10 +132,15 @@ export async function createTauriSqliteController(
     },
     close(): Promise<void> {
       return enqueue(async () => {
+        if (shadowTimer) {
+          clearTimeout(shadowTimer);
+          shadowTimer = null;
+        }
         if (db) {
           await db.close(currentConnStr);
           db = null;
         }
+        await invoke('lock_sqlite_on_close').catch(() => {});
       });
     },
     reopen(): Promise<void> {
@@ -116,14 +148,16 @@ export async function createTauriSqliteController(
         if (!db) {
           await invoke('prepare_sqlite_storage').catch(() => {});
           db = await Database.load(currentConnStr);
-          await invoke('set_sqlite_write_lock', { locked: true }).catch(
-            () => {}
-          );
+          await db.execute('PRAGMA busy_timeout = 5000;').catch(() => {});
         }
       });
     },
     reloadAtPath(newDbPath: string): Promise<void> {
       return enqueue(async () => {
+        if (shadowTimer) {
+          clearTimeout(shadowTimer);
+          shadowTimer = null;
+        }
         if (db) {
           await db.close(currentConnStr);
           db = null;
@@ -131,7 +165,7 @@ export async function createTauriSqliteController(
         currentConnStr = `sqlite:${newDbPath}`;
         await invoke('prepare_sqlite_storage').catch(() => {});
         db = await Database.load(currentConnStr);
-        await invoke('set_sqlite_write_lock', { locked: true }).catch(() => {});
+        await db.execute('PRAGMA busy_timeout = 5000;').catch(() => {});
       });
     },
   };

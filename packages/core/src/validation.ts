@@ -799,8 +799,9 @@ export function validateFarmSettings(
   }
 
   const activeAccountId =
-    (input.activeAccountId ?? DEFAULT_FARM_SETTINGS.activeAccountId).trim() ||
-    DEFAULT_FARM_SETTINGS.activeAccountId;
+    input.activeAccountId !== undefined
+      ? input.activeAccountId.trim()
+      : DEFAULT_FARM_SETTINGS.activeAccountId;
 
   const supabaseUrl = normalizeSupabaseBaseUrl(
     input.supabaseUrl ?? DEFAULT_FARM_SETTINGS.supabaseUrl

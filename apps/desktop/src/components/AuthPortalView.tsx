@@ -15,8 +15,9 @@ import {
 import {
   useActiveFarmAccount,
   useDeleteFarmAccountWithCredentials,
-  useFarmAccountList,
   useFarmSettings,
+  useLeaveFarmNetwork,
+  useLocalSignInAccounts,
   useRecoverAdminFromCloud,
   useSignUpFarmAccount,
   useSwitchFarmAccount,
@@ -59,12 +60,13 @@ export function AuthPortalView({
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
   const activeAccountQuery = useActiveFarmAccount();
   const activeAccount = activeAccountQuery.data;
-  const accountsQuery = useFarmAccountList({});
+  const accountsQuery = useLocalSignInAccounts();
   const accounts = accountsQuery.data ?? [];
 
   const switchMut = useSwitchFarmAccount();
   const signUpAccountMut = useSignUpFarmAccount();
   const deleteWithCredsMut = useDeleteFarmAccountWithCredentials();
+  const leaveNetworkMut = useLeaveFarmNetwork();
   const recoverAdminMut = useRecoverAdminFromCloud();
   const syncMut = useTriggerCloudSync();
   const updateSettingsMut = useUpdateFarmSettings();
@@ -76,6 +78,7 @@ export function AuthPortalView({
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
+  const [confirmLeaveNetwork, setConfirmLeaveNetwork] = useState(false);
 
   // Sign-In state
   const [selectedLoginId, setSelectedLoginId] = useState<string>(
@@ -363,6 +366,26 @@ export function AuthPortalView({
     }
   }
 
+  async function handleLeavePendingNetwork() {
+    if (!activeAccount) return;
+    setErrorMsg(null);
+    setNotice(null);
+    try {
+      const res = await leaveNetworkMut.mutateAsync(activeAccount.id);
+      setConfirmLeaveNetwork(false);
+      if (res.mode === 'disconnected_standalone') {
+        onSuccessEnterApp?.();
+      } else {
+        setSelectedLoginId('');
+        setNotice(`Left ${res.leftFarmName}.`);
+      }
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Unable to leave Farm Network.'
+      );
+    }
+  }
+
   return (
     <div className="auth-portal-backdrop">
       <div className="auth-portal-shell">
@@ -468,7 +491,7 @@ export function AuthPortalView({
                 <p style={{ margin: '4px 0 0', fontSize: '0.86rem', color: 'var(--text-muted)' }}>
                   Pending Administrator approval.
                 </p>
-                <div className="row-actions" style={{ marginTop: 10 }}>
+                <div className="row-actions" style={{ marginTop: 10, flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     className="btn btn-primary btn-sm"
@@ -478,19 +501,49 @@ export function AuthPortalView({
                     <img src={APP_ICONS.dataSync} alt="" className="app-icon-sm" />
                     {syncMut.isPending ? 'Checking...' : 'Check Approval Status'}
                   </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => {
-                      const adminAcc = accounts.find((a) => a.isPrimaryAdmin);
-                      if (adminAcc) {
-                        setSelectedLoginId(adminAcc.id);
-                      }
-                      setTab('signin');
-                    }}
-                  >
-                    Switch to Admin / Another Account
-                  </button>
+                  {confirmLeaveNetwork ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        disabled={leaveNetworkMut.isPending}
+                        onClick={() => void handleLeavePendingNetwork()}
+                      >
+                        {leaveNetworkMut.isPending ? 'Leaving...' : 'Confirm Leave Network'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        disabled={leaveNetworkMut.isPending}
+                        onClick={() => setConfirmLeaveNetwork(false)}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-sm"
+                      onClick={() => setConfirmLeaveNetwork(true)}
+                    >
+                      Leave Network
+                    </button>
+                  )}
+                  {accounts.some((a) => a.id !== activeAccount.id) && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => {
+                        const otherAcc = accounts.find((a) => a.id !== activeAccount.id);
+                        if (otherAcc) {
+                          setSelectedLoginId(otherAcc.id);
+                        }
+                        setTab('signin');
+                      }}
+                    >
+                      Switch Local Account
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -600,9 +653,19 @@ export function AuthPortalView({
                           className="app-icon-md"
                         />
                         <div style={{ textAlign: 'left', minWidth: 0, flex: 1 }}>
-                          <strong style={{ display: 'block', fontSize: '0.92rem' }}>
-                            {acc.displayName}
-                          </strong>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <strong style={{ fontSize: '0.92rem' }}>
+                              {acc.displayName}
+                            </strong>
+                            {isAdminAccount(acc) && (
+                              <span
+                                className="status-pill status-active"
+                                style={{ fontSize: '0.68rem', padding: '1px 7px' }}
+                              >
+                                Admin
+                              </span>
+                            )}
+                          </div>
                           <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
                             {formatAccountTierLabel(acc)} · {formatAccountRoleLabel(acc.role)} · {formatAccountStatusLabel(acc.status)}
                             {!isAdminAccount(acc)

@@ -35,6 +35,7 @@ import {
   useDeleteFarmAccount,
   useFarmAccountList,
   useJoinFarmNetwork,
+  useLeaveFarmNetwork,
   useRotateNetworkJoinKey,
   useUpdateFarmAccount,
 } from '@farmdb/db';
@@ -61,6 +62,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   const rotateKeyMut = useRotateNetworkJoinKey();
   const acceptPendingMut = useAcceptPendingAccount();
   const joinNetworkMut = useJoinFarmNetwork();
+  const leaveNetworkMut = useLeaveFarmNetwork();
 
   const accounts = accountsQuery.data ?? [];
   const activeAccount = activeAccountQuery.data;
@@ -101,6 +103,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
 
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmLeaveNetwork, setConfirmLeaveNetwork] = useState(false);
 
   // Join Network modal
   const [joinOpen, setJoinOpen] = useState(false);
@@ -315,6 +318,25 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
     }
   }
 
+  async function handleLeaveNetwork() {
+    if (!activeAccount) return;
+    try {
+      const res = await leaveNetworkMut.mutateAsync(activeAccount.id);
+      setConfirmLeaveNetwork(false);
+      if (res.mode === 'removed_from_shared_device') {
+        onSignOut?.();
+      } else {
+        setNotice(
+          `Left ${res.leftFarmName}. Your account is now back in standalone local mode.`
+        );
+      }
+    } catch (err) {
+      setNotice(
+        err instanceof Error ? err.message : 'Unable to leave Farm Network.'
+      );
+    }
+  }
+
   async function copyKeyIfPossible(text: string, label: string) {
     try {
       const nav = (globalThis as { navigator?: { clipboard?: { writeText?: (v: string) => Promise<void> } } }).navigator;
@@ -354,16 +376,36 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
             <Text style={[styles.heroTitle, { fontSize: ui.font(17) }]}>
               Farm Network &amp; Privileges
             </Text>
-            <Text
-              style={[styles.heroSub, { fontSize: ui.font(12) }]}
-              numberOfLines={2}
-            >
-              Active: {activeAccount?.displayName ?? settings.farmName}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+              <Text
+                style={[styles.heroSub, { fontSize: ui.font(12), flexShrink: 1 }]}
+                numberOfLines={2}
+              >
+                Active: {activeAccount?.displayName ?? settings.farmName}
+              </Text>
+              {isAdminOrManager ? (
+                <View style={styles.adminPill}>
+                  <Text style={[styles.adminPillText, { fontSize: ui.font(10) }]}>
+                    Admin
+                  </Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
 
         <View style={[styles.actionRow, { gap: ui.space(8) }]}>
+          {activeAccount && isAdminOrManager ? (
+            <Pressable
+              style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
+              onPress={() => openEditAccount(activeAccount, false)}
+            >
+              <AppIcon name="edit" size={ui.font(14)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                Rename / Profile
+              </Text>
+            </Pressable>
+          ) : null}
           <Pressable
             style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
             onPress={() => {
@@ -377,6 +419,39 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               Join Network
             </Text>
           </Pressable>
+          {activeAccount && !isAdminOrManager && Boolean(activeAccount.canSyncCloud) ? (
+            confirmLeaveNetwork ? (
+              <>
+                <Pressable
+                  style={[styles.smallDeleteBtn, { minHeight: ui.chipHeight, paddingHorizontal: ui.space(12), paddingVertical: ui.space(6) }]}
+                  disabled={leaveNetworkMut.isPending}
+                  onPress={() => void handleLeaveNetwork()}
+                >
+                  <Text style={[styles.smallDeleteText, { fontSize: ui.font(12) }]}>
+                    {leaveNetworkMut.isPending ? 'Leaving...' : 'Confirm Leave'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
+                  disabled={leaveNetworkMut.isPending}
+                  onPress={() => setConfirmLeaveNetwork(false)}
+                >
+                  <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                    Cancel
+                  </Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable
+                style={[styles.smallDeleteBtn, { minHeight: ui.chipHeight, paddingHorizontal: ui.space(12), paddingVertical: ui.space(6) }]}
+                onPress={() => setConfirmLeaveNetwork(true)}
+              >
+                <Text style={[styles.smallDeleteText, { fontSize: ui.font(12) }]}>
+                  Leave Network
+                </Text>
+              </Pressable>
+            )
+          ) : null}
           <Pressable
             style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
             onPress={() => {
@@ -451,6 +526,11 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
         <Text style={[styles.subText, { fontSize: ui.font(11.5) }]}>
           Share your Full Cloud Key (FDB1:...) for another phone or PC, or Short Code (FARM-XXXX) on this device. You will be notified to assign privileges when someone joins.
         </Text>
+        {!activeAccount?.accessCode?.trim() ? (
+          <Text style={[styles.subText, { fontSize: ui.font(11), color: '#8a5300', fontFamily: FARMDB_FONTS.semibold }]}>
+            Security tip: Tap Password above to set an Admin PIN so Cloud Admin Recovery stays protected.
+          </Text>
+        ) : null}
 
         <View style={styles.joinCodeBox}>
           <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
@@ -625,9 +705,18 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                     size={ui.font(24)}
                   />
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={[styles.cardTitle, { fontSize: ui.font(14) }]}>
-                      {acc.displayName}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                      <Text style={[styles.cardTitle, { fontSize: ui.font(14) }]}>
+                        {acc.displayName}
+                      </Text>
+                      {acc.isPrimaryAdmin || acc.role === 'admin' ? (
+                        <View style={styles.adminPill}>
+                          <Text style={[styles.adminPillText, { fontSize: ui.font(10) }]}>
+                            Admin
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
                     <Text style={[styles.subText, { fontSize: ui.font(11) }]}>
                       {formatAccountRoleLabel(acc.role)}
                       {acc.relationship ? ` · ${acc.relationship}` : ''}
@@ -685,9 +774,50 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                     <Text
                       style={[styles.smallEditBtnText, { fontSize: ui.font(11) }]}
                     >
-                      Privileges
+                      {acc.isPrimaryAdmin || acc.role === 'admin'
+                        ? 'Edit Profile'
+                        : 'Privileges'}
                     </Text>
                   </Pressable>
+                ) : null}
+                {isCurrent && !isAdminOrManager && Boolean(acc.canSyncCloud) ? (
+                  confirmLeaveNetwork ? (
+                    <>
+                      <Pressable
+                        style={[styles.smallDeleteBtn, { paddingHorizontal: ui.space(12) }]}
+                        disabled={leaveNetworkMut.isPending}
+                        onPress={() => void handleLeaveNetwork()}
+                      >
+                        <Text
+                          style={[styles.smallDeleteText, { fontSize: ui.font(11) }]}
+                        >
+                          Confirm Leave
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.smallEditBtn, { paddingHorizontal: ui.space(12) }]}
+                        disabled={leaveNetworkMut.isPending}
+                        onPress={() => setConfirmLeaveNetwork(false)}
+                      >
+                        <Text
+                          style={[styles.smallEditBtnText, { fontSize: ui.font(11) }]}
+                        >
+                          Cancel
+                        </Text>
+                      </Pressable>
+                    </>
+                  ) : (
+                    <Pressable
+                      style={[styles.smallDeleteBtn, { paddingHorizontal: ui.space(12) }]}
+                      onPress={() => setConfirmLeaveNetwork(true)}
+                    >
+                      <Text
+                        style={[styles.smallDeleteText, { fontSize: ui.font(11) }]}
+                      >
+                        Leave Network
+                      </Text>
+                    </Pressable>
+                  )
                 ) : null}
                 {isAdminOrManager || isCurrent ? (
                   confirmDeleteId === acc.id ? (
@@ -752,9 +882,12 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
             >
               {approvingMode
                 ? 'Assign Privileges & Accept Request'
-                : editingAcc
-                  ? 'Edit Account & Privileges'
-                  : 'Manage Account'}
+                : editingAcc &&
+                    (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin')
+                  ? 'Edit Admin Profile'
+                  : editingAcc
+                    ? 'Edit Account & Privileges'
+                    : 'Manage Account'}
             </Text>
             <Pressable onPress={() => setAccModalOpen(false)} hitSlop={8} style={{ flexShrink: 0 }}>
               <AppIcon name="close" size={ui.font(20)} />
@@ -771,15 +904,33 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               }}
             >
               <View style={styles.fieldGroup}>
-                <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-                  Display Name *
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                    {editingAcc &&
+                    (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin')
+                      ? 'Admin Display Name *'
+                      : 'Display Name *'}
+                  </Text>
+                  {editingAcc &&
+                  (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin') ? (
+                    <View style={styles.adminPill}>
+                      <Text style={[styles.adminPillText, { fontSize: ui.font(10) }]}>
+                        Admin
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
                 <TextInput
                   style={[styles.input, { fontSize: ui.font(14) }]}
                   value={aName}
                   onChangeText={setAName}
                   editable={!approvingMode}
-                  placeholder="e.g. Martha Mukasa"
+                  placeholder={
+                    editingAcc &&
+                    (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin')
+                      ? 'e.g. Greenfields Owner'
+                      : 'e.g. Martha Mukasa'
+                  }
                 />
               </View>
 
@@ -1307,6 +1458,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cardTitle: { fontFamily: FARMDB_FONTS.bold, color: FARMDB_COLORS.text },
+  adminPill: {
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    borderWidth: 1,
+    borderColor: '#a8d5be',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  adminPillText: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.accent,
+  },
   subText: { fontFamily: FARMDB_FONTS.regular, color: FARMDB_COLORS.textMuted },
   statusBadge: {
     fontFamily: FARMDB_FONTS.bold,
