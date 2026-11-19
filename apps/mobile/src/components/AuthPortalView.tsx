@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -16,6 +16,7 @@ import {
   formatAccountRoleLabel,
   formatAccountStatusLabel,
   formatAccountTierLabel,
+  getDefaultPermissionsForRole,
   isAdminAccount,
   type FarmAccount,
   type FarmAccountAvatar,
@@ -23,13 +24,12 @@ import {
 } from '@farmdb/core';
 import {
   useActiveFarmAccount,
-  useCreateFarmAccount,
   useFarmAccountList,
   useFarmSettings,
   useRecoverAdminFromCloud,
+  useSignUpFarmAccount,
   useSwitchFarmAccount,
   useTriggerCloudSync,
-  useUpdateFarmAccount,
   useUpdateFarmSettings,
 } from '@farmdb/db';
 import { MOBILE_APP_ICONS } from '../assets/icons';
@@ -62,22 +62,31 @@ export function AuthPortalView({
   const accounts = accountsQuery.data ?? [];
 
   const switchMut = useSwitchFarmAccount();
-  const createAccountMut = useCreateFarmAccount();
+  const signUpAccountMut = useSignUpFarmAccount();
   const recoverAdminMut = useRecoverAdminFromCloud();
   const syncMut = useTriggerCloudSync();
   const updateSettingsMut = useUpdateFarmSettings();
-  const updateAccountMut = useUpdateFarmAccount();
 
   const isPendingGate = activeAccount?.status === 'pending';
 
   const [tab, setTab] = useState<MobilePortalTab>('signin');
+  const didInitTabRef = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Sign-In state
   const [selectedLoginId, setSelectedLoginId] = useState<string>(
-    () => accounts[0]?.id ?? 'owner-admin'
+    () => accounts[0]?.id ?? ''
   );
+
+  useEffect(() => {
+    if (!accountsQuery.isLoading && !didInitTabRef.current) {
+      didInitTabRef.current = true;
+      if (accounts.length === 0) {
+        setTab('signup');
+      }
+    }
+  }, [accountsQuery.isLoading, accounts.length]);
   const [loginPin, setLoginPin] = useState('');
   const [showCloudRecovery, setShowCloudRecovery] = useState(false);
   const [recoverCloudKey, setRecoverCloudKey] = useState('');
@@ -158,7 +167,7 @@ export function AuthPortalView({
               ? 'farmerFemale'
               : 'farmer';
 
-        const created = await createAccountMut.mutateAsync({
+        const created = await signUpAccountMut.mutateAsync({
           displayName: sName,
           email: sEmail || null,
           phone: sPhone || null,
@@ -177,16 +186,44 @@ export function AuthPortalView({
         });
         onSuccessEnterApp?.();
       } else {
-        const adminAccount =
-          accounts.find((a) => a.isPrimaryAdmin) ?? accounts[0];
+        const hasPrimaryAdmin = accounts.some((a) => a.isPrimaryAdmin);
+        if (hasPrimaryAdmin && sPin.trim().length < 4) {
+          setErrorMsg(
+            'Please set a Login PIN / passcode (at least 4 characters) for additional Admin accounts.'
+          );
+          return;
+        }
         const hasCloudSetup =
           sSupabaseUrl.trim().length > 0 && sSupabaseAnonKey.trim().length > 0;
         const cleanWorkspace =
           sCloudWorkspace.trim() || 'farmdb-homestead-main';
+        const createdAdmin = await signUpAccountMut.mutateAsync({
+          displayName: sName.trim(),
+          email: sEmail || null,
+          phone: sPhone || null,
+          role: 'admin',
+          relationship: hasPrimaryAdmin
+            ? 'Farm Administrator'
+            : 'Primary Farm Owner',
+          avatarKey: 'farmer',
+          accessCode: sPin || null,
+          supabaseUrl: hasCloudSetup ? sSupabaseUrl.trim() : null,
+          supabaseAnonKey: hasCloudSetup ? sSupabaseAnonKey.trim() : null,
+          cloudWorkspaceId: hasCloudSetup ? cleanWorkspace : null,
+          isPrimaryAdmin: !hasPrimaryAdmin,
+          canManageNetwork: true,
+          canSyncCloud: true,
+          status: 'active',
+          permissions: getDefaultPermissionsForRole('admin'),
+        });
+        await switchMut.mutateAsync({
+          accountId: createdAdmin.id,
+          accessCode: sPin || undefined,
+        });
         if (sFarmName.trim() || hasCloudSetup) {
           await updateSettingsMut.mutateAsync({
             ...(sFarmName.trim() ? { farmName: sFarmName.trim() } : {}),
-            activeAccountId: adminAccount?.id ?? 'owner-admin',
+            activeAccountId: createdAdmin.id,
             ...(hasCloudSetup
               ? {
                   cloudSyncEnabled: true,
@@ -195,24 +232,6 @@ export function AuthPortalView({
                   cloudWorkspaceId: cleanWorkspace,
                 }
               : {}),
-          });
-        }
-        if (adminAccount) {
-          await updateAccountMut.mutateAsync({
-            id: adminAccount.id,
-            input: {
-              displayName: sName.trim() || adminAccount.displayName,
-              email: sEmail || null,
-              phone: sPhone || null,
-              accessCode: sPin || null,
-              ...(hasCloudSetup
-                ? {
-                    supabaseUrl: sSupabaseUrl.trim(),
-                    supabaseAnonKey: sSupabaseAnonKey.trim(),
-                    cloudWorkspaceId: cleanWorkspace,
-                  }
-                : {}),
-            },
           });
         }
         onSuccessEnterApp?.();
@@ -322,7 +341,9 @@ export function AuthPortalView({
               <View style={[styles.heroChip]}>
                 <AppIcon name="databaseLeaf" size={ui.font(13)} />
                 <Text style={[styles.heroChipText, { fontSize: ui.font(11) }]}>
-                  {accounts.length} {accounts.length === 1 ? 'Account' : 'Accounts'} Ready
+                  {accounts.length === 0
+                    ? 'No Accounts Yet'
+                    : `${accounts.length} ${accounts.length === 1 ? 'Account' : 'Accounts'} Ready`}
                 </Text>
               </View>
 
@@ -479,84 +500,128 @@ export function AuthPortalView({
               <Text style={[styles.sectionTitle, { fontSize: ui.font(15) }]}>
                 Choose Farm Account
               </Text>
-              <View style={{ gap: ui.space(8) }}>
-                {accounts.map((acc: FarmAccount) => {
-                  const isSelected = selectedLoginAccount?.id === acc.id;
-                  return (
-                    <Pressable
-                      key={acc.id}
-                      style={[
-                        styles.accountTile,
-                        isSelected && styles.accountTileSelected,
-                      ]}
-                      onPress={() => {
-                        setSelectedLoginId(acc.id);
-                        setLoginPin('');
-                        setErrorMsg(null);
-                      }}
-                    >
-                      <AppIcon
-                        name={getAvatarIconName(acc.avatarKey)}
-                        size={ui.font(24)}
-                      />
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text
-                          style={[
-                            styles.accountName,
-                            { fontSize: ui.font(14) },
-                          ]}
-                        >
-                          {acc.displayName}
-                        </Text>
-                        <Text
-                          style={[styles.subText, { fontSize: ui.font(11) }]}
-                        >
-                          {formatAccountTierLabel(acc)} ·{' '}
-                          {formatAccountRoleLabel(acc.role)} ·{' '}
-                          {formatAccountStatusLabel(acc.status)}
-                          {!isAdminAccount(acc)
-                            ? acc.canSyncCloud
-                              ? ' · Network DB'
-                              : ' · Local DB'
-                            : ''}
-                        </Text>
-                      </View>
-                      {isSelected ? (
-                        <AppIcon name="checkCircle" size={ui.font(18)} />
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-              </View>
-
-              {selectedLoginAccount &&
-              (!selectedLoginAccount.isPrimaryAdmin ||
-                Boolean(selectedLoginAccount.accessCode)) ? (
-                <View style={styles.fieldGroup}>
-                  <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-                    Access PIN for {selectedLoginAccount.displayName}
+              {accounts.length === 0 ? (
+                <View
+                  style={{
+                    gap: ui.space(8),
+                    padding: ui.space(12),
+                    borderRadius: ui.radius,
+                    backgroundColor: FARMDB_COLORS.surfaceMuted,
+                    borderWidth: 1,
+                    borderColor: FARMDB_COLORS.border,
+                  }}
+                >
+                  <Text style={[styles.subText, { fontSize: ui.font(12) }]}>
+                    No farm accounts exist on this device yet. Create a User
+                    Account or Admin Account to start, or restore an Admin
+                    workspace from Supabase cloud below.
                   </Text>
-                  <TextInput
-                    style={[styles.input, { fontSize: ui.font(14) }]}
-                    secureTextEntry
-                    value={loginPin}
-                    onChangeText={setLoginPin}
-                    placeholder="Enter access PIN..."
-                  />
+                  <Pressable
+                    style={[
+                      styles.submitBtn,
+                      {
+                        minHeight: ui.controlHeight,
+                        paddingHorizontal: ui.space(14),
+                        paddingVertical: ui.space(8),
+                      },
+                    ]}
+                    onPress={() => {
+                      setErrorMsg(null);
+                      setTab('signup');
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.submitBtnText,
+                        { fontSize: ui.font(14), textAlign: 'center' },
+                      ]}
+                    >
+                      Create an Account
+                    </Text>
+                  </Pressable>
                 </View>
-              ) : null}
+              ) : (
+                <>
+                  <View style={{ gap: ui.space(8) }}>
+                    {accounts.map((acc: FarmAccount) => {
+                      const isSelected = selectedLoginAccount?.id === acc.id;
+                      return (
+                        <Pressable
+                          key={acc.id}
+                          style={[
+                            styles.accountTile,
+                            isSelected && styles.accountTileSelected,
+                          ]}
+                          onPress={() => {
+                            setSelectedLoginId(acc.id);
+                            setLoginPin('');
+                            setErrorMsg(null);
+                          }}
+                        >
+                          <AppIcon
+                            name={getAvatarIconName(acc.avatarKey)}
+                            size={ui.font(24)}
+                          />
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text
+                              style={[
+                                styles.accountName,
+                                { fontSize: ui.font(14) },
+                              ]}
+                            >
+                              {acc.displayName}
+                            </Text>
+                            <Text
+                              style={[styles.subText, { fontSize: ui.font(11) }]}
+                            >
+                              {formatAccountTierLabel(acc)} ·{' '}
+                              {formatAccountRoleLabel(acc.role)} ·{' '}
+                              {formatAccountStatusLabel(acc.status)}
+                              {!isAdminAccount(acc)
+                                ? acc.canSyncCloud
+                                  ? ' · Network DB'
+                                  : ' · Local DB'
+                                : ''}
+                            </Text>
+                          </View>
+                          {isSelected ? (
+                            <AppIcon name="checkCircle" size={ui.font(18)} />
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
 
-              <Pressable
-                style={[styles.submitBtn, { minHeight: ui.controlHeight, paddingHorizontal: ui.space(14), paddingVertical: ui.space(8) }]}
-                disabled={!selectedLoginAccount || switchMut.isPending}
-                onPress={() => void handleSignInSubmit()}
-              >
-                <Text style={[styles.submitBtnText, { fontSize: ui.font(14), textAlign: 'center' }]}>
-                  {selectedLoginAccount?.status === 'pending'
-                    ? 'View Pending Status'
-                    : `Sign In as ${selectedLoginAccount?.displayName ?? 'Selected'}`}
-                </Text>
-              </Pressable>
+                  {selectedLoginAccount &&
+                  (!selectedLoginAccount.isPrimaryAdmin ||
+                    Boolean(selectedLoginAccount.accessCode)) ? (
+                    <View style={styles.fieldGroup}>
+                      <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                        Access PIN for {selectedLoginAccount.displayName}
+                      </Text>
+                      <TextInput
+                        style={[styles.input, { fontSize: ui.font(14) }]}
+                        secureTextEntry
+                        value={loginPin}
+                        onChangeText={setLoginPin}
+                        placeholder="Enter access PIN..."
+                      />
+                    </View>
+                  ) : null}
+
+                  <Pressable
+                    style={[styles.submitBtn, { minHeight: ui.controlHeight, paddingHorizontal: ui.space(14), paddingVertical: ui.space(8) }]}
+                    disabled={!selectedLoginAccount || switchMut.isPending}
+                    onPress={() => void handleSignInSubmit()}
+                  >
+                    <Text style={[styles.submitBtnText, { fontSize: ui.font(14), textAlign: 'center' }]}>
+                      {selectedLoginAccount?.status === 'pending'
+                        ? 'View Pending Status'
+                        : `Sign In as ${selectedLoginAccount?.displayName ?? 'Selected'}`}
+                    </Text>
+                  </Pressable>
+                </>
+              )}
 
               <View style={{ borderTopWidth: 1, borderTopColor: FARMDB_COLORS.border, paddingTop: ui.space(10), gap: ui.space(8) }}>
                 <Pressable
@@ -869,7 +934,8 @@ export function AuthPortalView({
               <Pressable
                 style={[styles.submitBtn, { minHeight: ui.controlHeight, paddingHorizontal: ui.space(14), paddingVertical: ui.space(8) }]}
                 disabled={
-                  createAccountMut.isPending ||
+                  signUpAccountMut.isPending ||
+                  switchMut.isPending ||
                   updateSettingsMut.isPending
                 }
                 onPress={() => void handleSignUpSubmit()}
@@ -877,7 +943,7 @@ export function AuthPortalView({
                 <Text style={[styles.submitBtnText, { fontSize: ui.font(14), textAlign: 'center' }]}>
                   {signupMode === 'user_account'
                     ? 'Create User Account & Enter'
-                    : 'Save Admin Account & Enter Farm'}
+                    : 'Create Admin Account & Enter'}
                 </Text>
               </Pressable>
             </View>

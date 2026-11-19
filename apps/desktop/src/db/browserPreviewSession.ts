@@ -1671,7 +1671,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       events.emit(['network'], created.id);
       return created;
     },
-    async getActiveAccount(): Promise<FarmAccount> {
+    async getActiveAccount(): Promise<FarmAccount | null> {
       const admin = await this.ensureAdminAccount();
       const s = await settings.get();
       if (s.activeAccountId === admin.id) return admin;
@@ -1763,6 +1763,16 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       events.emit(['network'], created.id);
       return created;
     },
+    async signUpAccount(input: NewFarmAccountInput): Promise<FarmAccount> {
+      let safeInput = input;
+      if (input.isPrimaryAdmin) {
+        const all = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+        if (all.some((a) => a.isPrimaryAdmin)) {
+          safeInput = { ...input, isPrimaryAdmin: false };
+        }
+      }
+      return this.createAccount(safeInput);
+    },
     async updateAccount(
       id: string,
       input: UpdateFarmAccountInput
@@ -1780,6 +1790,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       }
       const currentActive = await this.getActiveAccount();
       const preserveExistingAccessCode =
+        currentActive !== null &&
         currentActive.id !== existing.id &&
         Boolean(existing.accessCode && existing.accessCode.trim().length > 0);
       const nextRole: FarmAccountRole = existing.isPrimaryAdmin
@@ -1830,7 +1841,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       };
       rows[idx] = updated;
       writeJson(ACCOUNTS_KEY, rows);
-      if (currentActive.id === updated.id) {
+      if (currentActive?.id === updated.id) {
         await applyPreviewAdminCredsIfEmpty(updated);
       }
       events.emit(['network'], id);
@@ -2211,7 +2222,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
 
       if (!bypassSyncAccountGate) {
         const activeAccount = await this.getActiveAccount();
-        if (!isAdminAccount(activeAccount) && !activeAccount.canSyncCloud) {
+        if (!activeAccount || (!isAdminAccount(activeAccount) && !activeAccount.canSyncCloud)) {
           const msg =
             'User accounts can only sync with a cloud database when connected with an Admin Join Key.';
           const log = addLog('error', 0, 0, msg);
@@ -2304,9 +2315,10 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         const ensuredAdmin = await this.ensureAdminAccount();
         const activeSyncAcc = await this.getActiveAccount();
         if (baseUrl && anonKey) {
-          const targetId = isAdminAccount(activeSyncAcc)
-            ? activeSyncAcc.id
-            : ensuredAdmin.id;
+          const targetId =
+            activeSyncAcc && isAdminAccount(activeSyncAcc)
+              ? activeSyncAcc.id
+              : ensuredAdmin.id;
           const accRows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
           let changedCreds = false;
           const nextAccRows = accRows.map((a) => {

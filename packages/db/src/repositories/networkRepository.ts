@@ -155,17 +155,22 @@ export interface RecoverAdminCloudResult {
   recordsPulled: number;
 }
 
+export interface NetworkRepositoryOptions {
+  autoSeedDefaultAdmin?: boolean;
+}
+
 export interface NetworkRepository {
   listAccounts(filter?: FarmAccountFilter): Promise<FarmAccount[]>;
   listAccountsRaw(): Promise<FarmAccount[]>;
   getAccountById(id: string): Promise<FarmAccount | null>;
   ensureAdminAccount(): Promise<FarmAccount>;
-  getActiveAccount(): Promise<FarmAccount>;
+  getActiveAccount(): Promise<FarmAccount | null>;
   switchActiveAccount(
     accountId: string,
     accessCode?: string
   ): Promise<FarmAccount>;
   createAccount(input: NewFarmAccountInput): Promise<FarmAccount>;
+  signUpAccount(input: NewFarmAccountInput): Promise<FarmAccount>;
   updateAccount(id: string, input: UpdateFarmAccountInput): Promise<FarmAccount>;
   removeAccount(id: string): Promise<boolean>;
 
@@ -197,9 +202,11 @@ export function createNetworkRepository(
   events: DatabaseEventBus,
   settingsRepo: SettingsRepository,
   getBackupBridge: () => NetworkBackupBridge,
-  customFetch?: typeof fetch
+  customFetch?: typeof fetch,
+  options?: NetworkRepositoryOptions
 ): NetworkRepository {
   const resolveFetch = (): typeof fetch => customFetch ?? globalThis.fetch;
+  const autoSeedDefaultAdmin = options?.autoSeedDefaultAdmin !== false;
   let bypassSyncAccountGate = false;
 
   const createSupabaseFetcher = (anonKey: string) => {
@@ -288,6 +295,57 @@ export function createNetworkRepository(
     return mapSyncLogRow(entry as CloudSyncLogRow);
   }
 
+  async function insertValidatedAccount(
+    input: NewFarmAccountInput
+  ): Promise<FarmAccount> {
+    const validation = validateNewFarmAccount(input);
+    if (!validation.ok || !validation.data) {
+      const msg =
+        Object.values(validation.errors).find(Boolean) ??
+        'Invalid farm account data.';
+      throw new NetworkValidationError(
+        validation.errors as ValidationErrors<Record<string, unknown>>,
+        msg
+      );
+    }
+
+    const now = Date.now();
+    const id = validation.data.id || generateId();
+    const isAdminRole =
+      validation.data.isPrimaryAdmin || validation.data.role === 'admin';
+    const record: typeof farmAccounts.$inferInsert = {
+      id,
+      displayName: validation.data.displayName,
+      email: validation.data.email,
+      phone: validation.data.phone,
+      role: validation.data.role,
+      relationship: validation.data.relationship,
+      avatarKey: validation.data.avatarKey,
+      accessCode: validation.data.accessCode,
+      supabaseUrl: isAdminRole ? validation.data.supabaseUrl : null,
+      supabaseAnonKey: isAdminRole ? validation.data.supabaseAnonKey : null,
+      cloudWorkspaceId: isAdminRole ? validation.data.cloudWorkspaceId : null,
+      isPrimaryAdmin: validation.data.isPrimaryAdmin,
+      canManageNetwork: validation.data.canManageNetwork,
+      canSyncCloud: validation.data.canSyncCloud,
+      permissionsJson: JSON.stringify(validation.data.permissions),
+      status: validation.data.status,
+      onboardingCompleted: Boolean(validation.data.onboardingCompleted ?? false),
+      lastSyncedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.insert(farmAccounts).values(record).run();
+    const createdAccount = mapAccountRow(record as FarmAccountRow);
+    const currentSettings = await settingsRepo.get();
+    if (isAdminRole && currentSettings.activeAccountId === createdAccount.id) {
+      await applyAdminCloudCredentialsIfEmpty(createdAccount);
+    }
+    events.emit(['network'], id);
+    return createdAccount;
+  }
+
   return {
     async listAccountsRaw(): Promise<FarmAccount[]> {
       const rows = await db
@@ -298,7 +356,9 @@ export function createNetworkRepository(
     },
 
     async listAccounts(filter?: FarmAccountFilter): Promise<FarmAccount[]> {
-      await this.ensureAdminAccount();
+      if (autoSeedDefaultAdmin) {
+        await this.ensureAdminAccount();
+      }
 
       const conditions: SQL[] = [];
       if (filter?.role && filter.role !== 'all') {
@@ -385,7 +445,28 @@ export function createNetworkRepository(
       return mapAccountRow(adminRow as FarmAccountRow);
     },
 
-    async getActiveAccount(): Promise<FarmAccount> {
+    async getActiveAccount(): Promise<FarmAccount | null> {
+      if (!autoSeedDefaultAdmin) {
+        const currentSettings = await settingsRepo.get();
+        if (currentSettings.activeAccountId) {
+          const found = await this.getAccountById(
+            currentSettings.activeAccountId
+          );
+          if (found && found.status !== 'suspended') {
+            return found;
+          }
+        }
+        const all = await this.listAccountsRaw();
+        const fallback =
+          all.find((acc) => acc.isPrimaryAdmin && acc.status !== 'suspended') ??
+          all.find((acc) => acc.status !== 'suspended') ??
+          null;
+        if (fallback) {
+          await settingsRepo.update({ activeAccountId: fallback.id });
+        }
+        return fallback;
+      }
+
       const admin = await this.ensureAdminAccount();
       const currentSettings = await settingsRepo.get();
       if (currentSettings.activeAccountId === admin.id) {
@@ -403,7 +484,9 @@ export function createNetworkRepository(
       accountId: string,
       accessCode?: string
     ): Promise<FarmAccount> {
-      await this.ensureAdminAccount();
+      if (autoSeedDefaultAdmin) {
+        await this.ensureAdminAccount();
+      }
       const account = await this.getAccountById(accountId);
       if (!account) {
         throw new FarmAccountNotFoundError(accountId);
@@ -447,53 +530,21 @@ export function createNetworkRepository(
     },
 
     async createAccount(input: NewFarmAccountInput): Promise<FarmAccount> {
-      await this.ensureAdminAccount();
-      const validation = validateNewFarmAccount(input);
-      if (!validation.ok || !validation.data) {
-        const msg =
-          Object.values(validation.errors).find(Boolean) ??
-          'Invalid farm account data.';
-        throw new NetworkValidationError(
-          validation.errors as ValidationErrors<Record<string, unknown>>,
-          msg
-        );
+      if (autoSeedDefaultAdmin) {
+        await this.ensureAdminAccount();
       }
+      return insertValidatedAccount(input);
+    },
 
-      const now = Date.now();
-      const id = validation.data.id || generateId();
-      const isAdminRole =
-        validation.data.isPrimaryAdmin || validation.data.role === 'admin';
-      const record: typeof farmAccounts.$inferInsert = {
-        id,
-        displayName: validation.data.displayName,
-        email: validation.data.email,
-        phone: validation.data.phone,
-        role: validation.data.role,
-        relationship: validation.data.relationship,
-        avatarKey: validation.data.avatarKey,
-        accessCode: validation.data.accessCode,
-        supabaseUrl: isAdminRole ? validation.data.supabaseUrl : null,
-        supabaseAnonKey: isAdminRole ? validation.data.supabaseAnonKey : null,
-        cloudWorkspaceId: isAdminRole ? validation.data.cloudWorkspaceId : null,
-        isPrimaryAdmin: validation.data.isPrimaryAdmin,
-        canManageNetwork: validation.data.canManageNetwork,
-        canSyncCloud: validation.data.canSyncCloud,
-        permissionsJson: JSON.stringify(validation.data.permissions),
-        status: validation.data.status,
-        onboardingCompleted: Boolean(validation.data.onboardingCompleted ?? false),
-        lastSyncedAt: null,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      await db.insert(farmAccounts).values(record).run();
-      const createdAccount = mapAccountRow(record as FarmAccountRow);
-      const currentSettings = await settingsRepo.get();
-      if (isAdminRole && currentSettings.activeAccountId === createdAccount.id) {
-        await applyAdminCloudCredentialsIfEmpty(createdAccount);
+    async signUpAccount(input: NewFarmAccountInput): Promise<FarmAccount> {
+      let safeInput = input;
+      if (input.isPrimaryAdmin) {
+        const all = await this.listAccountsRaw();
+        if (all.some((acc) => acc.isPrimaryAdmin)) {
+          safeInput = { ...input, isPrimaryAdmin: false };
+        }
       }
-      events.emit(['network'], id);
-      return createdAccount;
+      return insertValidatedAccount(safeInput);
     },
 
     async updateAccount(
@@ -518,6 +569,7 @@ export function createNetworkRepository(
 
       const currentActive = await this.getActiveAccount();
       const preserveExistingAccessCode =
+        currentActive !== null &&
         currentActive.id !== existing.id &&
         Boolean(existing.accessCode && existing.accessCode.trim().length > 0);
 
@@ -605,7 +657,7 @@ export function createNetworkRepository(
       if (!updated) {
         throw new FarmAccountNotFoundError(id);
       }
-      if (currentActive.id === updated.id) {
+      if (currentActive?.id === updated.id) {
         await applyAdminCloudCredentialsIfEmpty(updated);
       }
       return updated;
@@ -622,13 +674,18 @@ export function createNetworkRepository(
       }
 
       const currentSettings = await settingsRepo.get();
+      await db.delete(farmAccounts).where(eq(farmAccounts.id, id)).run();
       if (currentSettings.activeAccountId === id) {
+        const remaining = await this.listAccountsRaw();
+        const nextActive =
+          remaining.find((acc) => acc.isPrimaryAdmin && acc.status !== 'suspended') ??
+          remaining.find((acc) => acc.status !== 'suspended') ??
+          null;
         await settingsRepo.update({
-          activeAccountId: DEFAULT_ADMIN_ACCOUNT.id,
+          activeAccountId:
+            nextActive?.id ?? (autoSeedDefaultAdmin ? DEFAULT_ADMIN_ACCOUNT.id : ''),
         });
       }
-
-      await db.delete(farmAccounts).where(eq(farmAccounts.id, id)).run();
       events.emit(['network'], id);
       return true;
     },
@@ -716,7 +773,9 @@ export function createNetworkRepository(
         }
       }
 
-      await this.ensureAdminAccount();
+      if (autoSeedDefaultAdmin) {
+        await this.ensureAdminAccount();
+      }
 
       let targetAccount: FarmAccount;
       if (input.accountId) {
@@ -891,9 +950,17 @@ export function createNetworkRepository(
         remoteSnapshot,
         { preserveLocalSession: true }
       );
-      const ensuredAdmin =
+      let ensuredAdmin =
         (await this.getAccountById(targetAdminId)) ??
-        (await this.ensureAdminAccount());
+        (await this.listAccountsRaw()).find((acc) => isAdminAccount(acc)) ??
+        null;
+      if (!ensuredAdmin) {
+        if (autoSeedDefaultAdmin) {
+          ensuredAdmin = await this.ensureAdminAccount();
+        } else {
+          throw new Error('No Admin account was found in this cloud workspace.');
+        }
+      }
 
       const now = Date.now();
       await db
@@ -999,7 +1066,7 @@ export function createNetworkRepository(
     ): Promise<CloudSyncResult> {
       if (!bypassSyncAccountGate) {
         const activeAccount = await this.getActiveAccount();
-        if (!isAdminAccount(activeAccount) && !activeAccount.canSyncCloud) {
+        if (!activeAccount || (!isAdminAccount(activeAccount) && !activeAccount.canSyncCloud)) {
           const msg =
             'User accounts can only sync with a cloud database when connected with an Admin Join Key.';
           const log = await appendSyncLog({
@@ -1138,9 +1205,13 @@ export function createNetworkRepository(
         }
 
         const backupBridge = getBackupBridge();
-        const ensuredAdmin = await this.ensureAdminAccount();
+        const ensuredAdmin = autoSeedDefaultAdmin
+          ? await this.ensureAdminAccount()
+          : (await this.listAccountsRaw()).find((acc) => acc.isPrimaryAdmin) ??
+            null;
         const activeSyncAcc = await this.getActiveAccount();
         if (
+          activeSyncAcc &&
           isAdminAccount(activeSyncAcc) &&
           baseUrl &&
           anonKey &&
@@ -1264,7 +1335,9 @@ export function createNetworkRepository(
           await backupBridge.restoreSnapshot(mergeRes.merged, {
             preserveLocalSession: true,
           });
-          await this.ensureAdminAccount();
+          if (autoSeedDefaultAdmin) {
+            await this.ensureAdminAccount();
+          }
         } else if (direction === 'bidirectional') {
           if (pulledSnapshot) {
             const mergeRes = mergeFarmSnapshots(
@@ -1282,7 +1355,9 @@ export function createNetworkRepository(
             await backupBridge.restoreSnapshot(mergeRes.merged, {
               preserveLocalSession: true,
             });
-            await this.ensureAdminAccount();
+            if (autoSeedDefaultAdmin) {
+              await this.ensureAdminAccount();
+            }
           } else {
             recordsPushed = countSnapshotRecords(finalSnapshotToPush);
           }

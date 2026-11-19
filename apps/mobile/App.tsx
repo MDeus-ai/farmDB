@@ -179,7 +179,8 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
   );
 
   const isPendingGate = activeAccount?.status === 'pending';
-  const showAuthPortal = authPortalOpen || isSignedOut || isPendingGate;
+  const showAuthPortal =
+    authPortalOpen || isSignedOut || isPendingGate || !activeAccount;
   const showOnboarding =
     !showAuthPortal &&
     !isSignedOut &&
@@ -356,7 +357,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[styles.brand, { fontSize: ui.font(15) }]} numberOfLines={1}>
-                {activeAccount?.displayName ?? 'Farm Owner (Admin)'}
+                {activeAccount?.displayName ?? 'farmDB Account'}
               </Text>
               <Text
                 style={[styles.subBrand, { fontSize: ui.font(11) }]}
@@ -877,6 +878,19 @@ export default function App() {
       try {
         const controller = await createExpoSqliteController('farmdb.db');
         await runMigrations(controller.driver);
+        // Remove untouched legacy auto-seeded admin row so Mobile users pick their own accounts
+        await controller.driver.execute(
+          `DELETE FROM farm_accounts
+           WHERE id = 'owner-admin'
+             AND display_name = 'Farm Owner (Administrator)'
+             AND created_at = 1
+             AND updated_at = 1
+             AND access_code IS NULL
+             AND email IS NULL
+             AND phone IS NULL
+             AND supabase_url IS NULL
+             AND onboarding_completed = 0;`
+        );
         if (!cancelled) {
           setSqlController(controller);
         }
@@ -931,7 +945,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <FarmDbProvider driver={sqlController.driver}>
+      <FarmDbProvider driver={sqlController.driver} autoSeedDefaultAdmin={false}>
         <UiScaleProvider>
           <AnimalQuickPreviewProvider>
             <MobileShell sqlController={sqlController} />

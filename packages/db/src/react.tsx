@@ -163,7 +163,14 @@ export function createOfflineQueryClient(): QueryClient {
   });
 }
 
-export function createFarmDbSession(driver: SqlDriver): FarmDbContextValue {
+export interface FarmDbSessionOptions {
+  autoSeedDefaultAdmin?: boolean;
+}
+
+export function createFarmDbSession(
+  driver: SqlDriver,
+  options?: FarmDbSessionOptions
+): FarmDbContextValue {
   const db = createDrizzleClient(driver);
   const events = new DatabaseEventBus();
   const livestock = createLivestockRepository(db, events);
@@ -180,7 +187,14 @@ export function createFarmDbSession(driver: SqlDriver): FarmDbContextValue {
   const alerts = createAlertsRepository(db, events);
   const hr = createHrRepository(db, events, financial);
   let backup!: BackupRepository;
-  const network = createNetworkRepository(db, events, settings, () => backup);
+  const network = createNetworkRepository(
+    db,
+    events,
+    settings,
+    () => backup,
+    undefined,
+    { autoSeedDefaultAdmin: options?.autoSeedDefaultAdmin }
+  );
   backup = createBackupRepository(db, events, {
     livestock,
     production,
@@ -215,6 +229,7 @@ export interface FarmDbProviderProps {
   driver?: SqlDriver;
   session?: FarmDbContextValue;
   queryClient?: QueryClient;
+  autoSeedDefaultAdmin?: boolean;
   children: React.ReactNode;
 }
 
@@ -222,6 +237,7 @@ export function FarmDbProvider({
   driver,
   session: externalSession,
   queryClient: externalQueryClient,
+  autoSeedDefaultAdmin,
   children,
 }: FarmDbProviderProps) {
   const queryClient = useMemo(
@@ -236,8 +252,8 @@ export function FarmDbProvider({
     if (!driver) {
       throw new Error('FarmDbProvider requires either `driver` or `session`.');
     }
-    return createFarmDbSession(driver);
-  }, [driver, externalSession]);
+    return createFarmDbSession(driver, { autoSeedDefaultAdmin });
+  }, [driver, externalSession, autoSeedDefaultAdmin]);
 
   useEffect(() => {
     const detach = attachQueryInvalidation(session.events, queryClient);
@@ -761,7 +777,7 @@ export function useFarmAccountList(filter?: FarmAccountFilter) {
 
 export function useActiveFarmAccount() {
   const { network } = useFarmDb();
-  return useQuery<FarmAccount>({
+  return useQuery<FarmAccount | null>({
     queryKey: FARMDB_QUERY_KEYS.activeAccount(),
     queryFn: () => network.getActiveAccount(),
   });
@@ -773,7 +789,7 @@ export interface ModulePermissionsState {
   canEdit: boolean;
   canDelete: boolean;
   isAdmin: boolean;
-  activeAccount: FarmAccount | undefined;
+  activeAccount: FarmAccount | null | undefined;
 }
 
 export function useModulePermissions(
@@ -807,6 +823,13 @@ export function useCreateFarmAccount() {
   const { network } = useFarmDb();
   return useMutation<FarmAccount, Error, NewFarmAccountInput>({
     mutationFn: (input) => network.createAccount(input),
+  });
+}
+
+export function useSignUpFarmAccount() {
+  const { network } = useFarmDb();
+  return useMutation<FarmAccount, Error, NewFarmAccountInput>({
+    mutationFn: (input) => network.signUpAccount(input),
   });
 }
 

@@ -231,6 +231,7 @@ export function wrapSessionWithRbac(
       await assertNetworkAdmin('create farm accounts');
       return raw.network.createAccount(input);
     },
+    signUpAccount: raw.network.signUpAccount,
     async updateAccount(id, input) {
       const actor = await getActiveActor();
       if (actor && !isNetworkManager(actor)) {

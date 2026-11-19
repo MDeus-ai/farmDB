@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildStandardUserPermissions,
+  getDefaultPermissionsForRole,
+} from '@farmdb/core';
+import {
   convertQuestionPlaceholdersToDollar,
   createFarmDbSession,
   extractProjectedColumns,
@@ -534,7 +538,7 @@ describe('@farmdb/db migrations and repositories', () => {
       },
     });
     expect(joinRes.account.status).toBe('pending');
-    expect((await session.network.getActiveAccount()).id).toBe(joinRes.account.id);
+    expect((await session.network.getActiveAccount())?.id).toBe(joinRes.account.id);
 
     // Pending account cannot self-approve or manage network accounts
     await expect(
@@ -777,7 +781,7 @@ describe('@farmdb/db migrations and repositories', () => {
       expect(syncedSettings.farmName).toBe('Cloud Synced Farm');
       expect(syncedSettings.currencySymbol).toBe('KES');
       expect(syncedSettings.supabaseUrl).toBe('https://farmdb-test.supabase.co');
-      expect((await session.network.getActiveAccount()).id).toBe('owner-admin');
+      expect((await session.network.getActiveAccount())?.id).toBe('owner-admin');
       const logs = await session.network.listSyncLogs(10);
       expect(logs[0]?.status).toBe('success');
       expect(logs.some((l) => l.id === 'log-cloud-1')).toBe(true);
@@ -839,6 +843,96 @@ describe('@farmdb/db migrations and repositories', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+
+    raw.close();
+  });
+
+  it('does not auto-seed default admin on Mobile (autoSeedDefaultAdmin: false) and supports self sign-up', async () => {
+    const { driver, raw } = createNodeSqliteDriver(':memory:');
+    await runMigrations(driver);
+    const session = createFarmDbSession(driver, { autoSeedDefaultAdmin: false });
+
+    // Fresh DB has zero accounts and no active account
+    expect(await session.network.listAccounts()).toEqual([]);
+    expect(await session.network.getActiveAccount()).toBeNull();
+
+    // User creates a standalone User Account -> no owner-admin appears
+    const userOne = await session.network.signUpAccount({
+      displayName: 'Sarah Namono',
+      role: 'family_member',
+      accessCode: '1234',
+      avatarKey: 'farmerFemale',
+      isPrimaryAdmin: false,
+      canManageNetwork: false,
+      canSyncCloud: false,
+      status: 'active',
+      permissions: buildStandardUserPermissions(),
+    });
+    await session.network.switchActiveAccount(userOne.id, '1234');
+
+    const afterUserList = await session.network.listAccounts();
+    expect(afterUserList.map((a) => a.id)).toEqual([userOne.id]);
+    expect(afterUserList.some((a) => a.id === 'owner-admin')).toBe(false);
+    expect((await session.network.getActiveAccount())?.id).toBe(userOne.id);
+
+    // Self sign-up of another User Account or Admin Account works even while a non-admin User is active
+    const userTwo = await session.network.signUpAccount({
+      displayName: 'Grace Helper',
+      role: 'staff_viewer',
+      accessCode: '2345',
+      avatarKey: 'farmer',
+      isPrimaryAdmin: false,
+      canManageNetwork: false,
+      canSyncCloud: false,
+      status: 'active',
+      permissions: buildStandardUserPermissions(),
+    });
+    expect(
+      (await session.network.listAccounts()).some((a) => a.id === 'owner-admin')
+    ).toBe(false);
+
+    const adminOne = await session.network.signUpAccount({
+      displayName: 'Deus Owner',
+      role: 'admin',
+      accessCode: '9999',
+      avatarKey: 'farmer',
+      isPrimaryAdmin: true,
+      canManageNetwork: true,
+      canSyncCloud: true,
+      status: 'active',
+      permissions: getDefaultPermissionsForRole('admin'),
+    });
+    await session.network.switchActiveAccount(adminOne.id, '9999');
+    expect((await session.network.getActiveAccount())?.id).toBe(adminOne.id);
+
+    // Deleting a non-primary user account does not fabricate 'owner-admin'
+    await session.network.removeAccount(userTwo.id);
+    const remainingIds = (await session.network.listAccounts()).map((a) => a.id);
+    expect(remainingIds).not.toContain('owner-admin');
+    expect(remainingIds).toEqual(expect.arrayContaining([userOne.id, adminOne.id]));
+
+    // Removing the only removable account when no primary admin exists falls back to active null without seeding owner-admin
+    const { driver: driverOnlyUser, raw: rawOnlyUser } = createNodeSqliteDriver(':memory:');
+    await runMigrations(driverOnlyUser);
+    const sessionOnlyUser = createFarmDbSession(driverOnlyUser, {
+      autoSeedDefaultAdmin: false,
+    });
+    const soleDelegate = await sessionOnlyUser.network.signUpAccount({
+      displayName: 'Solo Delegate',
+      role: 'family_member',
+      accessCode: '4444',
+      avatarKey: 'farmer',
+      isPrimaryAdmin: false,
+      canManageNetwork: true,
+      canSyncCloud: false,
+      status: 'active',
+      permissions: buildStandardUserPermissions(),
+    });
+    await sessionOnlyUser.network.switchActiveAccount(soleDelegate.id, '4444');
+    await sessionOnlyUser.network.removeAccount(soleDelegate.id);
+    expect(await sessionOnlyUser.network.listAccounts()).toEqual([]);
+    expect(await sessionOnlyUser.network.getActiveAccount()).toBeNull();
+    rawOnlyUser.close();
 
     raw.close();
   });

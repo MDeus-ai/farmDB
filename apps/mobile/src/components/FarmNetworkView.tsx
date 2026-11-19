@@ -366,7 +366,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               style={[styles.heroSub, { fontSize: ui.font(12) }]}
               numberOfLines={2}
             >
-              Active: {activeAccount?.displayName ?? 'Farm Owner (Admin)'}
+              Active: {activeAccount?.displayName ?? 'No Active Account'}
             </Text>
           </View>
         </View>

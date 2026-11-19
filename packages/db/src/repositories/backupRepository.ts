@@ -167,7 +167,9 @@ export function createBackupRepository(
           localSettings.activeAccountId
         )
           ? localSettings.activeAccountId
-          : 'owner-admin';
+          : snapshot.farmAccounts?.find((a) => a.isPrimaryAdmin)?.id ??
+            snapshot.farmAccounts?.[0]?.id ??
+            'owner-admin';
       }
 
       const validated = validateFarmSettings(rawMergedSettings);
