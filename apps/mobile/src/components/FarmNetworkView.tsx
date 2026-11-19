@@ -302,14 +302,24 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   }
 
   async function handleDelete(acc: FarmAccount) {
-    if (settings.confirmBeforeDelete && confirmDeleteId !== acc.id) {
+    const mustConfirm =
+      settings.confirmBeforeDelete ||
+      acc.id === activeAccount?.id ||
+      acc.isPrimaryAdmin ||
+      acc.role === 'admin';
+    if (mustConfirm && confirmDeleteId !== acc.id) {
       setConfirmDeleteId(acc.id);
       return;
     }
     setConfirmDeleteId(null);
+    const deletingSelf = activeAccount?.id === acc.id;
     try {
       await deleteMut.mutateAsync(acc.id);
-      setNotice(`Removed ${acc.displayName}.`);
+      if (deletingSelf) {
+        onSignOut?.();
+      } else {
+        setNotice(`Deleted account ${acc.displayName}.`);
+      }
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Cannot delete account.');
     }
@@ -704,20 +714,45 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                     </Text>
                   </Pressable>
                 ) : null}
-                {isAdminOrManager && !acc.isPrimaryAdmin ? (
-                  <Pressable
-                    style={styles.smallDeleteBtn}
-                    onPress={() => void handleDelete(acc)}
-                  >
-                    <AppIcon name="trash" size={ui.font(13)} />
-                    {confirmDeleteId === acc.id ? (
+                {isAdminOrManager || isCurrent ? (
+                  confirmDeleteId === acc.id ? (
+                    <>
+                      <Pressable
+                        style={[styles.smallDeleteBtn, { paddingHorizontal: ui.space(12) }]}
+                        disabled={deleteMut.isPending}
+                        onPress={() => void handleDelete(acc)}
+                      >
+                        <AppIcon name="trash" size={ui.font(13)} />
+                        <Text
+                          style={[styles.smallDeleteText, { fontSize: ui.font(11) }]}
+                        >
+                          Confirm Delete
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.smallEditBtn, { paddingHorizontal: ui.space(12) }]}
+                        onPress={() => setConfirmDeleteId(null)}
+                      >
+                        <Text
+                          style={[styles.smallEditBtnText, { fontSize: ui.font(11) }]}
+                        >
+                          Cancel
+                        </Text>
+                      </Pressable>
+                    </>
+                  ) : (
+                    <Pressable
+                      style={[styles.smallDeleteBtn, { paddingHorizontal: ui.space(12) }]}
+                      onPress={() => void handleDelete(acc)}
+                    >
+                      <AppIcon name="trash" size={ui.font(13)} />
                       <Text
                         style={[styles.smallDeleteText, { fontSize: ui.font(11) }]}
                       >
-                        Confirm
+                        {!isAdminOrManager && isCurrent ? 'Delete My Account' : 'Delete'}
                       </Text>
-                    ) : null}
-                  </Pressable>
+                    </Pressable>
+                  )
                 ) : null}
               </View>
             </View>

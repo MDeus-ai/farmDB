@@ -1,13 +1,14 @@
-export const FARMDB_APP_VERSION = '1.5.0';
+export const FARMDB_APP_VERSION = '1.5.2';
 export const FARMDB_GITHUB_REPO = 'MDeus-ai/farmDB';
 export const FARMDB_GITHUB_LATEST_RELEASE_API = `https://api.github.com/repos/${FARMDB_GITHUB_REPO}/releases/latest`;
 export const FARMDB_GITHUB_RELEASES_PAGE = `https://github.com/${FARMDB_GITHUB_REPO}/releases`;
 
 export const CURRENT_RELEASE_HIGHLIGHTS: readonly string[] = [
+  'Delete any Admin or User account cleanly from Farm Network or the Sign-In Portal with confirmation and PIN safety.',
   'Accounts stay strictly user-chosen with zero auto-created default Admin profile, plus custom Farm Name with Admin tag.',
-  'Android keyboards automatically keep lower form fields visible above the keyboard without obscuring inputs.',
-  'Phone numbers and email addresses across Staff, Ownerships, and Farm Network open calls or email directly on tap.',
-  'Mobile First-Time Setup previews Font Size, UI Element Size, and Compact Icon UI in real time across every setup page.',
+  'Accurate installed version detection clears update banners immediately once updates are installed.',
+  'Android keyboards keep lower form fields visible above the keyboard, with tappable phone and email contact links.',
+  'Mobile First-Time Setup previews Font Size, UI Element Size, and Compact Icon UI in real time.',
   'Refined Mobile Large & X-Large UI layouts across Settings, Native SQLite Protection header, intervals, and tabs.',
   'Automatic in-app and OS update notifications with version numbers, structured lists of fixes, and one-tap installs.',
 ];

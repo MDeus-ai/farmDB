@@ -252,9 +252,15 @@ export function wrapSessionWithRbac(
       return raw.network.updateAccount(id, input);
     },
     async removeAccount(id) {
-      await assertNetworkAdmin('delete farm accounts');
+      const actor = await getActiveActor();
+      if (actor && !isNetworkManager(actor) && actor.id !== id) {
+        throw new Error(
+          `Permission denied: ${actor.displayName} does not have administrator permission to delete another member's account.`
+        );
+      }
       return raw.network.removeAccount(id);
     },
+    removeAccountWithCredentials: raw.network.removeAccountWithCredentials,
     async rotateNetworkJoinKey() {
       await assertNetworkAdmin('rotate Farm Network join keys');
       return raw.network.rotateNetworkJoinKey();

@@ -330,14 +330,25 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   }
 
   async function handleDeleteAccount(acc: FarmAccount) {
-    if (settings.confirmBeforeDelete && confirmDeleteId !== acc.id) {
+    const mustConfirm =
+      settings.confirmBeforeDelete ||
+      acc.id === activeAccount?.id ||
+      acc.isPrimaryAdmin ||
+      acc.role === 'admin';
+    if (mustConfirm && confirmDeleteId !== acc.id) {
       setConfirmDeleteId(acc.id);
       return;
     }
     setConfirmDeleteId(null);
+    setErrorNotice(null);
+    const deletingSelf = activeAccount?.id === acc.id;
     try {
       await deleteAccountMut.mutateAsync(acc.id);
-      setStatusNotice(`Removed ${acc.displayName} from Farm Network.`);
+      if (deletingSelf) {
+        onSignOut?.();
+      } else {
+        setStatusNotice(`Deleted account ${acc.displayName}.`);
+      }
     } catch (err) {
       setErrorNotice(
         err instanceof Error ? err.message : 'Cannot remove account.'
@@ -725,16 +736,26 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                       {acc.isPrimaryAdmin ? 'Edit Profile' : 'Edit Privileges'}
                     </button>
                   )}
-                  {isAdminOrManager &&
-                    !acc.isPrimaryAdmin &&
+                  {(isAdminOrManager || isCurrent) &&
                     (confirmDeleteId === acc.id ? (
-                      <button
-                        type="button"
-                        className="btn btn-danger btn-sm"
-                        onClick={() => void handleDeleteAccount(acc)}
-                      >
-                        Confirm
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          disabled={deleteAccountMut.isPending}
+                          onClick={() => void handleDeleteAccount(acc)}
+                        >
+                          <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                          Confirm Delete
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setConfirmDeleteId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </>
                     ) : (
                       <button
                         type="button"
@@ -742,6 +763,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                         onClick={() => void handleDeleteAccount(acc)}
                       >
                         <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                        {!isAdminOrManager && isCurrent ? 'Delete My Account' : 'Delete'}
                       </button>
                     ))}
                 </div>

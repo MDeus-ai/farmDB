@@ -14,6 +14,7 @@ import {
 } from '@farmdb/core';
 import {
   useActiveFarmAccount,
+  useDeleteFarmAccountWithCredentials,
   useFarmAccountList,
   useFarmSettings,
   useRecoverAdminFromCloud,
@@ -63,6 +64,7 @@ export function AuthPortalView({
 
   const switchMut = useSwitchFarmAccount();
   const signUpAccountMut = useSignUpFarmAccount();
+  const deleteWithCredsMut = useDeleteFarmAccountWithCredentials();
   const recoverAdminMut = useRecoverAdminFromCloud();
   const syncMut = useTriggerCloudSync();
   const updateSettingsMut = useUpdateFarmSettings();
@@ -73,6 +75,7 @@ export function AuthPortalView({
   const didInitTabRef = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
 
   // Sign-In state
   const [selectedLoginId, setSelectedLoginId] = useState<string>(
@@ -142,6 +145,27 @@ export function AuthPortalView({
     } catch (err) {
       setErrorMsg(
         err instanceof Error ? err.message : 'Could not sign into account.'
+      );
+    }
+  }
+
+  async function handleDeletePortalAccount() {
+    if (!selectedLoginAccount) return;
+    setErrorMsg(null);
+    setNotice(null);
+    try {
+      const deletedName = selectedLoginAccount.displayName;
+      await deleteWithCredsMut.mutateAsync({
+        accountId: selectedLoginAccount.id,
+        accessCode: loginPin,
+      });
+      setLoginPin('');
+      setConfirmDeleteAccountId(null);
+      setSelectedLoginId('');
+      setNotice(`Deleted account ${deletedName}.`);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Unable to delete account.'
       );
     }
   }
@@ -463,6 +487,7 @@ export function AuthPortalView({
           activeId={tab}
           onChange={(nextTab) => {
             setErrorMsg(null);
+            setConfirmDeleteAccountId(null);
             setTab(nextTab);
           }}
           tabs={[
@@ -523,6 +548,7 @@ export function AuthPortalView({
                         onClick={() => {
                           setSelectedLoginId(acc.id);
                           setLoginPin('');
+                          setConfirmDeleteAccountId(null);
                           setErrorMsg(null);
                         }}
                       >
@@ -577,6 +603,64 @@ export function AuthPortalView({
                     ? 'View Pending Status'
                     : `Sign In as ${selectedLoginAccount?.displayName ?? 'Selected Account'}`}
                 </button>
+
+                {selectedLoginAccount &&
+                  (confirmDeleteAccountId === selectedLoginAccount.id ? (
+                    <div
+                      style={{
+                        padding: 12,
+                        borderRadius: 10,
+                        border: '1px solid #f4c7c3',
+                        background: '#fdeceb',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                      }}
+                    >
+                      <strong style={{ fontSize: '0.86rem', color: '#b42318' }}>
+                        Delete {selectedLoginAccount.displayName} (
+                        {formatAccountTierLabel(selectedLoginAccount)})?
+                      </strong>
+                      <p style={{ margin: 0, fontSize: '0.8rem', color: '#7a271a' }}>
+                        Local livestock, yields, medical, and financial records stay safe in SQLite.
+                        {selectedLoginAccount.accessCode?.trim() && !loginPin.trim()
+                          ? ' Enter this account\u2019s passcode / PIN above to confirm deletion.'
+                          : ''}
+                      </p>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={deleteWithCredsMut.isPending}
+                          onClick={() => setConfirmDeleteAccountId(null)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          disabled={deleteWithCredsMut.isPending}
+                          onClick={() => void handleDeletePortalAccount()}
+                        >
+                          <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                          {deleteWithCredsMut.isPending ? 'Deleting...' : 'Confirm Delete'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-sm"
+                      style={{ alignSelf: 'flex-start' }}
+                      onClick={() => {
+                        setErrorMsg(null);
+                        setConfirmDeleteAccountId(selectedLoginAccount.id);
+                      }}
+                    >
+                      <img src={APP_ICONS.delete} alt="" className="app-icon-sm" />
+                      Delete Selected Account
+                    </button>
+                  ))}
               </>
             )}
 

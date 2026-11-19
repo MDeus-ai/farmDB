@@ -106,6 +106,36 @@ jobs:
 
       - run: npm ci
 
+      - name: Sync release version from git tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".Trim()
+          $clean = $tag -replace '^(?i)farmdb[-_]?', '' -replace '^(?i)v', ''
+          $parts = @()
+          if ($clean -match '(\d+(?:\.\d+)*)') {
+            $parts = $Matches[1].Split('.') | Select-Object -First 3
+          }
+          while ($parts.Count -lt 3) { $parts += '0' }
+          $ver = ($parts -join '.')
+          if ($ver -ne '0.0.0') {
+            $updatesTs = Get-Content "packages/core/src/updates.ts" -Raw
+            $updatesTs = $updatesTs -replace "export const FARMDB_APP_VERSION = '[^']+';", "export const FARMDB_APP_VERSION = '$ver';"
+            Set-Content "packages/core/src/updates.ts" $updatesTs -NoNewline
+
+            $tauriConf = Get-Content "apps/desktop/src-tauri/tauri.conf.json" | ConvertFrom-Json
+            $tauriConf.version = $ver
+            $tauriConf | ConvertTo-Json -Depth 16 | Set-Content "apps/desktop/src-tauri/tauri.conf.json"
+
+            $cargo = Get-Content "apps/desktop/src-tauri/Cargo.toml" -Raw
+            $cargo = $cargo -replace '(?m)^version = "[^"]+"', "version = `"$ver`""
+            Set-Content "apps/desktop/src-tauri/Cargo.toml" $cargo -NoNewline
+
+            $pkg = Get-Content "apps/desktop/package.json" | ConvertFrom-Json
+            $pkg.version = $ver
+            $pkg | ConvertTo-Json -Depth 16 | Set-Content "apps/desktop/package.json"
+          }
+
       - name: Build Tauri Windows release & upload updater artifacts
         uses: tauri-apps/tauri-action@v0
         env:
@@ -144,6 +174,26 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      - name: Stamp FARMDB_APP_VERSION from git tag (preserve app.json OTA version)
+        if: steps.check_token.outputs.configured == 'true' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const raw = (process.env.GITHUB_REF_NAME || "").trim().replace(/^farmdb[-_]?/i, "").replace(/^v/i, "");
+            const m = raw.match(/(\d+(?:\.\d+)*)/);
+            if (!m) process.exit(0);
+            const parts = m[1].split(".").slice(0, 3);
+            while (parts.length < 3) parts.push("0");
+            const ver = parts.join(".");
+            if (ver === "0.0.0") process.exit(0);
+            const file = "packages/core/src/updates.ts";
+            const src = fs.readFileSync(file, "utf8").replace(/export const FARMDB_APP_VERSION = \x27[^\x27]+\x27;/, `export const FARMDB_APP_VERSION = \x27${ver}\x27;`);
+            fs.writeFileSync(file, src, "utf8");
+          '
 
       - if: steps.check_token.outputs.configured == 'true'
         run: npm ci

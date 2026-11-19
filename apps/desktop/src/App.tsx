@@ -38,6 +38,7 @@ import { convertLocalImageUriToOptimizedDataUrl } from './services/imageStorage'
 import { dispatchDesktopNotification } from './services/notifications';
 import {
   checkDesktopUpdate,
+  getDesktopCurrentVersion,
   type DesktopUpdateController,
   type DesktopUpdateFeedback,
   type DesktopUpdateProgress,
@@ -100,6 +101,7 @@ function DesktopShell({
   }
   const [dueBanners, setDueBanners] = useState<AlertNotificationPayload[]>([]);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const [currentAppVersion, setCurrentAppVersion] = useState(FARMDB_APP_VERSION);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
   const [updateProgressPercent, setUpdateProgressPercent] = useState<number | null>(null);
@@ -128,6 +130,10 @@ function DesktopShell({
   const activeAccount = activeAccountQuery.data;
   const enableNotificationsRef = useRef(settings.enableNotifications);
   enableNotificationsRef.current = settings.enableNotifications;
+
+  useEffect(() => {
+    void getDesktopCurrentVersion().then(setCurrentAppVersion);
+  }, []);
 
   useEffect(() => {
     if (!isRunningInsideTauri()) return;
@@ -206,6 +212,7 @@ function DesktopShell({
     }
     try {
       const outcome = await checkDesktopUpdate();
+      setCurrentAppVersion(outcome.currentVersion);
       setUpdateLastCheckedAt(outcome.checkedAt);
       if (outcome.status === 'available' && outcome.availableUpdate) {
         const nextUpdate = outcome.availableUpdate;
@@ -289,7 +296,7 @@ function DesktopShell({
 
   const desktopUpdateController = useMemo<DesktopUpdateController>(
     () => ({
-      currentVersion: FARMDB_APP_VERSION,
+      currentVersion: currentAppVersion,
       checking: updateChecking,
       installing: updateInstalling,
       progressPercent: updateProgressPercent,
@@ -302,6 +309,7 @@ function DesktopShell({
       onInstallUpdate: handleInstallDesktopUpdate,
     }),
     [
+      currentAppVersion,
       updateChecking,
       updateInstalling,
       updateProgressPercent,
@@ -637,7 +645,7 @@ function DesktopShell({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <strong>farmDB v{availableUpdate.version} Available</strong>
                     <span className="update-version-pill">
-                      v{FARMDB_APP_VERSION} → v{availableUpdate.version}
+                      v{currentAppVersion} → v{availableUpdate.version}
                     </span>
                   </div>
                   <p className="update-notification-summary">
@@ -771,7 +779,7 @@ function DesktopShell({
 
       <UpdateAvailableModal
         visible={updateModalOpen}
-        currentVersion={FARMDB_APP_VERSION}
+        currentVersion={currentAppVersion}
         update={availableUpdate}
         installing={updateInstalling}
         progressPercent={updateProgressPercent}

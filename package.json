@@ -1,6 +1,6 @@
 {
   "name": "farmdb-monorepo",
-  "version": "1.5.0",
+  "version": "1.5.2",
   "private": true,
   "description": "Offline-first farm livestock, production, medical, and financial management suite",
   "workspaces": [

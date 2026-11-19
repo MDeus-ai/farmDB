@@ -6,6 +6,16 @@
 
 # farmDB Changelog
 
+## [1.5.2] - 2026-11-19
+
+Added full Admin and User account deletion, accurate installed version reporting, and polished Mobile Large/Extra-Large layouts.
+
+### Fixes & Improvements
+- Added full account deletion support for both Admin and User accounts (with confirmation prompts, automatic remaining-admin promotion, and PIN-verified portal deletion).
+- Desktop update checks now read the compiled runtime binary version and Mobile OTA checks verify bundle freshness so update banners clear right after updating.
+- Automated tag-to-version syncing in GitHub Actions so tagged Desktop and OTA builds always carry the matching release version number.
+- Fixed Mobile Large and Extra-Large UI button padding, Native SQLite header wrapping, and 5-preset payment alert chip spacing.
+
 ## [1.5.0] - 2026-11-19
 
 Offline-first desktop and mobile release with strict multi-user setup, mobile readability fixes, and in-app update notifications.

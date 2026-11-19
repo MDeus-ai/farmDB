@@ -24,6 +24,7 @@ import {
 } from '@farmdb/core';
 import {
   useActiveFarmAccount,
+  useDeleteFarmAccountWithCredentials,
   useFarmAccountList,
   useFarmSettings,
   useRecoverAdminFromCloud,
@@ -63,6 +64,7 @@ export function AuthPortalView({
 
   const switchMut = useSwitchFarmAccount();
   const signUpAccountMut = useSignUpFarmAccount();
+  const deleteWithCredsMut = useDeleteFarmAccountWithCredentials();
   const recoverAdminMut = useRecoverAdminFromCloud();
   const syncMut = useTriggerCloudSync();
   const updateSettingsMut = useUpdateFarmSettings();
@@ -73,6 +75,7 @@ export function AuthPortalView({
   const didInitTabRef = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
 
   // Sign-In state
   const [selectedLoginId, setSelectedLoginId] = useState<string>(
@@ -141,6 +144,27 @@ export function AuthPortalView({
     } catch (err) {
       setErrorMsg(
         err instanceof Error ? err.message : 'Could not sign into account.'
+      );
+    }
+  }
+
+  async function handleDeletePortalAccount() {
+    if (!selectedLoginAccount) return;
+    setErrorMsg(null);
+    setNotice(null);
+    try {
+      const deletedName = selectedLoginAccount.displayName;
+      await deleteWithCredsMut.mutateAsync({
+        accountId: selectedLoginAccount.id,
+        accessCode: loginPin,
+      });
+      setLoginPin('');
+      setConfirmDeleteAccountId(null);
+      setSelectedLoginId('');
+      setNotice(`Deleted account ${deletedName}.`);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : 'Unable to delete account.'
       );
     }
   }
@@ -479,6 +503,7 @@ export function AuthPortalView({
             activeId={tab}
             onChange={(nextTab) => {
               setErrorMsg(null);
+              setConfirmDeleteAccountId(null);
               setTab(nextTab);
             }}
             tabs={[
@@ -556,6 +581,7 @@ export function AuthPortalView({
                           onPress={() => {
                             setSelectedLoginId(acc.id);
                             setLoginPin('');
+                            setConfirmDeleteAccountId(null);
                             setErrorMsg(null);
                           }}
                         >
@@ -621,6 +647,100 @@ export function AuthPortalView({
                         : `Sign In as ${selectedLoginAccount?.displayName ?? 'Selected'}`}
                     </Text>
                   </Pressable>
+
+                  {selectedLoginAccount ? (
+                    confirmDeleteAccountId === selectedLoginAccount.id ? (
+                      <View
+                        style={[
+                          styles.deleteConfirmBox,
+                          {
+                            padding: ui.space(12),
+                            borderRadius: ui.radius,
+                            gap: ui.space(8),
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.dangerBtnText,
+                            { fontSize: ui.font(13) },
+                          ]}
+                        >
+                          Delete {selectedLoginAccount.displayName} (
+                          {formatAccountTierLabel(selectedLoginAccount)})?
+                        </Text>
+                        <Text
+                          style={[
+                            styles.subText,
+                            { fontSize: ui.font(11.5), color: '#7a271a' },
+                          ]}
+                        >
+                          Local farm records stay safe in SQLite.
+                          {selectedLoginAccount.accessCode?.trim() && !loginPin.trim()
+                            ? ' Enter this account\u2019s access PIN above to confirm deletion.'
+                            : ''}
+                        </Text>
+                        <View style={[styles.rowWrap, { gap: ui.space(8) }]}>
+                          <Pressable
+                            style={[
+                              styles.secondaryBtn,
+                              {
+                                flexGrow: 1,
+                                minHeight: ui.chipHeight,
+                                paddingHorizontal: ui.space(12),
+                                paddingVertical: ui.space(6),
+                              },
+                            ]}
+                            disabled={deleteWithCredsMut.isPending}
+                            onPress={() => setConfirmDeleteAccountId(null)}
+                          >
+                            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                              Cancel
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            style={[
+                              styles.dangerBtn,
+                              {
+                                flexGrow: 1,
+                                minHeight: ui.chipHeight,
+                                paddingHorizontal: ui.space(12),
+                                paddingVertical: ui.space(6),
+                              },
+                            ]}
+                            disabled={deleteWithCredsMut.isPending}
+                            onPress={() => void handleDeletePortalAccount()}
+                          >
+                            <AppIcon name="trash" size={ui.font(14)} />
+                            <Text style={[styles.dangerBtnText, { fontSize: ui.font(12) }]}>
+                              {deleteWithCredsMut.isPending ? 'Deleting...' : 'Confirm Delete'}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : (
+                      <Pressable
+                        style={[
+                          styles.dangerBtn,
+                          {
+                            alignSelf: 'flex-start',
+                            minHeight: ui.chipHeight,
+                            paddingHorizontal: ui.space(14),
+                            paddingVertical: ui.space(6),
+                          },
+                        ]}
+                        onPress={() => {
+                          setErrorMsg(null);
+                          setConfirmDeleteAccountId(selectedLoginAccount.id);
+                        }}
+                      >
+                        <AppIcon name="trash" size={ui.font(14)} />
+                        <Text style={[styles.dangerBtnText, { fontSize: ui.font(12) }]}>
+                          Delete Account
+                        </Text>
+                      </Pressable>
+                    )
+                  ) : null}
                 </>
               )}
 
@@ -1140,4 +1260,23 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   submitBtnText: { fontFamily: FARMDB_FONTS.bold, color: '#ffffff' },
+  dangerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: FARMDB_COLORS.dangerSoft,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#f4c7c3',
+  },
+  dangerBtnText: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.danger,
+  },
+  deleteConfirmBox: {
+    backgroundColor: FARMDB_COLORS.dangerSoft,
+    borderWidth: 1,
+    borderColor: '#f4c7c3',
+  },
 });

@@ -120,7 +120,16 @@ export async function checkMobileUpdate(): Promise<MobileUpdateCheckOutcome> {
       };
     }
 
-    if (gh && isNewerVersion(gh.version, currentVersion)) {
+    const bundleCreatedMs =
+      Updates.createdAt instanceof Date ? Updates.createdAt.getTime() : null;
+    const ghPublishedMs = gh?.publishedAt ? Date.parse(gh.publishedAt) : Number.NaN;
+    const otaCoversLatestRelease = Boolean(
+      bundleCreatedMs &&
+        Number.isFinite(ghPublishedMs) &&
+        bundleCreatedMs >= ghPublishedMs - 15 * 60 * 1000
+    );
+
+    if (gh && isNewerVersion(gh.version, currentVersion) && !otaCoversLatestRelease) {
       return {
         status: 'available',
         currentVersion,
@@ -133,12 +142,17 @@ export async function checkMobileUpdate(): Promise<MobileUpdateCheckOutcome> {
       };
     }
 
+    const effectiveVersion =
+      otaCoversLatestRelease && gh && isNewerVersion(gh.version, currentVersion)
+        ? gh.version
+        : currentVersion;
+
     return {
       status: 'up_to_date',
-      currentVersion,
+      currentVersion: effectiveVersion,
       availableUpdate: null,
       checkedAt,
-      message: `You are up to date on farmDB v${currentVersion}.`,
+      message: `You are up to date on farmDB v${effectiveVersion}.`,
       otaEnabled,
       otaChannel,
       updateId,

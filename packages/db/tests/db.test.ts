@@ -936,4 +936,102 @@ describe('@farmdb/db migrations and repositories', () => {
 
     raw.close();
   });
+
+  it('allows deleting both Admin and User accounts (including Primary Admin promotion, self-delete, and credentialed portal delete)', async () => {
+    const { driver, raw } = createNodeSqliteDriver(':memory:');
+    await runMigrations(driver);
+    const session = createFarmDbSession(driver, { autoSeedDefaultAdmin: false });
+
+    const primaryAdmin = await session.network.signUpAccount({
+      displayName: 'Alpha Homestead',
+      role: 'admin',
+      accessCode: '1111',
+      avatarKey: 'farmer',
+      isPrimaryAdmin: true,
+      canManageNetwork: true,
+      canSyncCloud: true,
+      status: 'active',
+      permissions: getDefaultPermissionsForRole('admin'),
+    });
+    const secondaryAdmin = await session.network.signUpAccount({
+      displayName: 'Beta Admin',
+      role: 'admin',
+      accessCode: '2222',
+      avatarKey: 'farmerFemale',
+      isPrimaryAdmin: false,
+      canManageNetwork: true,
+      canSyncCloud: true,
+      status: 'active',
+      permissions: getDefaultPermissionsForRole('admin'),
+    });
+    const userOne = await session.network.signUpAccount({
+      displayName: 'Martha Member',
+      role: 'family_member',
+      accessCode: '3333',
+      avatarKey: 'farmerFemale',
+      isPrimaryAdmin: false,
+      canManageNetwork: false,
+      canSyncCloud: false,
+      status: 'active',
+      permissions: buildStandardUserPermissions(),
+    });
+    const userTwo = await session.network.signUpAccount({
+      displayName: 'Samuel Helper',
+      role: 'staff_viewer',
+      accessCode: '4444',
+      avatarKey: 'farmer',
+      isPrimaryAdmin: false,
+      canManageNetwork: false,
+      canSyncCloud: false,
+      status: 'active',
+      permissions: buildStandardUserPermissions(),
+    });
+
+    // Standard User cannot delete another member's account, but can delete their own account
+    await session.network.switchActiveAccount(userOne.id, '3333');
+    await expect(session.network.removeAccount(userTwo.id)).rejects.toThrow(
+      /permission/i
+    );
+    await expect(session.network.removeAccount(userOne.id)).resolves.toBe(true);
+
+    // Primary Admin can delete a regular User account
+    await session.network.switchActiveAccount(primaryAdmin.id, '1111');
+    await expect(session.network.removeAccount(userTwo.id)).resolves.toBe(true);
+
+    // Deleting Primary Admin while another Admin remains promotes the remaining Admin
+    await expect(session.network.removeAccount(primaryAdmin.id)).resolves.toBe(true);
+    const promoted = await session.network.getAccountById(secondaryAdmin.id);
+    expect(promoted?.isPrimaryAdmin).toBe(true);
+    expect((await session.network.getActiveAccount())?.id).toBe(secondaryAdmin.id);
+
+    // Credentialed delete from Auth Portal validates PIN before deleting the remaining Admin
+    await expect(
+      session.network.removeAccountWithCredentials(secondaryAdmin.id, '0000')
+    ).rejects.toThrow(/PIN|passcode/i);
+    await expect(
+      session.network.removeAccountWithCredentials(secondaryAdmin.id, '2222')
+    ).resolves.toBe(true);
+
+    expect(await session.network.listAccounts()).toEqual([]);
+    expect(await session.network.getActiveAccount()).toBeNull();
+
+    // Deleting a PIN-less Admin via portal credentials also succeeds cleanly
+    const pinlessAdmin = await session.network.signUpAccount({
+      displayName: 'Open Homestead',
+      role: 'admin',
+      accessCode: null,
+      avatarKey: 'farmer',
+      isPrimaryAdmin: true,
+      canManageNetwork: true,
+      canSyncCloud: true,
+      status: 'active',
+      permissions: getDefaultPermissionsForRole('admin'),
+    });
+    await expect(
+      session.network.removeAccountWithCredentials(pinlessAdmin.id)
+    ).resolves.toBe(true);
+    expect(await session.network.listAccounts()).toEqual([]);
+
+    raw.close();
+  });
 });

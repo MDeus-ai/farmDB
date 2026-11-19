@@ -1,3 +1,4 @@
+import { getVersion } from '@tauri-apps/api/app';
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import {
@@ -45,11 +46,28 @@ export interface DesktopUpdateCheckOutcome {
 }
 
 /**
+ * Reads the compiled desktop binary version via `@tauri-apps/api/app` when inside Tauri,
+ * falling back cleanly to `FARMDB_APP_VERSION` in browser preview or dev mode.
+ */
+export async function getDesktopCurrentVersion(): Promise<string> {
+  if (!isTauriEnvironment()) {
+    return FARMDB_APP_VERSION;
+  }
+  try {
+    const raw = await getVersion();
+    const normalized = normalizeVersionTag(raw);
+    return normalized !== '0.0.0' ? normalized : FARMDB_APP_VERSION;
+  } catch {
+    return FARMDB_APP_VERSION;
+  }
+}
+
+/**
  * Checks `@tauri-apps/plugin-updater` inside Tauri (with GitHub Release notes enrichment)
  * or falls back cleanly to GitHub Releases metadata when running outside Tauri.
  */
 export async function checkDesktopUpdate(): Promise<DesktopUpdateCheckOutcome> {
-  const currentVersion = FARMDB_APP_VERSION;
+  const currentVersion = await getDesktopCurrentVersion();
   const checkedAt = new Date().toISOString();
 
   if (isTauriEnvironment()) {

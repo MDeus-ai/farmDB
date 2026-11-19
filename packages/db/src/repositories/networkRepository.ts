@@ -173,6 +173,7 @@ export interface NetworkRepository {
   signUpAccount(input: NewFarmAccountInput): Promise<FarmAccount>;
   updateAccount(id: string, input: UpdateFarmAccountInput): Promise<FarmAccount>;
   removeAccount(id: string): Promise<boolean>;
+  removeAccountWithCredentials(id: string, accessCode?: string): Promise<boolean>;
 
   rotateNetworkJoinKey(): Promise<string>;
   joinNetworkWithKey(input: JoinFarmNetworkInput): Promise<JoinFarmNetworkResult>;
@@ -666,28 +667,64 @@ export function createNetworkRepository(
     async removeAccount(id: string): Promise<boolean> {
       const existing = await this.getAccountById(id);
       if (!existing) return false;
-      if (existing.isPrimaryAdmin) {
-        throw new NetworkValidationError(
-          { isPrimaryAdmin: 'Primary Admin account cannot be deleted.' },
-          'Primary Admin account cannot be deleted.'
-        );
-      }
 
       const currentSettings = await settingsRepo.get();
       await db.delete(farmAccounts).where(eq(farmAccounts.id, id)).run();
+
+      let remaining = await this.listAccountsRaw();
+      if (existing.isPrimaryAdmin) {
+        const hasPrimary = remaining.some((acc) => acc.isPrimaryAdmin);
+        if (!hasPrimary) {
+          const nextPrimaryAdmin = remaining
+            .filter((acc) => acc.role === 'admin' && acc.status !== 'suspended')
+            .sort((a, b) => a.createdAt - b.createdAt)[0] ??
+            remaining
+              .filter((acc) => acc.role === 'admin')
+              .sort((a, b) => a.createdAt - b.createdAt)[0];
+          if (nextPrimaryAdmin) {
+            await db
+              .update(farmAccounts)
+              .set({
+                isPrimaryAdmin: true,
+                canManageNetwork: true,
+                canSyncCloud: true,
+                updatedAt: Date.now(),
+              })
+              .where(eq(farmAccounts.id, nextPrimaryAdmin.id))
+              .run();
+            remaining = await this.listAccountsRaw();
+          }
+        }
+      }
+
       if (currentSettings.activeAccountId === id) {
-        const remaining = await this.listAccountsRaw();
         const nextActive =
           remaining.find((acc) => acc.isPrimaryAdmin && acc.status !== 'suspended') ??
           remaining.find((acc) => acc.status !== 'suspended') ??
           null;
         await settingsRepo.update({
-          activeAccountId:
-            nextActive?.id ?? (autoSeedDefaultAdmin ? DEFAULT_ADMIN_ACCOUNT.id : ''),
+          activeAccountId: nextActive?.id ?? '',
         });
       }
-      events.emit(['network'], id);
+      events.emit(['network', 'settings'], id);
       return true;
+    },
+
+    async removeAccountWithCredentials(
+      id: string,
+      accessCode?: string
+    ): Promise<boolean> {
+      const existing = await this.getAccountById(id);
+      if (!existing) return false;
+      if (existing.accessCode && existing.accessCode.trim().length > 0) {
+        if ((accessCode ?? '').trim() !== existing.accessCode.trim()) {
+          throw new NetworkValidationError(
+            { accessCode: 'Enter the correct access PIN / passcode to delete this account.' },
+            'Enter the correct access PIN / passcode to delete this account.'
+          );
+        }
+      }
+      return this.removeAccount(id);
     },
 
     async rotateNetworkJoinKey(): Promise<string> {

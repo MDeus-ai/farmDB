@@ -139,6 +139,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
   const drawerProgress = useRef(new Animated.Value(0)).current;
   const [familyFocusAnimalId, setFamilyFocusAnimalId] = useState<string | null>(null);
   const [dueBanners, setDueBanners] = useState<AlertNotificationPayload[]>([]);
+  const [currentAppVersion, setCurrentAppVersion] = useState(FARMDB_APP_VERSION);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
   const [updateProgressLabel, setUpdateProgressLabel] = useState<string | null>(null);
@@ -241,6 +242,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
     }
     try {
       const outcome = await checkMobileUpdate();
+      setCurrentAppVersion(outcome.currentVersion);
       setOtaEnabled(outcome.otaEnabled);
       setOtaChannel(outcome.otaChannel);
       setUpdateLastCheckedAt(outcome.checkedAt);
@@ -322,7 +324,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
 
   const mobileUpdateController = useMemo<MobileUpdateController>(
     () => ({
-      currentVersion: FARMDB_APP_VERSION,
+      currentVersion: currentAppVersion,
       otaEnabled,
       otaChannel,
       checking: updateChecking,
@@ -336,6 +338,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
       onInstallUpdate: handleInstallMobileUpdate,
     }),
     [
+      currentAppVersion,
       otaEnabled,
       otaChannel,
       updateChecking,
@@ -1060,7 +1063,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
 
       <UpdateAvailableModal
         visible={updateModalOpen}
-        currentVersion={FARMDB_APP_VERSION}
+        currentVersion={currentAppVersion}
         update={availableUpdate}
         otaChannel={otaChannel}
         installing={updateInstalling}

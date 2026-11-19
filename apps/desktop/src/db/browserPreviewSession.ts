@@ -1876,16 +1876,32 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     async removeAccount(id: string): Promise<boolean> {
       const existing = await this.getAccountById(id);
       if (!existing) return false;
-      if (existing.isPrimaryAdmin) {
-        throw new NetworkValidationError(
-          { isPrimaryAdmin: 'Primary Admin account cannot be deleted.' },
-          'Primary Admin account cannot be deleted.'
-        );
-      }
       const s = await settings.get();
-      const nextRows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []).filter(
+      let nextRows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []).filter(
         (a) => a.id !== id
       );
+      if (existing.isPrimaryAdmin && !nextRows.some((a) => a.isPrimaryAdmin)) {
+        const nextPrimary =
+          nextRows
+            .filter((a) => a.role === 'admin' && a.status !== 'suspended')
+            .sort((a, b) => a.createdAt - b.createdAt)[0] ??
+          nextRows
+            .filter((a) => a.role === 'admin')
+            .sort((a, b) => a.createdAt - b.createdAt)[0];
+        if (nextPrimary) {
+          nextRows = nextRows.map((a) =>
+            a.id === nextPrimary.id
+              ? {
+                  ...a,
+                  isPrimaryAdmin: true,
+                  canManageNetwork: true,
+                  canSyncCloud: true,
+                  updatedAt: Date.now(),
+                }
+              : a
+          );
+        }
+      }
       writeJson(ACCOUNTS_KEY, nextRows);
       if (s.activeAccountId === id) {
         const nextActive =
@@ -1894,8 +1910,24 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           null;
         await settings.update({ activeAccountId: nextActive?.id ?? '' });
       }
-      events.emit(['network'], id);
+      events.emit(['network', 'settings'], id);
       return true;
+    },
+    async removeAccountWithCredentials(
+      id: string,
+      accessCode?: string
+    ): Promise<boolean> {
+      const existing = await this.getAccountById(id);
+      if (!existing) return false;
+      if (existing.accessCode && existing.accessCode.trim().length > 0) {
+        if ((accessCode ?? '').trim() !== existing.accessCode.trim()) {
+          throw new NetworkValidationError(
+            { accessCode: 'Enter the correct access PIN / passcode to delete this account.' },
+            'Enter the correct access PIN / passcode to delete this account.'
+          );
+        }
+      }
+      return this.removeAccount(id);
     },
     async rotateNetworkJoinKey(): Promise<string> {
       const nextCode = generateShortJoinCode();

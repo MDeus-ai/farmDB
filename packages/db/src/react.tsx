@@ -851,6 +851,18 @@ export function useDeleteFarmAccount() {
   });
 }
 
+export function useDeleteFarmAccountWithCredentials() {
+  const { network } = useFarmDb();
+  return useMutation<
+    boolean,
+    Error,
+    { accountId: string; accessCode?: string }
+  >({
+    mutationFn: ({ accountId, accessCode }) =>
+      network.removeAccountWithCredentials(accountId, accessCode),
+  });
+}
+
 export function useRotateNetworkJoinKey() {
   const { network } = useFarmDb();
   return useMutation<string, Error, void>({
