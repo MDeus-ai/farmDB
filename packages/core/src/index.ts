@@ -12,3 +12,4 @@ export * from './ownerships';
 export * from './network';
 export * from './tutorial';
 export * from './chartAxis';
+export * from './updates';

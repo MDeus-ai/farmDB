@@ -31,8 +31,11 @@ import {
 import {
   APP_SECTIONS,
   canAccountViewModule,
+  FARMDB_APP_VERSION,
+  formatUpdateNotificationSummary,
   isAdminAccount,
   type AppSectionId,
+  type AppUpdateInfo,
 } from '@farmdb/core';
 import {
   FarmDbProvider,
@@ -51,6 +54,12 @@ import {
   dispatchMobileNotification,
   ensureMobileNotificationHandler,
 } from './src/services/notifications';
+import {
+  checkMobileUpdate,
+  installMobileOtaUpdate,
+  type MobileUpdateController,
+  type MobileUpdateFeedback,
+} from './src/services/updates';
 import { AlertsView } from './src/components/AlertsView';
 import { BackupView } from './src/components/BackupView';
 import { AnimalQuickPreviewProvider } from './src/components/AnimalQuickPreviewModal';
@@ -69,6 +78,7 @@ import { OwnershipsView } from './src/components/OwnershipsView';
 import { ProductionView } from './src/components/ProductionView';
 import { SettingsView } from './src/components/SettingsView';
 import { TutorialModal } from './src/components/TutorialModal';
+import { UpdateAvailableModal } from './src/components/UpdateAvailableModal';
 import {
   FARMDB_COLORS,
   FARMDB_FONTS,
@@ -129,12 +139,27 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
   const drawerProgress = useRef(new Animated.Value(0)).current;
   const [familyFocusAnimalId, setFamilyFocusAnimalId] = useState<string | null>(null);
   const [dueBanners, setDueBanners] = useState<AlertNotificationPayload[]>([]);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateProgressLabel, setUpdateProgressLabel] = useState<string | null>(null);
+  const [updateLastCheckedAt, setUpdateLastCheckedAt] = useState<string | null>(null);
+  const [updateFeedback, setUpdateFeedback] = useState<MobileUpdateFeedback | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<AppUpdateInfo | null>(null);
+  const [otaEnabled, setOtaEnabled] = useState(Platform.OS !== 'web');
+  const [otaChannel, setOtaChannel] = useState<string | null>(null);
+  const [updateBannerDismissedVersion, setUpdateBannerDismissedVersion] = useState<string | null>(null);
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateInstallError, setUpdateInstallError] = useState<string | null>(null);
+  const notifiedUpdateVersionRef = useRef<string | null>(null);
+  const autoUpdateCheckedRef = useRef(false);
   const summaryQuery = useFarmSummary();
   const activeAccountQuery = useActiveFarmAccount();
   const summary = summaryQuery.data;
   const activeAccount = activeAccountQuery.data;
   const ui = useUiScale();
   const iconMode = ui.settings.mobileIconMode;
+  const enableNotificationsRef = useRef(ui.settings.enableNotifications);
+  enableNotificationsRef.current = ui.settings.enableNotifications;
 
   const openDrawer = useCallback(() => {
     setDrawerOpen(true);
@@ -206,6 +231,123 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
       !showOnboarding &&
       (isAdminAccount(activeAccount) || Boolean(activeAccount?.canSyncCloud)),
   });
+
+  const runMobileUpdateCheck = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    setUpdateChecking(true);
+    setUpdateInstallError(null);
+    if (!silent) {
+      setUpdateFeedback(null);
+    }
+    try {
+      const outcome = await checkMobileUpdate();
+      setOtaEnabled(outcome.otaEnabled);
+      setOtaChannel(outcome.otaChannel);
+      setUpdateLastCheckedAt(outcome.checkedAt);
+      if (outcome.status === 'available' && outcome.availableUpdate) {
+        const nextUpdate = outcome.availableUpdate;
+        setAvailableUpdate(nextUpdate);
+        if (!silent) {
+          setUpdateBannerDismissedVersion(null);
+          setUpdateFeedback({ kind: 'ok', text: outcome.message });
+        }
+        if (
+          notifiedUpdateVersionRef.current !== nextUpdate.version &&
+          enableNotificationsRef.current
+        ) {
+          notifiedUpdateVersionRef.current = nextUpdate.version;
+          const summaryMsg = formatUpdateNotificationSummary(nextUpdate);
+          void dispatchMobileNotification(summaryMsg);
+        }
+      } else {
+        setAvailableUpdate(null);
+        if (!silent) {
+          setUpdateFeedback({
+            kind: outcome.status === 'unavailable' ? 'err' : 'ok',
+            text: outcome.message,
+          });
+        }
+      }
+    } catch (err) {
+      if (!silent) {
+        setUpdateFeedback({
+          kind: 'err',
+          text:
+            err instanceof Error
+              ? `Update check failed: ${err.message}`
+              : 'Unable to check for mobile updates.',
+        });
+      }
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, []);
+
+  const handleInstallMobileUpdate = useCallback(async () => {
+    setUpdateInstalling(true);
+    setUpdateInstallError(null);
+    setUpdateProgressLabel('Downloading over-the-air farmDB update...');
+    try {
+      const result = await installMobileOtaUpdate((label) => {
+        setUpdateProgressLabel(label);
+      });
+      if (!result.reloaded) {
+        setUpdateFeedback({ kind: 'ok', text: result.message });
+      }
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? `Update installation failed: ${err.message}`
+          : 'Unable to download and apply update.';
+      setUpdateInstallError(msg);
+      setUpdateFeedback({ kind: 'err', text: msg });
+    } finally {
+      setUpdateInstalling(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isSignedOut || showAuthPortal || showOnboarding) {
+      return;
+    }
+    if (autoUpdateCheckedRef.current) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      autoUpdateCheckedRef.current = true;
+      void runMobileUpdateCheck({ silent: true });
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [isSignedOut, showAuthPortal, showOnboarding, runMobileUpdateCheck]);
+
+  const mobileUpdateController = useMemo<MobileUpdateController>(
+    () => ({
+      currentVersion: FARMDB_APP_VERSION,
+      otaEnabled,
+      otaChannel,
+      checking: updateChecking,
+      installing: updateInstalling,
+      progressLabel: updateProgressLabel,
+      lastCheckedAt: updateLastCheckedAt,
+      feedback: updateFeedback,
+      availableUpdate,
+      onCheckForUpdates: () => runMobileUpdateCheck({ silent: false }),
+      onOpenModal: () => setUpdateModalOpen(true),
+      onInstallUpdate: handleInstallMobileUpdate,
+    }),
+    [
+      otaEnabled,
+      otaChannel,
+      updateChecking,
+      updateInstalling,
+      updateProgressLabel,
+      updateLastCheckedAt,
+      updateFeedback,
+      availableUpdate,
+      runMobileUpdateCheck,
+      handleInstallMobileUpdate,
+    ]
+  );
 
   const visibleSections = useMemo(
     () =>
@@ -370,6 +512,62 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
         </View>
       </View>
 
+      {availableUpdate &&
+      updateBannerDismissedVersion !== availableUpdate.version ? (
+        <View
+          style={[
+            styles.updateBanner,
+            {
+              paddingHorizontal: ui.contentPadding,
+              paddingVertical: ui.space(9),
+            },
+          ]}
+        >
+          <View style={styles.updateBannerLeft}>
+            <AppIcon name="download" size={ui.font(18)} />
+            <View style={{ flex: 1, minWidth: 160 }}>
+              <Text style={[styles.updateBannerTitle, { fontSize: ui.font(12.5) }]}>
+                Update v{availableUpdate.version} Available
+              </Text>
+              <Text
+                style={[styles.updateBannerBody, { fontSize: ui.font(11) }]}
+                numberOfLines={2}
+              >
+                {availableUpdate.fixes.length > 0
+                  ? `${availableUpdate.fixes[0]}${availableUpdate.fixes.length > 1 ? ` (+${availableUpdate.fixes.length - 1} more)` : ''}`
+                  : availableUpdate.summary || 'Tap View Fixes to inspect updates and install.'}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.updateBannerActions}>
+            <Pressable
+              onPress={() => setUpdateModalOpen(true)}
+              style={[
+                styles.updateBannerActionBtn,
+                {
+                  minHeight: Math.max(32, ui.chipHeight - 4),
+                  paddingHorizontal: ui.space(12),
+                  paddingVertical: ui.space(5),
+                },
+              ]}
+              accessibilityLabel="View available update fixes"
+            >
+              <Text style={[styles.updateBannerActionText, { fontSize: ui.font(11.5) }]}>
+                View Fixes
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setUpdateBannerDismissedVersion(availableUpdate.version)}
+              style={styles.alertBannerDismiss}
+              hitSlop={8}
+              accessibilityLabel="Dismiss update banner"
+            >
+              <AppIcon name="close" size={ui.font(14)} color="#173e2b" />
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
       {dueBanners.length > 0 ? (
         <View
           style={[
@@ -497,6 +695,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
             onOpenBackup={() => setActiveSection('backup')}
             onSignOut={handleSignOut}
             onOpenTutorial={() => setTutorialOpen(true)}
+            updateController={mobileUpdateController}
           />
         )}
 
@@ -816,6 +1015,13 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
                         Settings
                       </Text>
                     </View>
+                    {availableUpdate ? (
+                      <View style={styles.drawerUpdateBadge}>
+                        <Text style={[styles.drawerUpdateBadgeText, { fontSize: ui.font(10) }]}>
+                          Update
+                        </Text>
+                      </View>
+                    ) : null}
                   </Pressable>
                 ) : null}
 
@@ -850,6 +1056,22 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
         activeAccount={activeAccount}
         activeSection={activeSection}
         onClose={() => setTutorialOpen(false)}
+      />
+
+      <UpdateAvailableModal
+        visible={updateModalOpen}
+        currentVersion={FARMDB_APP_VERSION}
+        update={availableUpdate}
+        otaChannel={otaChannel}
+        installing={updateInstalling}
+        progressLabel={updateProgressLabel}
+        errorText={updateInstallError}
+        onInstall={() => void handleInstallMobileUpdate()}
+        onClose={() => {
+          if (!updateInstalling) {
+            setUpdateModalOpen(false);
+          }
+        }}
       />
     </SafeAreaView>
   );
@@ -1035,6 +1257,57 @@ const styles = StyleSheet.create({
   },
   alertBannerDismiss: {
     padding: 4,
+  },
+  updateBanner: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    backgroundColor: '#e3f4ea',
+    borderBottomWidth: 1,
+    borderBottomColor: '#8ec8a8',
+  },
+  updateBannerLeft: {
+    flex: 1,
+    minWidth: 190,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  updateBannerTitle: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: '#173e2b',
+  },
+  updateBannerBody: {
+    fontFamily: FARMDB_FONTS.regular,
+    color: FARMDB_COLORS.accentHover,
+  },
+  updateBannerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  updateBannerActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: FARMDB_COLORS.accent,
+    borderRadius: 999,
+  },
+  updateBannerActionText: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: '#ffffff',
+  },
+  drawerUpdateBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: '#2d6a4f',
+  },
+  drawerUpdateBadgeText: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: '#ffffff',
   },
   body: {
     flex: 1,

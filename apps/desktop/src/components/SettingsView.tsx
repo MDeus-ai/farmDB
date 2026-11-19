@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  CURRENT_RELEASE_HIGHLIGHTS,
   CURRENCY_OPTIONS,
   DATE_FORMATS,
   DEFAULT_FARM_SETTINGS,
   describeModuleAccessLevel,
+  FARMDB_APP_VERSION,
   FONT_SCALES,
   formatCurrency,
   formatSpeciesLabel,
@@ -46,7 +48,11 @@ import {
   type SqliteStorageInfo,
 } from '../services/exportBackup';
 import { isTauriEnvironment } from '../services/imageStorage';
-import { checkAndInstallDesktopUpdate } from '../services/updater';
+import {
+  checkDesktopUpdate,
+  type DesktopUpdateController,
+  type DesktopUpdateFeedback,
+} from '../services/updater';
 import { FileTabs } from './FileTabs';
 import { ModernSelect, type ModernSelectOption } from './ModernSelect';
 import { NumberStepper } from './NumberStepper';
@@ -55,6 +61,7 @@ interface SettingsViewProps {
   sqlController?: TauriSqlController | null;
   onOpenBackup: () => void;
   onOpenTutorial?: () => void;
+  updateController?: DesktopUpdateController;
 }
 
 const FONT_SCALE_LABELS: Record<FontScale, string> = {
@@ -151,6 +158,7 @@ export function SettingsView({
   sqlController,
   onOpenBackup,
   onOpenTutorial,
+  updateController,
 }: SettingsViewProps) {
   const settingsQuery = useFarmSettings();
   const updateMutation = useUpdateFarmSettings();
@@ -170,25 +178,35 @@ export function SettingsView({
   const inTauri = isTauriEnvironment();
   const [storageInfo, setStorageInfo] = useState<SqliteStorageInfo | null>(null);
   const [storageBusy, setStorageBusy] = useState(false);
-  const [updateBusy, setUpdateBusy] = useState(false);
-  const [updateFeedback, setUpdateFeedback] = useState<{
-    kind: 'ok' | 'err';
-    text: string;
-  } | null>(null);
+  const [localUpdateChecking, setLocalUpdateChecking] = useState(false);
+  const [localUpdateFeedback, setLocalUpdateFeedback] =
+    useState<DesktopUpdateFeedback | null>(null);
+  const [showCurrentHighlights, setShowCurrentHighlights] = useState(false);
+
+  const updateBusy = updateController
+    ? updateController.checking || updateController.installing
+    : localUpdateChecking;
+  const updateFeedback = updateController
+    ? updateController.feedback
+    : localUpdateFeedback;
+  const availableUpdate = updateController?.availableUpdate ?? null;
+  const currentVersion = updateController?.currentVersion ?? FARMDB_APP_VERSION;
 
   async function handleCheckForAppUpdates() {
-    setUpdateBusy(true);
-    setUpdateFeedback(null);
+    if (updateController) {
+      await updateController.onCheckForUpdates();
+      return;
+    }
+    setLocalUpdateChecking(true);
+    setLocalUpdateFeedback(null);
     try {
-      const res = await checkAndInstallDesktopUpdate((label) => {
-        setUpdateFeedback({ kind: 'ok', text: label });
-      });
-      setUpdateFeedback({
-        kind: res.status === 'unsupported' ? 'err' : 'ok',
+      const res = await checkDesktopUpdate();
+      setLocalUpdateFeedback({
+        kind: 'ok',
         text: res.message,
       });
     } catch (err) {
-      setUpdateFeedback({
+      setLocalUpdateFeedback({
         kind: 'err',
         text:
           err instanceof Error
@@ -196,7 +214,7 @@ export function SettingsView({
             : 'Unable to check for desktop updates.',
       });
     } finally {
-      setUpdateBusy(false);
+      setLocalUpdateChecking(false);
     }
   }
 
@@ -1644,32 +1662,183 @@ export function SettingsView({
 
           {/* Desktop Auto-Updater Card */}
           <section className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                gap: 12,
+                flexWrap: 'wrap',
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0, flex: '1 1 280px' }}>
                 <div className="settings-card-icon">
                   <img src={APP_ICONS.downloads} alt="" className="app-icon-sm" />
                 </div>
-                <div>
-                  <h2 className="card-section-title" style={{ margin: 0 }}>
-                    Software Updates (GitHub Releases)
-                  </h2>
-                  <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
-                    Check for signed farmDB Desktop updates and install them automatically without affecting your local SQLite database.
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <h2 className="card-section-title" style={{ margin: 0 }}>
+                      Software Updates
+                    </h2>
+                    <span className="update-version-pill">v{currentVersion}</span>
+                    <span
+                      className={`update-status-pill ${
+                        availableUpdate
+                          ? 'is-available'
+                          : updateBusy
+                            ? 'is-checking'
+                            : 'is-current'
+                      }`}
+                    >
+                      {updateController?.installing
+                        ? 'Installing...'
+                        : updateBusy
+                          ? 'Checking...'
+                          : availableUpdate
+                            ? `v${availableUpdate.version} Available`
+                            : 'Up to Date'}
+                    </span>
+                  </div>
+                  <p className="page-subtitle" style={{ margin: '4px 0 0', fontSize: '0.84rem' }}>
+                    Channel: GitHub Releases (Signed)
+                    {updateController?.lastCheckedAt
+                      ? ` · Last checked ${new Date(updateController.lastCheckedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                      : ''}
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={updateBusy}
-                onClick={() => void handleCheckForAppUpdates()}
-              >
-                <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
-                {updateBusy ? 'Checking Updates...' : 'Check for Updates'}
-              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={updateBusy}
+                  onClick={() => void handleCheckForAppUpdates()}
+                >
+                  <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
+                  {updateBusy && !updateController?.installing
+                    ? 'Checking Updates...'
+                    : 'Check for Updates'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowCurrentHighlights((prev) => !prev)}
+                >
+                  {showCurrentHighlights
+                    ? 'Hide Notes'
+                    : `What's New in v${currentVersion}`}
+                </button>
+              </div>
             </div>
+
+            {availableUpdate && (
+              <div className="update-card-highlight">
+                <div className="update-card-highlight-head">
+                  <div>
+                    <strong>
+                      farmDB v{currentVersion} → v{availableUpdate.version}
+                    </strong>
+                    {availableUpdate.summary && (
+                      <p style={{ margin: '4px 0 0', fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                        {availableUpdate.summary}
+                      </p>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {updateController && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={updateController.onOpenModal}
+                      >
+                        View Release Notes
+                      </button>
+                    )}
+                    {availableUpdate.canDirectInstall && updateController ? (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        disabled={updateController.installing}
+                        onClick={() => void updateController.onInstallUpdate()}
+                      >
+                        <img src={APP_ICONS.downloads} alt="" className="app-icon-sm" />
+                        {updateController.installing
+                          ? 'Installing...'
+                          : `Install v${availableUpdate.version} & Restart`}
+                      </button>
+                    ) : (
+                      <a
+                        href={availableUpdate.releaseUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-primary btn-sm"
+                      >
+                        Download v{availableUpdate.version}
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {availableUpdate.fixes.length > 0 && (
+                  <ul className="update-fixes-list">
+                    {availableUpdate.fixes.slice(0, 5).map((fix, idx) => (
+                      <li key={`${idx}-${fix.slice(0, 20)}`}>
+                        <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                        <span>{fix}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {updateController?.installing && (
+                  <div className="update-progress-panel" role="status">
+                    <div className="update-progress-row">
+                      <span>
+                        {updateController.progressLabel ||
+                          `Downloading farmDB v${availableUpdate.version}...`}
+                      </span>
+                      {updateController.progressPercent !== null && (
+                        <strong>{updateController.progressPercent}%</strong>
+                      )}
+                    </div>
+                    <div className="update-progress-track">
+                      <div
+                        className="update-progress-fill"
+                        style={{
+                          width: `${
+                            updateController.progressPercent !== null
+                              ? Math.max(8, updateController.progressPercent)
+                              : 45
+                          }%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {showCurrentHighlights && (
+              <div className="update-fixes-box" style={{ marginTop: 12 }}>
+                <h3 className="update-fixes-heading">
+                  Included in Installed farmDB v{currentVersion}
+                </h3>
+                <ul className="update-fixes-list">
+                  {CURRENT_RELEASE_HIGHLIGHTS.map((item, idx) => (
+                    <li key={`${idx}-${item.slice(0, 20)}`}>
+                      <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {updateFeedback && (
               <div
+                style={{ marginTop: 12 }}
                 className={
                   updateFeedback.kind === 'ok'
                     ? 'alert-toast-banner'

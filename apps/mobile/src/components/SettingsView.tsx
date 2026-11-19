@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -10,9 +11,11 @@ import {
   View,
 } from 'react-native';
 import {
+  CURRENT_RELEASE_HIGHLIGHTS,
   CURRENCY_OPTIONS,
   DATE_FORMATS,
   describeModuleAccessLevel,
+  FARMDB_APP_VERSION,
   FONT_SCALES,
   formatCurrency,
   formatSpeciesLabel,
@@ -56,7 +59,11 @@ import {
   FARMDB_FONTS,
   useUiScale,
 } from '../theme/uiScale';
-import { checkAndApplyMobileOtaUpdate } from '../services/updates';
+import {
+  checkMobileUpdate,
+  type MobileUpdateController,
+  type MobileUpdateFeedback,
+} from '../services/updates';
 import { AppIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { MobileFileTabs } from './MobileFileTabs';
@@ -71,6 +78,7 @@ interface SettingsViewProps {
   onOpenBackup: () => void;
   onSignOut?: () => void;
   onOpenTutorial?: () => void;
+  updateController?: MobileUpdateController;
 }
 
 const FONT_SCALE_LABELS: Record<FontScale, string> = {
@@ -146,14 +154,32 @@ function MobileIntervalControl({
   const ui = useUiScale();
   const numericValue = Number(value);
 
-  const stepperMinWidth = Math.max(96, Math.round(92 * ui.fontMult));
-  const presetMinWidth = Math.max(42, Math.round(ui.font(11) * 3.6));
+  const stepperMinWidth = Math.max(118, Math.round(108 * ui.fontMult));
+  const presetMinWidth = Math.max(40, Math.round(ui.font(11) * 3.2));
+  const stackPresets =
+    presets.length > 4 || ui.isCramped || ui.isLargeText || ui.isLargeDensity;
 
   return (
-    <View style={{ gap: ui.space(5) }}>
+    <View style={{ gap: ui.space(6) }}>
       <Text style={[styles.label, { fontSize: ui.font(12) }]}>{label}</Text>
-      <View style={[styles.presetRow, { gap: ui.space(8), flexWrap: 'wrap' }]}>
-        <View style={{ minWidth: stepperMinWidth, flexGrow: 0 }}>
+      <View
+        style={[
+          styles.presetRow,
+          {
+            gap: ui.space(8),
+            flexDirection: stackPresets ? 'column' : 'row',
+            alignItems: stackPresets ? 'stretch' : 'center',
+          },
+        ]}
+      >
+        <View
+          style={{
+            minWidth: stepperMinWidth,
+            width: stackPresets ? stepperMinWidth : undefined,
+            alignSelf: stackPresets ? 'flex-start' : 'auto',
+            flexGrow: 0,
+          }}
+        >
           <MobileNumberStepper
             accessibilityLabel={accessibilityLabel}
             compact
@@ -166,7 +192,14 @@ function MobileIntervalControl({
             onChangeText={onChangeText}
           />
         </View>
-        <View style={[styles.presetBar, { flexWrap: 'wrap', minWidth: 170 }]}>
+        <View
+          style={[
+            styles.presetBar,
+            stackPresets
+              ? { flex: 0, width: '100%' }
+              : { minWidth: 168 },
+          ]}
+        >
           {presets.map((preset) => {
             const active = numericValue === preset.value;
             return (
@@ -176,15 +209,18 @@ function MobileIntervalControl({
                   styles.presetBtn,
                   active && styles.presetBtnActive,
                   {
-                    minHeight: Math.max(30, ui.controlHeight - 8),
-                    minWidth: presetMinWidth,
-                    paddingHorizontal: ui.space(6),
-                    paddingVertical: ui.space(4),
+                    minHeight: Math.max(34, ui.controlHeight - 8),
+                    minWidth: stackPresets ? 0 : presetMinWidth,
+                    paddingHorizontal: ui.space(4),
+                    paddingVertical: ui.space(5),
                   },
                 ]}
                 onPress={() => onChangeText(String(preset.value))}
               >
                 <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.78}
                   style={[
                     styles.presetBtnText,
                     active && styles.presetBtnTextActive,
@@ -207,6 +243,7 @@ export function SettingsView({
   onOpenBackup,
   onSignOut,
   onOpenTutorial,
+  updateController,
 }: SettingsViewProps) {
   const ui = useUiScale();
   const { settings } = ui;
@@ -288,23 +325,33 @@ export function SettingsView({
     kind: 'ok' | 'err';
     text: string;
   } | null>(null);
-  const [otaBusy, setOtaBusy] = useState(false);
-  const [otaFeedback, setOtaFeedback] = useState<{
-    kind: 'ok' | 'err';
-    text: string;
-  } | null>(null);
+  const [showSqlScript, setShowSqlScript] = useState(false);
+  const [showCurrentHighlights, setShowCurrentHighlights] = useState(false);
+  const [localOtaChecking, setLocalOtaChecking] = useState(false);
+  const [localOtaFeedback, setLocalOtaFeedback] = useState<MobileUpdateFeedback | null>(null);
+
+  const otaBusy = updateController
+    ? updateController.checking || updateController.installing
+    : localOtaChecking;
+  const otaFeedback = updateController ? updateController.feedback : localOtaFeedback;
+  const availableUpdate = updateController?.availableUpdate ?? null;
+  const currentVersion = updateController?.currentVersion ?? FARMDB_APP_VERSION;
 
   async function handleCheckOtaUpdate() {
-    setOtaBusy(true);
-    setOtaFeedback(null);
+    if (updateController) {
+      await updateController.onCheckForUpdates();
+      return;
+    }
+    setLocalOtaChecking(true);
+    setLocalOtaFeedback(null);
     try {
-      const res = await checkAndApplyMobileOtaUpdate();
-      setOtaFeedback({
+      const res = await checkMobileUpdate();
+      setLocalOtaFeedback({
         kind: res.status === 'unavailable' ? 'err' : 'ok',
         text: res.message,
       });
     } catch (err) {
-      setOtaFeedback({
+      setLocalOtaFeedback({
         kind: 'err',
         text:
           err instanceof Error
@@ -312,7 +359,7 @@ export function SettingsView({
             : 'Unable to check for mobile updates.',
       });
     } finally {
-      setOtaBusy(false);
+      setLocalOtaChecking(false);
     }
   }
 
@@ -545,7 +592,7 @@ export function SettingsView({
         keyboardShouldPersistTaps="handled"
       >
         <View style={[styles.topBar, { gap: ui.space(10), flexWrap: 'wrap' }]}>
-          <View style={{ flex: 1, minWidth: 160 }}>
+          <View style={{ flex: 1, minWidth: ui.isCramped ? 220 : 180 }}>
             <Text style={[styles.heading, { fontSize: ui.font(20) }]}>
               Settings &amp; UI
             </Text>
@@ -692,7 +739,12 @@ export function SettingsView({
                 </Text>
               </View>
             ) : null}
-            <View style={styles.saveBar}>
+            <View
+              style={[
+                styles.saveBar,
+                ui.isCramped && { flexDirection: 'column', alignItems: 'flex-start' },
+              ]}
+            >
               <View style={styles.sectionTitleRow}>
                 <AppIcon name="dataSync" size={ui.font(18)} />
                 <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
@@ -799,7 +851,8 @@ export function SettingsView({
                       !canEdit && { opacity: 0.6 },
                       {
                         minHeight: ui.chipHeight,
-                        minWidth: ui.isCramped ? '46%' : 76,
+                        flexBasis: ui.isCramped ? '47%' : undefined,
+                        minWidth: ui.isCramped ? '45%' : 76,
                         paddingHorizontal: ui.space(8),
                         paddingVertical: ui.space(6),
                         borderRadius: Math.max(8, ui.radius - 5),
@@ -813,6 +866,9 @@ export function SettingsView({
                     }
                   >
                     <Text
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.8}
                       style={[
                         styles.segmentText,
                         active && styles.segmentTextActive,
@@ -831,7 +887,7 @@ export function SettingsView({
             <Text style={[styles.label, { fontSize: ui.font(12) }]}>
               UI Element Size &amp; Touch Spacing
             </Text>
-            <View style={styles.segmentWrap}>
+            <View style={[styles.segmentWrap, { flexWrap: 'nowrap' }]}>
               {UI_DENSITIES.map((density) => {
                 const active = settings.uiDensity === density;
                 return (
@@ -843,9 +899,10 @@ export function SettingsView({
                       active && styles.segmentBtnActive,
                       !canEdit && { opacity: 0.6 },
                       {
+                        flex: 1,
+                        minWidth: 0,
                         minHeight: ui.chipHeight,
-                        minWidth: ui.isCramped ? 96 : 76,
-                        paddingHorizontal: ui.space(8),
+                        paddingHorizontal: ui.space(6),
                         paddingVertical: ui.space(6),
                         borderRadius: Math.max(8, ui.radius - 5),
                       },
@@ -858,6 +915,9 @@ export function SettingsView({
                     }
                   >
                     <Text
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.76}
                       style={[
                         styles.segmentText,
                         active && styles.segmentTextActive,
@@ -1078,7 +1138,7 @@ export function SettingsView({
           </View>
 
           <View style={styles.saveBar}>
-            <Text style={[styles.subHeading, { fontSize: ui.font(12) }]}>
+            <Text style={[styles.subHeading, { fontSize: ui.font(12), flexShrink: 1 }]}>
               10 L est.:{' '}
               {formatCurrency(
                 (Number(rateText) || 0) * 10,
@@ -1092,6 +1152,7 @@ export function SettingsView({
                   {
                     minHeight: ui.controlHeight,
                     paddingHorizontal: ui.space(16),
+                    paddingVertical: ui.space(7),
                     borderRadius: Math.max(10, ui.radius - 2),
                   },
                 ]}
@@ -1317,15 +1378,17 @@ export function SettingsView({
         ) : (
           <>
         <View style={cardStyle}>
-          <View style={[styles.saveBar, { alignItems: 'center' }]}>
-            <View style={[styles.sectionTitleRow, { flex: 1 }]}>
-              <AppIcon name="database" size={ui.font(18)} />
-              <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
+          <View style={{ gap: ui.space(6) }}>
+            <View style={[styles.sectionTitleRow, { alignItems: 'flex-start' }]}>
+              <View style={{ marginTop: 2 }}>
+                <AppIcon name="database" size={ui.font(18)} />
+              </View>
+              <Text style={[styles.cardTitle, { fontSize: ui.font(16), flex: 1 }]}>
                 Native SQLite Database Storage &amp; Read-Only Protection
               </Text>
             </View>
             {Platform.OS !== 'web' && storageInfo ? (
-              <View style={styles.previewStatus}>
+              <View style={[styles.previewStatus, { alignSelf: 'flex-start' }]}>
                 <Text style={[styles.previewStatusText, { fontSize: ui.font(11) }]}>
                   {storageInfo.readOnlyProtection ? 'Read-Only Outside App Active' : 'Unlocked'}
                 </Text>
@@ -1452,7 +1515,12 @@ export function SettingsView({
               style={[
                 styles.secondaryBtn,
                 styles.syncActionBtn,
-                { minHeight: ui.chipHeight, borderRadius: 999 },
+                {
+                  minHeight: ui.chipHeight,
+                  borderRadius: 999,
+                  flexBasis: ui.isCramped ? '47%' : undefined,
+                  minWidth: ui.isCramped ? '45%' : 76,
+                },
               ]}
               onPress={() => void handleSync('test')}
               disabled={syncMut.isPending}
@@ -1466,7 +1534,12 @@ export function SettingsView({
               style={[
                 styles.primaryBtn,
                 styles.syncActionBtn,
-                { minHeight: ui.chipHeight, borderRadius: 999 },
+                {
+                  minHeight: ui.chipHeight,
+                  borderRadius: 999,
+                  flexBasis: ui.isCramped ? '47%' : undefined,
+                  minWidth: ui.isCramped ? '45%' : 96,
+                },
               ]}
               onPress={() => void handleSync('bidirectional')}
               disabled={syncMut.isPending}
@@ -1480,7 +1553,12 @@ export function SettingsView({
               style={[
                 styles.secondaryBtn,
                 styles.syncActionBtn,
-                { minHeight: ui.chipHeight, borderRadius: 999 },
+                {
+                  minHeight: ui.chipHeight,
+                  borderRadius: 999,
+                  flexBasis: ui.isCramped ? '47%' : undefined,
+                  minWidth: ui.isCramped ? '45%' : 76,
+                },
               ]}
               onPress={() => void handleSync('push')}
               disabled={syncMut.isPending}
@@ -1494,7 +1572,12 @@ export function SettingsView({
               style={[
                 styles.secondaryBtn,
                 styles.syncActionBtn,
-                { minHeight: ui.chipHeight, borderRadius: 999 },
+                {
+                  minHeight: ui.chipHeight,
+                  borderRadius: 999,
+                  flexBasis: ui.isCramped ? '47%' : undefined,
+                  minWidth: ui.isCramped ? '45%' : 76,
+                },
               ]}
               onPress={() => void handleSync('pull')}
               disabled={syncMut.isPending}
@@ -1675,12 +1758,32 @@ export function SettingsView({
             ) : null}
           </View>
 
-          <Text style={[styles.label, { fontSize: ui.font(11), marginTop: 4 }]}>
-            Supabase SQL Setup Script (long-press to select &amp; run in SQL Editor):
-          </Text>
-          <Text style={styles.sqlBox} selectable>
-            {generateSupabaseSetupSql()}
-          </Text>
+          <View style={styles.divider} />
+          <View style={styles.saveBar}>
+            <Text style={[styles.label, { fontSize: ui.font(12), flex: 1, minWidth: 160 }]}>
+              Supabase SQL Setup Script
+            </Text>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                {
+                  minHeight: ui.chipHeight,
+                  borderRadius: 999,
+                  paddingHorizontal: ui.space(14),
+                },
+              ]}
+              onPress={() => setShowSqlScript((prev) => !prev)}
+            >
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                {showSqlScript ? 'Hide Script' : 'Show Script'}
+              </Text>
+            </Pressable>
+          </View>
+          {showSqlScript ? (
+            <Text style={styles.sqlBox} selectable>
+              {generateSupabaseSetupSql()}
+            </Text>
+          ) : null}
         </View>
         ) : (
         <View style={cardStyle}>
@@ -1703,28 +1806,234 @@ export function SettingsView({
 
         {/* Mobile OTA App Updates Card */}
         <View style={cardStyle}>
-          <View style={styles.sectionTitleRow}>
-            <AppIcon name="download" size={ui.font(18)} />
-            <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
-              App Updates (Over-the-Air)
-            </Text>
+          <View style={{ gap: ui.space(6) }}>
+            <View style={[styles.sectionTitleRow, { alignItems: 'flex-start' }]}>
+              <View style={{ marginTop: 2 }}>
+                <AppIcon name="download" size={ui.font(18)} />
+              </View>
+              <Text style={[styles.cardTitle, { fontSize: ui.font(16), flex: 1 }]}>
+                App Updates
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              <View style={styles.updateVersionPill}>
+                <Text style={[styles.updateVersionPillText, { fontSize: ui.font(11) }]}>
+                  v{currentVersion}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.previewStatus,
+                  !availableUpdate && !otaBusy && styles.updateStatusNeutral,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.previewStatusText,
+                    !availableUpdate && !otaBusy && styles.updateStatusNeutralText,
+                    { fontSize: ui.font(11) },
+                  ]}
+                >
+                  {updateController?.installing
+                    ? 'Applying Update...'
+                    : otaBusy
+                      ? 'Checking...'
+                      : availableUpdate
+                        ? `v${availableUpdate.version} Available`
+                        : updateController?.otaEnabled
+                          ? 'OTA Active · Up to Date'
+                          : 'Up to Date'}
+                </Text>
+              </View>
+            </View>
           </View>
-          <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
-            Check for published Expo EAS over-the-air updates so UI and bug fixes apply without reinstalling an APK.
+
+          <Text style={[styles.subHeading, { fontSize: ui.font(11.5) }]}>
+            Check for published Expo EAS over-the-air updates and GitHub Release fixes without reinstalling an APK.
+            {updateController?.otaChannel ? ` Channel: ${updateController.otaChannel}.` : ''}
+            {updateController?.lastCheckedAt
+              ? ` Last checked ${new Date(updateController.lastCheckedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+              : ''}
           </Text>
-          <Pressable
-            style={[
-              styles.secondaryBtn,
-              { minHeight: ui.chipHeight, borderRadius: 999, alignSelf: 'flex-start' },
-            ]}
-            disabled={otaBusy}
-            onPress={() => void handleCheckOtaUpdate()}
-          >
-            <AppIcon name="dataSync" size={ui.font(14)} />
-            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
-              {otaBusy ? 'Checking Updates...' : 'Check for OTA Update'}
-            </Text>
-          </Pressable>
+
+          {availableUpdate ? (
+            <View
+              style={[
+                styles.updateHighlightCard,
+                { padding: ui.space(12), borderRadius: ui.radius, gap: ui.space(8) },
+              ]}
+            >
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                <Text style={[styles.switchLabel, { fontSize: ui.font(14) }]}>
+                  farmDB v{availableUpdate.version} Available
+                </Text>
+                <View style={styles.updateVersionPill}>
+                  <Text style={[styles.updateVersionPillText, { fontSize: ui.font(10.5) }]}>
+                    {availableUpdate.version !== currentVersion
+                      ? `v${currentVersion} → v${availableUpdate.version}`
+                      : `v${availableUpdate.version} OTA`}
+                  </Text>
+                </View>
+              </View>
+              {availableUpdate.summary ? (
+                <Text style={[styles.subHeading, { fontSize: ui.font(12), color: FARMDB_COLORS.text }]}>
+                  {availableUpdate.summary}
+                </Text>
+              ) : null}
+              {availableUpdate.fixes.slice(0, 4).map((fix, idx) => (
+                <View key={`${idx}-${fix.slice(0, 20)}`} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 7 }}>
+                  <View style={{ marginTop: 2 }}>
+                    <AppIcon name="check" size={ui.font(13)} />
+                  </View>
+                  <Text style={[styles.subHeading, { flex: 1, fontSize: ui.font(12), color: FARMDB_COLORS.text, marginTop: 0 }]}>
+                    {fix}
+                  </Text>
+                </View>
+              ))}
+              {updateController?.installing && updateController.progressLabel ? (
+                <Text style={[styles.feedbackText, { fontSize: ui.font(12) }]}>
+                  {updateController.progressLabel}
+                </Text>
+              ) : null}
+              <View style={[styles.syncActionRow, { marginTop: 2 }]}>
+                {availableUpdate.canDirectInstall && updateController ? (
+                  <Pressable
+                    style={[
+                      styles.primaryBtn,
+                      styles.updateActionBtn,
+                      {
+                        minHeight: ui.controlHeight,
+                        borderRadius: 999,
+                        paddingHorizontal: ui.space(16),
+                        paddingVertical: ui.space(8),
+                      },
+                    ]}
+                    disabled={otaBusy}
+                    onPress={() => void updateController.onInstallUpdate()}
+                  >
+                    <AppIcon name="download" size={ui.font(15)} />
+                    <Text style={[styles.primaryBtnText, { fontSize: ui.font(12.5) }]}>
+                      {updateController.installing ? 'Downloading...' : 'Download & Restart'}
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={[
+                      styles.primaryBtn,
+                      styles.updateActionBtn,
+                      {
+                        minHeight: ui.controlHeight,
+                        borderRadius: 999,
+                        paddingHorizontal: ui.space(16),
+                        paddingVertical: ui.space(8),
+                      },
+                    ]}
+                    onPress={() => {
+                      void Linking.openURL(availableUpdate.releaseUrl);
+                    }}
+                  >
+                    <AppIcon name="web" size={ui.font(15)} />
+                    <Text style={[styles.primaryBtnText, { fontSize: ui.font(12.5) }]}>
+                      View on GitHub
+                    </Text>
+                  </Pressable>
+                )}
+                {updateController ? (
+                  <Pressable
+                    style={[
+                      styles.secondaryBtn,
+                      {
+                        minHeight: ui.controlHeight,
+                        borderRadius: 999,
+                        paddingHorizontal: ui.space(14),
+                        paddingVertical: ui.space(8),
+                        flexGrow: 1,
+                      },
+                    ]}
+                    onPress={updateController.onOpenModal}
+                  >
+                    <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                      Full Release Notes
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
+          <View style={styles.syncActionRow}>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                {
+                  minHeight: ui.controlHeight,
+                  borderRadius: 999,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  paddingHorizontal: ui.space(16),
+                  paddingVertical: ui.space(9),
+                  flexGrow: 1,
+                },
+              ]}
+              disabled={otaBusy}
+              onPress={() => void handleCheckOtaUpdate()}
+            >
+              <AppIcon name="dataSync" size={ui.font(15)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12.5) }]}>
+                {otaBusy && !updateController?.installing
+                  ? 'Checking Updates...'
+                  : 'Check for Updates'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                {
+                  minHeight: ui.controlHeight,
+                  borderRadius: 999,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  paddingHorizontal: ui.space(14),
+                  paddingVertical: ui.space(9),
+                  flexGrow: 1,
+                },
+              ]}
+              onPress={() => setShowCurrentHighlights((prev) => !prev)}
+            >
+              <AppIcon name={showCurrentHighlights ? 'chevronUp' : 'chevronDown'} size={ui.font(14)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(12) }]}>
+                {showCurrentHighlights ? 'Hide Notes' : `What's New (v${currentVersion})`}
+              </Text>
+            </Pressable>
+          </View>
+
+          {showCurrentHighlights ? (
+            <View
+              style={[
+                styles.logRowCard,
+                { padding: ui.space(12), gap: ui.space(7) },
+              ]}
+            >
+              <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                Highlights in farmDB v{currentVersion}
+              </Text>
+              {CURRENT_RELEASE_HIGHLIGHTS.map((item, idx) => (
+                <View key={`${idx}-${item.slice(0, 18)}`} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 7 }}>
+                  <View style={{ marginTop: 2 }}>
+                    <AppIcon name="check" size={ui.font(13)} />
+                  </View>
+                  <Text style={[styles.subHeading, { flex: 1, fontSize: ui.font(11.5), color: FARMDB_COLORS.text, marginTop: 0 }]}>
+                    {item}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
           {otaFeedback ? (
             <View
               style={[
@@ -1914,6 +2223,10 @@ const styles = StyleSheet.create({
     backgroundColor: FARMDB_COLORS.surfaceMuted,
     borderWidth: 1,
     borderColor: FARMDB_COLORS.border,
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1978,5 +2291,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+  },
+  updateVersionPill: {
+    backgroundColor: FARMDB_COLORS.accentSoft,
+    borderWidth: 1,
+    borderColor: '#9fd0b6',
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  updateVersionPillText: {
+    fontFamily: FARMDB_FONTS.monoBold,
+    color: FARMDB_COLORS.accentHover,
+  },
+  updateStatusNeutral: {
+    backgroundColor: FARMDB_COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+  },
+  updateStatusNeutralText: {
+    color: FARMDB_COLORS.textMuted,
+  },
+  updateHighlightCard: {
+    backgroundColor: '#f4faf6',
+    borderWidth: 1,
+    borderColor: '#9fd0b6',
+  },
+  updateActionBtn: {
+    flexDirection: 'row',
+    gap: 7,
+    flexGrow: 1,
   },
 });

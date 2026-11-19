@@ -29,7 +29,7 @@ export function MobileFileTabs<T extends string>({
   const compactMultiTab = tabs.length >= 3 && (ui.isLargeText || ui.isCramped);
 
   return (
-    <View style={[styles.barRow, { flexWrap: 'wrap' }]}>
+    <View style={styles.barRow}>
       {tabs.map((tab) => {
         const active = tab.id === activeId;
         return (
@@ -44,7 +44,6 @@ export function MobileFileTabs<T extends string>({
                 : styles.tabInactive,
               {
                 minHeight: Math.max(36, ui.chipHeight - 2),
-                minWidth: compactMultiTab ? 94 : 110,
                 paddingHorizontal: ui.space(6),
                 paddingVertical: ui.space(6),
                 flexDirection: compactMultiTab ? 'column' : 'row',
@@ -66,6 +65,8 @@ export function MobileFileTabs<T extends string>({
                 { fontSize: ui.font(11.5), textAlign: 'center' },
               ]}
               numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.82}
               maxFontSizeMultiplier={1.2}
             >
               {tab.label}

@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, BookOpen } from 'lucide-react';
 import {
   APP_SECTIONS,
   canAccountEditModule,
   canAccountViewModule,
   DEFAULT_FARM_SETTINGS,
+  FARMDB_APP_VERSION,
   formatAccountTierLabel,
+  formatUpdateNotificationSummary,
   isAdminAccount,
   type AppSectionId,
+  type AppUpdateInfo,
 } from '@farmdb/core';
 import {
   FarmDbProvider,
@@ -33,6 +36,12 @@ import {
 } from './db/tauriDriver';
 import { convertLocalImageUriToOptimizedDataUrl } from './services/imageStorage';
 import { dispatchDesktopNotification } from './services/notifications';
+import {
+  checkDesktopUpdate,
+  type DesktopUpdateController,
+  type DesktopUpdateFeedback,
+  type DesktopUpdateProgress,
+} from './services/updater';
 import { AlertsView } from './components/AlertsView';
 import { AuthPortalView } from './components/AuthPortalView';
 import { AnimalQuickPreviewProvider } from './components/AnimalQuickPreviewModal';
@@ -55,6 +64,7 @@ import { OwnershipsView } from './components/OwnershipsView';
 import { ProductionView } from './components/ProductionView';
 import { SettingsView } from './components/SettingsView';
 import { TutorialOverlay } from './components/TutorialOverlay';
+import { UpdateAvailableModal } from './components/UpdateAvailableModal';
 
 function isRunningInsideTauri(): boolean {
   return (
@@ -90,6 +100,21 @@ function DesktopShell({
   }
   const [dueBanners, setDueBanners] = useState<AlertNotificationPayload[]>([]);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateProgressPercent, setUpdateProgressPercent] = useState<number | null>(null);
+  const [updateProgressLabel, setUpdateProgressLabel] = useState<string | null>(null);
+  const [updateLastCheckedAt, setUpdateLastCheckedAt] = useState<string | null>(null);
+  const [updateFeedback, setUpdateFeedback] = useState<DesktopUpdateFeedback | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<AppUpdateInfo | null>(null);
+  const [updateBannerDismissedVersion, setUpdateBannerDismissedVersion] = useState<string | null>(null);
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateInstallError, setUpdateInstallError] = useState<string | null>(null);
+  const updateInstallFnRef = useRef<
+    ((onProgress?: (progress: DesktopUpdateProgress) => void) => Promise<void>) | undefined
+  >(undefined);
+  const notifiedUpdateVersionRef = useRef<string | null>(null);
+  const autoUpdateCheckedRef = useRef(false);
   const { driverKind } = useFarmDb();
   const summaryQuery = useFarmSummary();
   const settingsQuery = useFarmSettings();
@@ -101,6 +126,8 @@ function DesktopShell({
   const summary = summaryQuery.data;
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
   const activeAccount = activeAccountQuery.data;
+  const enableNotificationsRef = useRef(settings.enableNotifications);
+  enableNotificationsRef.current = settings.enableNotifications;
 
   useEffect(() => {
     if (!isRunningInsideTauri()) return;
@@ -169,6 +196,123 @@ function DesktopShell({
     !isSignedOut &&
     !isPendingGate &&
     activeAccount?.onboardingCompleted === false;
+
+  const runUpdateCheck = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    setUpdateChecking(true);
+    setUpdateInstallError(null);
+    if (!silent) {
+      setUpdateFeedback(null);
+    }
+    try {
+      const outcome = await checkDesktopUpdate();
+      setUpdateLastCheckedAt(outcome.checkedAt);
+      if (outcome.status === 'available' && outcome.availableUpdate) {
+        const nextUpdate = outcome.availableUpdate;
+        setAvailableUpdate(nextUpdate);
+        updateInstallFnRef.current = outcome.install;
+        if (!silent) {
+          setUpdateBannerDismissedVersion(null);
+          setUpdateFeedback({ kind: 'ok', text: outcome.message });
+        }
+        if (
+          notifiedUpdateVersionRef.current !== nextUpdate.version &&
+          enableNotificationsRef.current
+        ) {
+          notifiedUpdateVersionRef.current = nextUpdate.version;
+          const summaryMsg = formatUpdateNotificationSummary(nextUpdate);
+          void dispatchDesktopNotification(summaryMsg);
+        }
+      } else {
+        setAvailableUpdate(null);
+        updateInstallFnRef.current = undefined;
+        if (!silent) {
+          setUpdateFeedback({ kind: 'ok', text: outcome.message });
+        }
+      }
+    } catch (err) {
+      if (!silent) {
+        setUpdateFeedback({
+          kind: 'err',
+          text:
+            err instanceof Error
+              ? `Update check failed: ${err.message}`
+              : 'Unable to check for desktop updates.',
+        });
+      }
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, []);
+
+  const handleInstallDesktopUpdate = useCallback(async () => {
+    const installer = updateInstallFnRef.current;
+    if (!installer) return;
+    setUpdateInstalling(true);
+    setUpdateInstallError(null);
+    setUpdateProgressPercent(0);
+    setUpdateProgressLabel(
+      availableUpdate
+        ? `Downloading farmDB v${availableUpdate.version}...`
+        : 'Downloading farmDB update...'
+    );
+    try {
+      await installer((progress) => {
+        setUpdateProgressPercent(progress.percent);
+        setUpdateProgressLabel(progress.label);
+      });
+    } catch (err) {
+      const errText =
+        err instanceof Error
+          ? `Update installation failed: ${err.message}`
+          : 'Unable to install update automatically.';
+      setUpdateInstallError(errText);
+      setUpdateFeedback({ kind: 'err', text: errText });
+    } finally {
+      setUpdateInstalling(false);
+    }
+  }, [availableUpdate]);
+
+  useEffect(() => {
+    if (isSignedOut || showAuthPortal || showOnboarding) {
+      return;
+    }
+    if (autoUpdateCheckedRef.current) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      autoUpdateCheckedRef.current = true;
+      void runUpdateCheck({ silent: true });
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [isSignedOut, showAuthPortal, showOnboarding, runUpdateCheck]);
+
+  const desktopUpdateController = useMemo<DesktopUpdateController>(
+    () => ({
+      currentVersion: FARMDB_APP_VERSION,
+      checking: updateChecking,
+      installing: updateInstalling,
+      progressPercent: updateProgressPercent,
+      progressLabel: updateProgressLabel,
+      lastCheckedAt: updateLastCheckedAt,
+      feedback: updateFeedback,
+      availableUpdate,
+      onCheckForUpdates: () => runUpdateCheck({ silent: false }),
+      onOpenModal: () => setUpdateModalOpen(true),
+      onInstallUpdate: handleInstallDesktopUpdate,
+    }),
+    [
+      updateChecking,
+      updateInstalling,
+      updateProgressPercent,
+      updateProgressLabel,
+      updateLastCheckedAt,
+      updateFeedback,
+      availableUpdate,
+      runUpdateCheck,
+      handleInstallDesktopUpdate,
+    ]
+  );
 
   const { checkNow } = useAlertBackgroundWorker(dispatcher, {
     enabled:
@@ -415,6 +559,11 @@ function DesktopShell({
                 {getSectionIcon('settings', 'Settings')}
                 <span>Settings</span>
               </span>
+              {availableUpdate && (
+                <span className="nav-badge nav-badge-update" title={`farmDB v${availableUpdate.version} available`}>
+                  1
+                </span>
+              )}
             </button>
           )}
 
@@ -478,6 +627,49 @@ function DesktopShell({
             </span>
           </div>
         )}
+
+        {availableUpdate &&
+          updateBannerDismissedVersion !== availableUpdate.version && (
+            <div className="update-notification-banner" role="status">
+              <div className="update-notification-main">
+                <img src={APP_ICONS.downloads} alt="" className="app-icon-md" />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <strong>farmDB v{availableUpdate.version} Available</strong>
+                    <span className="update-version-pill">
+                      v{FARMDB_APP_VERSION} → v{availableUpdate.version}
+                    </span>
+                  </div>
+                  <p className="update-notification-summary">
+                    {availableUpdate.fixes.length > 0
+                      ? `${availableUpdate.fixes[0]}${availableUpdate.fixes.length > 1 ? ` (+${availableUpdate.fixes.length - 1} more fixes)` : ''}`
+                      : availableUpdate.summary || 'New bug fixes and improvements ready to install.'}
+                  </p>
+                </div>
+              </div>
+              <div className="row-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => setUpdateModalOpen(true)}
+                >
+                  View Fixes &amp; Update
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setUpdateBannerDismissedVersion(availableUpdate.version)}
+                  aria-label="Dismiss update notification banner"
+                >
+                  <img
+                    src={APP_ICONS.letterX}
+                    alt=""
+                    className="app-icon-sm"
+                  />
+                </button>
+              </div>
+            </div>
+          )}
 
         {dueBanners.length > 0 && (
           <div className="alert-toast-banner" role="alert">
@@ -565,6 +757,7 @@ function DesktopShell({
             sqlController={sqlController}
             onOpenBackup={() => setActiveSection('backup')}
             onOpenTutorial={() => setTutorialOpen(true)}
+            updateController={desktopUpdateController}
           />
         )}
       </main>
@@ -574,6 +767,22 @@ function DesktopShell({
         activeAccount={activeAccount}
         activeSection={activeSection}
         onClose={() => setTutorialOpen(false)}
+      />
+
+      <UpdateAvailableModal
+        visible={updateModalOpen}
+        currentVersion={FARMDB_APP_VERSION}
+        update={availableUpdate}
+        installing={updateInstalling}
+        progressPercent={updateProgressPercent}
+        progressLabel={updateProgressLabel}
+        errorText={updateInstallError}
+        onInstall={() => void handleInstallDesktopUpdate()}
+        onClose={() => {
+          if (!updateInstalling) {
+            setUpdateModalOpen(false);
+          }
+        }}
       />
       </div>
     </div>
