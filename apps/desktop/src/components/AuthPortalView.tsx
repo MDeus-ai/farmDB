@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildStandardUserPermissions,
   DEFAULT_FARM_SETTINGS,
@@ -6,6 +6,7 @@ import {
   formatAccountRoleLabel,
   formatAccountStatusLabel,
   formatAccountTierLabel,
+  getDefaultPermissionsForRole,
   isAdminAccount,
   type FarmAccount,
   type FarmAccountAvatar,
@@ -13,13 +14,12 @@ import {
 } from '@farmdb/core';
 import {
   useActiveFarmAccount,
-  useCreateFarmAccount,
   useFarmAccountList,
   useFarmSettings,
   useRecoverAdminFromCloud,
+  useSignUpFarmAccount,
   useSwitchFarmAccount,
   useTriggerCloudSync,
-  useUpdateFarmAccount,
   useUpdateFarmSettings,
 } from '@farmdb/db';
 import { APP_ICONS } from '../assets/icons';
@@ -62,22 +62,31 @@ export function AuthPortalView({
   const accounts = accountsQuery.data ?? [];
 
   const switchMut = useSwitchFarmAccount();
-  const createAccountMut = useCreateFarmAccount();
+  const signUpAccountMut = useSignUpFarmAccount();
   const recoverAdminMut = useRecoverAdminFromCloud();
   const syncMut = useTriggerCloudSync();
   const updateSettingsMut = useUpdateFarmSettings();
-  const updateAccountMut = useUpdateFarmAccount();
 
   const isPendingGate = activeAccount?.status === 'pending';
 
   const [tab, setTab] = useState<PortalTab>('signin');
+  const didInitTabRef = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Sign-In state
   const [selectedLoginId, setSelectedLoginId] = useState<string>(
-    accounts[0]?.id ?? 'owner-admin'
+    () => accounts[0]?.id ?? ''
   );
+
+  useEffect(() => {
+    if (!accountsQuery.isLoading && !didInitTabRef.current) {
+      didInitTabRef.current = true;
+      if (accounts.length === 0) {
+        setTab('signup');
+      }
+    }
+  }, [accountsQuery.isLoading, accounts.length]);
   const [loginPin, setLoginPin] = useState('');
   const [showCloudRecovery, setShowCloudRecovery] = useState(false);
   const [recoverCloudKey, setRecoverCloudKey] = useState('');
@@ -143,6 +152,10 @@ export function AuthPortalView({
     setNotice(null);
     try {
       if (signupMode === 'user_account') {
+        if (!sName.trim()) {
+          setErrorMsg('Please enter your full name.');
+          return;
+        }
         if (sPin.trim().length < 4) {
           setErrorMsg(
             'Please set a Login PIN / passcode (at least 4 characters) for this user account.'
@@ -156,8 +169,8 @@ export function AuthPortalView({
               ? 'farmerFemale'
               : 'farmer';
 
-        const created = await createAccountMut.mutateAsync({
-          displayName: sName,
+        const created = await signUpAccountMut.mutateAsync({
+          displayName: sName.trim(),
           email: sEmail || null,
           phone: sPhone || null,
           role: sRole,
@@ -175,44 +188,55 @@ export function AuthPortalView({
         });
         onSuccessEnterApp?.();
       } else {
-        const adminAccount =
-          accounts.find((a) => a.isPrimaryAdmin) ?? accounts[0];
+        const resolvedFarmName = sFarmName.trim() || sName.trim();
+        if (!resolvedFarmName) {
+          setErrorMsg('Please enter a Farm / Homestead name for this Admin account.');
+          return;
+        }
+        const hasPrimaryAdmin = accounts.some((a) => a.isPrimaryAdmin);
+        if (hasPrimaryAdmin && sPin.trim().length < 4) {
+          setErrorMsg(
+            'Please set a Login PIN / passcode (at least 4 characters) for additional Admin accounts.'
+          );
+          return;
+        }
         const hasCloudSetup =
           sSupabaseUrl.trim().length > 0 && sSupabaseAnonKey.trim().length > 0;
         const cleanWorkspace =
           sCloudWorkspace.trim() || 'farmdb-homestead-main';
-        if (sFarmName.trim() || hasCloudSetup) {
-          await updateSettingsMut.mutateAsync({
-            ...(sFarmName.trim() ? { farmName: sFarmName.trim() } : {}),
-            activeAccountId: adminAccount?.id ?? 'owner-admin',
-            ...(hasCloudSetup
-              ? {
-                  cloudSyncEnabled: true,
-                  supabaseUrl: sSupabaseUrl.trim(),
-                  supabaseAnonKey: sSupabaseAnonKey.trim(),
-                  cloudWorkspaceId: cleanWorkspace,
-                }
-              : {}),
-          });
-        }
-        if (adminAccount) {
-          await updateAccountMut.mutateAsync({
-            id: adminAccount.id,
-            input: {
-              displayName: sName.trim() || adminAccount.displayName,
-              email: sEmail || null,
-              phone: sPhone || null,
-              accessCode: sPin || null,
-              ...(hasCloudSetup
-                ? {
-                    supabaseUrl: sSupabaseUrl.trim(),
-                    supabaseAnonKey: sSupabaseAnonKey.trim(),
-                    cloudWorkspaceId: cleanWorkspace,
-                  }
-                : {}),
-            },
-          });
-        }
+        const createdAdmin = await signUpAccountMut.mutateAsync({
+          displayName: sName.trim() || resolvedFarmName,
+          email: sEmail || null,
+          phone: sPhone || null,
+          role: 'admin',
+          relationship: 'Admin',
+          avatarKey: 'farmer',
+          accessCode: sPin || null,
+          supabaseUrl: hasCloudSetup ? sSupabaseUrl.trim() : null,
+          supabaseAnonKey: hasCloudSetup ? sSupabaseAnonKey.trim() : null,
+          cloudWorkspaceId: hasCloudSetup ? cleanWorkspace : null,
+          isPrimaryAdmin: !hasPrimaryAdmin,
+          canManageNetwork: true,
+          canSyncCloud: true,
+          status: 'active',
+          permissions: getDefaultPermissionsForRole('admin'),
+        });
+        await switchMut.mutateAsync({
+          accountId: createdAdmin.id,
+          accessCode: sPin || undefined,
+        });
+        await updateSettingsMut.mutateAsync({
+          farmName: resolvedFarmName,
+          activeAccountId: createdAdmin.id,
+          ...(hasCloudSetup
+            ? {
+                cloudSyncEnabled: true,
+                supabaseUrl: sSupabaseUrl.trim(),
+                supabaseAnonKey: sSupabaseAnonKey.trim(),
+                cloudWorkspaceId: cleanWorkspace,
+              }
+            : {}),
+        });
         onSuccessEnterApp?.();
       }
     } catch (err) {
@@ -457,71 +481,104 @@ export function AuthPortalView({
 
         {tab === 'signin' ? (
           <form onSubmit={handleSignInSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="auth-accounts-grid">
-              {accounts.map((acc: FarmAccount) => {
-                const isSelected = selectedLoginAccount?.id === acc.id;
-                return (
-                  <button
-                    key={acc.id}
-                    type="button"
-                    className={`auth-account-tile ${isSelected ? 'is-selected' : ''}`}
-                    onClick={() => {
-                      setSelectedLoginId(acc.id);
-                      setLoginPin('');
-                      setErrorMsg(null);
-                    }}
-                  >
-                    <img
-                      src={getAvatarIcon(acc.avatarKey)}
-                      alt=""
-                      className="app-icon-md"
-                    />
-                    <div style={{ textAlign: 'left', minWidth: 0, flex: 1 }}>
-                      <strong style={{ display: 'block', fontSize: '0.92rem' }}>
-                        {acc.displayName}
-                      </strong>
-                      <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
-                        {formatAccountTierLabel(acc)} · {formatAccountRoleLabel(acc.role)} · {formatAccountStatusLabel(acc.status)}
-                        {!isAdminAccount(acc)
-                          ? acc.canSyncCloud
-                            ? ' · Network DB'
-                            : ' · Local DB'
-                          : ''}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {selectedLoginAccount &&
-            (!selectedLoginAccount.isPrimaryAdmin ||
-              Boolean(selectedLoginAccount.accessCode)) && (
-              <div className="form-field">
-                <label className="form-label">
-                  Passcode / PIN for {selectedLoginAccount.displayName}
-                </label>
-                <input
-                  className="input"
-                  type="password"
-                  value={loginPin}
-                  onChange={(e) => setLoginPin(e.target.value)}
-                  placeholder="Enter assigned access PIN..."
-                  autoFocus
-                />
+            {accounts.length === 0 ? (
+              <div
+                style={{
+                  padding: 14,
+                  borderRadius: 12,
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface-muted)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-muted)' }}>
+                  No farm accounts exist on this computer yet. Create a User Account
+                  or Admin Account in Sign Up, or restore an Admin workspace from
+                  Cloud below.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setErrorMsg(null);
+                    setTab('signup');
+                  }}
+                >
+                  <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
+                  Create an Account
+                </button>
               </div>
-            )}
+            ) : (
+              <>
+                <div className="auth-accounts-grid">
+                  {accounts.map((acc: FarmAccount) => {
+                    const isSelected = selectedLoginAccount?.id === acc.id;
+                    return (
+                      <button
+                        key={acc.id}
+                        type="button"
+                        className={`auth-account-tile ${isSelected ? 'is-selected' : ''}`}
+                        onClick={() => {
+                          setSelectedLoginId(acc.id);
+                          setLoginPin('');
+                          setErrorMsg(null);
+                        }}
+                      >
+                        <img
+                          src={getAvatarIcon(acc.avatarKey)}
+                          alt=""
+                          className="app-icon-md"
+                        />
+                        <div style={{ textAlign: 'left', minWidth: 0, flex: 1 }}>
+                          <strong style={{ display: 'block', fontSize: '0.92rem' }}>
+                            {acc.displayName}
+                          </strong>
+                          <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                            {formatAccountTierLabel(acc)} · {formatAccountRoleLabel(acc.role)} · {formatAccountStatusLabel(acc.status)}
+                            {!isAdminAccount(acc)
+                              ? acc.canSyncCloud
+                                ? ' · Network DB'
+                                : ' · Local DB'
+                              : ''}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
 
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={!selectedLoginAccount || switchMut.isPending}
-            >
-              <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-              {selectedLoginAccount?.status === 'pending'
-                ? 'View Pending Status'
-                : `Sign In as ${selectedLoginAccount?.displayName ?? 'Selected Account'}`}
-            </button>
+                {selectedLoginAccount &&
+                (!selectedLoginAccount.isPrimaryAdmin ||
+                  Boolean(selectedLoginAccount.accessCode)) && (
+                  <div className="form-field">
+                    <label className="form-label">
+                      Passcode / PIN for {selectedLoginAccount.displayName}
+                    </label>
+                    <input
+                      className="input"
+                      type="password"
+                      value={loginPin}
+                      onChange={(e) => setLoginPin(e.target.value)}
+                      placeholder="Enter assigned access PIN..."
+                      autoFocus
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={!selectedLoginAccount || switchMut.isPending}
+                >
+                  <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                  {selectedLoginAccount?.status === 'pending'
+                    ? 'View Pending Status'
+                    : `Sign In as ${selectedLoginAccount?.displayName ?? 'Selected Account'}`}
+                </button>
+              </>
+            )}
 
             <div
               style={{
@@ -656,42 +713,58 @@ export function AuthPortalView({
             </div>
 
             <div className="form-grid">
-              <div className="form-field">
-                <label className="form-label">Full Name *</label>
-                <input
-                  className="input"
-                  value={sName}
-                  onChange={(e) => setSName(e.target.value)}
-                  placeholder="e.g. Sarah Namono"
-                  required
-                />
-              </div>
-              {signupMode === 'user_account' ? (
-                <div className="form-field">
-                  <label className="form-label">Account Role</label>
-                  <ModernSelect
-                    fullWidth
-                    value={sRole}
-                    options={FARM_ACCOUNT_ROLES.filter((r) => r !== 'admin').map(
-                      (r) => ({
-                        value: r,
-                        label: formatAccountRoleLabel(r),
-                        iconSrc: APP_ICONS.networking,
-                      })
-                    )}
-                    onChange={setSRole}
-                  />
-                </div>
+              {signupMode === 'admin_account' ? (
+                <>
+                  <div className="form-field">
+                    <label className="form-label">Farm / Homestead Name *</label>
+                    <input
+                      className="input"
+                      value={sFarmName}
+                      onChange={(e) => setSFarmName(e.target.value)}
+                      placeholder="farmDB Homestead"
+                      required
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label className="form-label">
+                      Admin Display Name (Optional)
+                    </label>
+                    <input
+                      className="input"
+                      value={sName}
+                      onChange={(e) => setSName(e.target.value)}
+                      placeholder="Leave blank to use Farm Name"
+                    />
+                  </div>
+                </>
               ) : (
-                <div className="form-field">
-                  <label className="form-label">Farm / Homestead Name *</label>
-                  <input
-                    className="input"
-                    value={sFarmName}
-                    onChange={(e) => setSFarmName(e.target.value)}
-                    placeholder="farmDB Homestead"
-                  />
-                </div>
+                <>
+                  <div className="form-field">
+                    <label className="form-label">Full Name *</label>
+                    <input
+                      className="input"
+                      value={sName}
+                      onChange={(e) => setSName(e.target.value)}
+                      placeholder="e.g. Sarah Namono"
+                      required
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label className="form-label">Account Role</label>
+                    <ModernSelect
+                      fullWidth
+                      value={sRole}
+                      options={FARM_ACCOUNT_ROLES.filter((r) => r !== 'admin').map(
+                        (r) => ({
+                          value: r,
+                          label: formatAccountRoleLabel(r),
+                          iconSrc: APP_ICONS.networking,
+                        })
+                      )}
+                      onChange={setSRole}
+                    />
+                  </div>
+                </>
               )}
               <div className="form-field">
                 <label className="form-label">Email</label>
@@ -789,14 +862,15 @@ export function AuthPortalView({
               type="submit"
               className="btn btn-primary"
               disabled={
-                createAccountMut.isPending ||
+                signUpAccountMut.isPending ||
+                switchMut.isPending ||
                 updateSettingsMut.isPending
               }
             >
               <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
               {signupMode === 'user_account'
                 ? 'Create User Account & Enter'
-                : 'Save Admin Account & Enter Farm'}
+                : 'Create Admin Account & Enter'}
             </button>
           </form>
         )}

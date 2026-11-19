@@ -18,6 +18,7 @@
     },
     "android": {
       "package": "com.zeus_doreens.farmdb",
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#e6f2ec",
         "foregroundImage": "./assets/android-icon-foreground.png",

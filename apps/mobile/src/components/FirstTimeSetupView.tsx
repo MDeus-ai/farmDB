@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
@@ -96,6 +97,9 @@ export function FirstTimeSetupView({
 
   const [fontScale, setFontScale] = useState<FontScale>(currentSettings.fontScale);
   const [uiDensity, setUiDensity] = useState<UiDensity>(currentSettings.uiDensity);
+  const [mobileIconMode, setMobileIconMode] = useState<boolean>(
+    currentSettings.mobileIconMode
+  );
   const [volumeUnit, setVolumeUnit] = useState<VolumeUnit>(currentSettings.volumeUnit);
   const [currencySymbol, setCurrencySymbol] = useState(
     currentSettings.currencySymbol
@@ -132,16 +136,17 @@ export function FirstTimeSetupView({
       { id: 'db' as const, shortLabel: '1. DB', title: '1. Location of Your Databases' },
       { id: 'font' as const, shortLabel: '2. Font', title: '2. Font Size' },
       { id: 'density' as const, shortLabel: '3. Spacing', title: '3. UI Element Size' },
-      { id: 'units' as const, shortLabel: '4. Units', title: '4. Milk / Volume Units' },
-      { id: 'currency' as const, shortLabel: '5. Currency', title: '5. Currency' },
+      { id: 'icon_ui' as const, shortLabel: '4. Icon UI', title: '4. Compact Icon UI' },
+      { id: 'units' as const, shortLabel: '5. Units', title: '5. Milk / Volume Units' },
+      { id: 'currency' as const, shortLabel: '6. Currency', title: '6. Currency' },
     ];
     if (isAdmin && canEditSettings) {
       return [
         ...base,
         {
           id: 'cloud' as const,
-          shortLabel: '6. Cloud',
-          title: '6. Optional: Supabase Cloud Setup',
+          shortLabel: '7. Cloud',
+          title: '7. Optional: Supabase Cloud Setup',
         },
       ];
     }
@@ -156,6 +161,7 @@ export function FirstTimeSetupView({
   useEffect(() => {
     setFontScale(currentSettings.fontScale);
     setUiDensity(currentSettings.uiDensity);
+    setMobileIconMode(currentSettings.mobileIconMode);
     setVolumeUnit(currentSettings.volumeUnit);
     setCurrencySymbol(currentSettings.currencySymbol);
     setUseCustomCurrency(
@@ -167,6 +173,17 @@ export function FirstTimeSetupView({
     setCloudEnabled(currentSettings.cloudSyncEnabled);
     setAutoSync(currentSettings.autoSyncOnInternet);
   }, [currentSettings]);
+
+  const setPreviewOverrides = ui.setPreviewOverrides;
+  useEffect(() => {
+    setPreviewOverrides({ fontScale, uiDensity, mobileIconMode });
+  }, [fontScale, uiDensity, mobileIconMode, setPreviewOverrides]);
+
+  useEffect(() => {
+    return () => {
+      setPreviewOverrides(null);
+    };
+  }, [setPreviewOverrides]);
 
   useEffect(() => {
     if (!sqlController) return;
@@ -292,6 +309,7 @@ export function FirstTimeSetupView({
         const patch: Partial<FarmSettings> = {
           fontScale,
           uiDensity,
+          mobileIconMode,
           volumeUnit,
           currencySymbol: cleanCurrency,
         };
@@ -413,6 +431,10 @@ export function FirstTimeSetupView({
         </View>
       </View>
 
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
       <FarmScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{
@@ -561,7 +583,7 @@ export function FirstTimeSetupView({
             <Text style={[styles.hintText, { fontSize: ui.font(10) }]}>
               LIVE TEXT PREVIEW ({FONT_SCALE_LABELS[fontScale].toUpperCase()})
             </Text>
-            <Text style={{ fontFamily: FARMDB_FONTS.bold, fontSize: previewTextSize, color: FARMDB_COLORS.text }}>
+            <Text style={{ fontFamily: FARMDB_FONTS.bold, fontSize: ui.font(14), color: FARMDB_COLORS.text }}>
               Clover (COW-512) · {sampleYield} · {sampleMoney}
             </Text>
           </View>
@@ -620,22 +642,144 @@ export function FirstTimeSetupView({
             <Text style={[styles.hintText, { fontSize: ui.font(10) }]}>
               LIVE BUTTON HEIGHT PREVIEW ({UI_DENSITY_LABELS[uiDensity].toUpperCase()})
             </Text>
-            <View style={[styles.previewBtnSample, { height: previewBtnHeight }]}>
-              <Text style={{ fontFamily: FARMDB_FONTS.bold, fontSize: previewTextSize, color: '#fff' }}>
-                Sample Button Height ({previewBtnHeight}px)
+            <View style={[styles.previewBtnSample, { height: ui.controlHeight }]}>
+              <Text style={{ fontFamily: FARMDB_FONTS.bold, fontSize: ui.font(13), color: '#fff' }}>
+                Sample Button Height ({ui.controlHeight}px)
               </Text>
             </View>
           </View>
         </View>
         ) : null}
 
-        {/* Step 4. Units */}
+        {/* Step 4. Compact Icon UI */}
+        {activeStep.id === 'icon_ui' ? (
+        <View style={[styles.card, { padding: ui.space(14), borderRadius: ui.radius, gap: ui.space(10) }]}>
+          <View style={styles.cardHeader}>
+            <AppIcon name="livestock" size={ui.font(18)} />
+            <Text style={[styles.cardTitle, { fontSize: ui.font(15) }]}>
+              4. Compact Icon UI
+            </Text>
+          </View>
+          <Text style={[styles.explainText, { fontSize: ui.font(12) }]}>
+            Uses crisp icons for navigation tabs, species badges, and row
+            actions so more livestock details fit comfortably on phone screens.
+            Turn this off if you prefer full word labels beside icons.
+          </Text>
+
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+                Compact Icon UI (Recommended)
+              </Text>
+              <Text style={[styles.hintText, { fontSize: ui.font(11) }]}>
+                {mobileIconMode
+                  ? 'Icon-first navigation and compact badges active.'
+                  : 'Word labels visible alongside icons across navigation & lists.'}
+              </Text>
+            </View>
+            <Switch
+              value={mobileIconMode}
+              disabled={!canEditSettings}
+              onValueChange={setMobileIconMode}
+              trackColor={{
+                false: FARMDB_COLORS.border,
+                true: FARMDB_COLORS.accent,
+              }}
+            />
+          </View>
+
+          <View style={styles.segmentGrid}>
+            <Pressable
+              disabled={!canEditSettings}
+              style={[
+                styles.segBtn,
+                mobileIconMode && styles.segBtnActive,
+                { minHeight: 38 },
+              ]}
+              onPress={() => setMobileIconMode(true)}
+            >
+              <Text
+                style={[
+                  styles.segBtnText,
+                  mobileIconMode && styles.segBtnTextActive,
+                  { fontSize: ui.font(12) },
+                ]}
+              >
+                Compact Icons
+              </Text>
+            </Pressable>
+            <Pressable
+              disabled={!canEditSettings}
+              style={[
+                styles.segBtn,
+                !mobileIconMode && styles.segBtnActive,
+                { minHeight: 38 },
+              ]}
+              onPress={() => setMobileIconMode(false)}
+            >
+              <Text
+                style={[
+                  styles.segBtnText,
+                  !mobileIconMode && styles.segBtnTextActive,
+                  { fontSize: ui.font(12) },
+                ]}
+              >
+                Icons + Word Labels
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.previewBox}>
+            <Text style={[styles.hintText, { fontSize: ui.font(10) }]}>
+              LIVE NAVIGATION BAR PREVIEW ({mobileIconMode ? 'COMPACT ICONS' : 'ICONS + LABELS'})
+            </Text>
+            <View style={styles.dockPreviewRow}>
+              {(
+                [
+                  { icon: 'livestock', label: 'Herd', active: true },
+                  { icon: 'production', label: 'Milk', active: false },
+                  { icon: 'medical', label: 'Health', active: false },
+                  { icon: 'financial', label: 'Finance', active: false },
+                ] as const
+              ).map((item) => (
+                <View
+                  key={item.label}
+                  style={[
+                    styles.dockPreviewItem,
+                    item.active && styles.dockPreviewItemActive,
+                  ]}
+                >
+                  <AppIcon
+                    name={item.icon}
+                    size={ui.font(mobileIconMode ? 18 : 15)}
+                    color={item.active ? '#ffffff' : FARMDB_COLORS.textMuted}
+                  />
+                  {!mobileIconMode ? (
+                    <Text
+                      style={{
+                        fontFamily: FARMDB_FONTS.semibold,
+                        fontSize: ui.font(10),
+                        color: item.active ? '#ffffff' : FARMDB_COLORS.text,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {item.label}
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          </View>
+        </View>
+        ) : null}
+
+        {/* Step 5. Units */}
         {activeStep.id === 'units' ? (
         <View style={[styles.card, { padding: ui.space(14), borderRadius: ui.radius, gap: ui.space(10) }]}>
           <View style={styles.cardHeader}>
             <AppIcon name="production" size={ui.font(18)} />
             <Text style={[styles.cardTitle, { fontSize: ui.font(15) }]}>
-              4. Milk &amp; Volume Units
+              5. Milk &amp; Volume Units
             </Text>
           </View>
           <Text style={[styles.explainText, { fontSize: ui.font(12) }]}>
@@ -687,13 +831,13 @@ export function FirstTimeSetupView({
         </View>
         ) : null}
 
-        {/* Step 5. Currency */}
+        {/* Step 6. Currency */}
         {activeStep.id === 'currency' ? (
         <View style={[styles.card, { padding: ui.space(14), borderRadius: ui.radius, gap: ui.space(10) }]}>
           <View style={styles.cardHeader}>
             <AppIcon name="financial" size={ui.font(18)} />
             <Text style={[styles.cardTitle, { fontSize: ui.font(15) }]}>
-              5. Currency
+              6. Currency
             </Text>
           </View>
           <Text style={[styles.explainText, { fontSize: ui.font(12) }]}>
@@ -746,13 +890,13 @@ export function FirstTimeSetupView({
         </View>
         ) : null}
 
-        {/* 6. Admin Only: Optional Step-by-Step Supabase Cloud DB Setup */}
+        {/* 7. Admin Only: Optional Step-by-Step Supabase Cloud DB Setup */}
         {activeStep.id === 'cloud' && isAdmin && canEditSettings ? (
           <View style={[styles.card, { padding: ui.space(14), borderRadius: ui.radius, gap: ui.space(10) }]}>
             <View style={styles.cardHeader}>
               <AppIcon name="cloudHosting" size={ui.font(18)} />
               <Text style={[styles.cardTitle, { fontSize: ui.font(15) }]}>
-                6. Optional: Supabase Cloud DB Setup
+                7. Optional: Supabase Cloud DB Setup
               </Text>
             </View>
             <Text style={[styles.explainText, { fontSize: ui.font(12) }]}>
@@ -992,6 +1136,7 @@ export function FirstTimeSetupView({
           )}
         </View>
       </FarmScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -1164,6 +1309,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
+  },
+  dockPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    backgroundColor: FARMDB_COLORS.surface,
+    borderWidth: 1,
+    borderColor: FARMDB_COLORS.border,
+    borderRadius: 999,
+    padding: 6,
+  },
+  dockPreviewItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 999,
+  },
+  dockPreviewItemActive: {
+    backgroundColor: FARMDB_COLORS.accent,
   },
   input: {
     backgroundColor: FARMDB_COLORS.surface,

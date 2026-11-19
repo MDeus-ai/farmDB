@@ -668,8 +668,8 @@ export function createNetworkRepository(
       if (!existing) return false;
       if (existing.isPrimaryAdmin) {
         throw new NetworkValidationError(
-          { isPrimaryAdmin: 'Primary Farm Owner (Admin) account cannot be deleted.' },
-          'Primary Farm Owner (Admin) account cannot be deleted.'
+          { isPrimaryAdmin: 'Primary Admin account cannot be deleted.' },
+          'Primary Admin account cannot be deleted.'
         );
       }
 

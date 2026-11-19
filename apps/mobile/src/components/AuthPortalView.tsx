@@ -148,12 +148,12 @@ export function AuthPortalView({
   async function handleSignUpSubmit() {
     setErrorMsg(null);
     setNotice(null);
-    if (!sName.trim()) {
-      setErrorMsg('Please enter your full name.');
-      return;
-    }
     try {
       if (signupMode === 'user_account') {
+        if (!sName.trim()) {
+          setErrorMsg('Please enter your full name.');
+          return;
+        }
         if (sPin.trim().length < 4) {
           setErrorMsg(
             'Please set a Login PIN / passcode (at least 4 characters) for this user account.'
@@ -168,7 +168,7 @@ export function AuthPortalView({
               : 'farmer';
 
         const created = await signUpAccountMut.mutateAsync({
-          displayName: sName,
+          displayName: sName.trim(),
           email: sEmail || null,
           phone: sPhone || null,
           role: sRole,
@@ -186,6 +186,11 @@ export function AuthPortalView({
         });
         onSuccessEnterApp?.();
       } else {
+        const resolvedFarmName = sFarmName.trim() || sName.trim();
+        if (!resolvedFarmName) {
+          setErrorMsg('Please enter a Farm / Homestead name for this Admin account.');
+          return;
+        }
         const hasPrimaryAdmin = accounts.some((a) => a.isPrimaryAdmin);
         if (hasPrimaryAdmin && sPin.trim().length < 4) {
           setErrorMsg(
@@ -198,13 +203,11 @@ export function AuthPortalView({
         const cleanWorkspace =
           sCloudWorkspace.trim() || 'farmdb-homestead-main';
         const createdAdmin = await signUpAccountMut.mutateAsync({
-          displayName: sName.trim(),
+          displayName: sName.trim() || resolvedFarmName,
           email: sEmail || null,
           phone: sPhone || null,
           role: 'admin',
-          relationship: hasPrimaryAdmin
-            ? 'Farm Administrator'
-            : 'Primary Farm Owner',
+          relationship: 'Admin',
           avatarKey: 'farmer',
           accessCode: sPin || null,
           supabaseUrl: hasCloudSetup ? sSupabaseUrl.trim() : null,
@@ -220,20 +223,18 @@ export function AuthPortalView({
           accountId: createdAdmin.id,
           accessCode: sPin || undefined,
         });
-        if (sFarmName.trim() || hasCloudSetup) {
-          await updateSettingsMut.mutateAsync({
-            ...(sFarmName.trim() ? { farmName: sFarmName.trim() } : {}),
-            activeAccountId: createdAdmin.id,
-            ...(hasCloudSetup
-              ? {
-                  cloudSyncEnabled: true,
-                  supabaseUrl: sSupabaseUrl.trim(),
-                  supabaseAnonKey: sSupabaseAnonKey.trim(),
-                  cloudWorkspaceId: cleanWorkspace,
-                }
-              : {}),
-          });
-        }
+        await updateSettingsMut.mutateAsync({
+          farmName: resolvedFarmName,
+          activeAccountId: createdAdmin.id,
+          ...(hasCloudSetup
+            ? {
+                cloudSyncEnabled: true,
+                supabaseUrl: sSupabaseUrl.trim(),
+                supabaseAnonKey: sSupabaseAnonKey.trim(),
+                cloudWorkspaceId: cleanWorkspace,
+              }
+            : {}),
+        });
         onSuccessEnterApp?.();
       }
     } catch (err) {
@@ -393,7 +394,7 @@ export function AuthPortalView({
                   <Text
                     style={[styles.pendingText, { fontSize: ui.font(12) }]}
                   >
-                    Your account joined {settings.farmName} with the Network Join Key and is waiting in Pending state. Once the Farm Owner (Admin) assigns privileges and accepts your request, you will enter the shared database.
+                    Your account joined {settings.farmName} with the Network Join Key and is waiting in Pending state. Once the Farm Admin assigns privileges and accepts your request, you will enter the shared database.
                   </Text>
                 </View>
               </View>
@@ -786,48 +787,62 @@ export function AuthPortalView({
                 </Pressable>
               </View>
 
-              <View style={styles.fieldGroup}>
-                <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-                  Full Name *
-                </Text>
-                <TextInput
-                  style={[styles.input, { fontSize: ui.font(14) }]}
-                  value={sName}
-                  onChangeText={setSName}
-                  placeholder="e.g. Sarah Namono"
-                />
-              </View>
-
-              {signupMode === 'user_account' ? (
-                <View style={styles.fieldGroup}>
-                  <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-                    Account Role
-                  </Text>
-                  <ModernDropdown
-                    value={sRole}
-                    options={FARM_ACCOUNT_ROLES.filter((r) => r !== 'admin').map(
-                      (r) => ({
-                        value: r,
-                        label: formatAccountRoleLabel(r),
-                        iconSource: MOBILE_APP_ICONS.networking,
-                      })
-                    )}
-                    title="Account Role"
-                    onChange={setSRole}
-                  />
-                </View>
+              {signupMode === 'admin_account' ? (
+                <>
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                      Farm / Homestead Name *
+                    </Text>
+                    <TextInput
+                      style={[styles.input, { fontSize: ui.font(14) }]}
+                      value={sFarmName}
+                      onChangeText={setSFarmName}
+                      placeholder="farmDB Homestead"
+                    />
+                  </View>
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                      Admin Display Name (Optional)
+                    </Text>
+                    <TextInput
+                      style={[styles.input, { fontSize: ui.font(14) }]}
+                      value={sName}
+                      onChangeText={setSName}
+                      placeholder="Leave blank to use Farm Name"
+                    />
+                  </View>
+                </>
               ) : (
-                <View style={styles.fieldGroup}>
-                  <Text style={[styles.label, { fontSize: ui.font(12) }]}>
-                    Farm / Homestead Name *
-                  </Text>
-                  <TextInput
-                    style={[styles.input, { fontSize: ui.font(14) }]}
-                    value={sFarmName}
-                    onChangeText={setSFarmName}
-                    placeholder="farmDB Homestead"
-                  />
-                </View>
+                <>
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                      Full Name *
+                    </Text>
+                    <TextInput
+                      style={[styles.input, { fontSize: ui.font(14) }]}
+                      value={sName}
+                      onChangeText={setSName}
+                      placeholder="e.g. Sarah Namono"
+                    />
+                  </View>
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                      Account Role
+                    </Text>
+                    <ModernDropdown
+                      value={sRole}
+                      options={FARM_ACCOUNT_ROLES.filter((r) => r !== 'admin').map(
+                        (r) => ({
+                          value: r,
+                          label: formatAccountRoleLabel(r),
+                          iconSource: MOBILE_APP_ICONS.networking,
+                        })
+                      )}
+                      title="Account Role"
+                      onChange={setSRole}
+                    />
+                  </View>
+                </>
               )}
 
               <View style={styles.fieldGroup}>

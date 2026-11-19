@@ -61,6 +61,7 @@ import { MOBILE_APP_ICONS } from '../assets/icons';
 import { FARMDB_COLORS, FARMDB_FONTS, useUiScale } from '../theme/uiScale';
 import { buildAnimalDropdownOption } from '../utils/animalOptions';
 import { AnimalEyeButton } from './AnimalQuickPreviewModal';
+import { PhoneLink } from './ContactLink';
 import { AppIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { MobileFileTabs } from './MobileFileTabs';
@@ -737,10 +738,15 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                     <Text style={[styles.workerName, { fontSize: ui.font(15) }]} numberOfLines={2}>
                       {worker.name}
                     </Text>
-                    <Text style={[styles.workerRole, { fontSize: ui.font(12) }]} numberOfLines={2}>
-                      {worker.role}
-                      {worker.phone ? ` · ${worker.phone}` : ''}
-                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+                      <Text style={[styles.workerRole, { fontSize: ui.font(12) }]} numberOfLines={2}>
+                        {worker.role}
+                        {worker.phone ? ' · ' : ''}
+                      </Text>
+                      {worker.phone ? (
+                        <PhoneLink phone={worker.phone} fontSize={ui.font(12)} />
+                      ) : null}
+                    </View>
                   </View>
                   <View style={styles.statusPill}>
                     <Text style={[styles.statusPillText, { fontSize: ui.font(10) }]}>

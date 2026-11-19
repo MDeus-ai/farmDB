@@ -311,7 +311,7 @@ export function ModernDropdown<T extends string = string>({
           />
           <SafeAreaView style={styles.sheetSafeWrap} edges={['bottom', 'left', 'right']}>
             <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
               style={styles.sheetKeyboard}
             >
               <View

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { createContext, useContext, useMemo, useState } from 'react';
 import { useWindowDimensions } from 'react-native';
 import {
   DEFAULT_FARM_SETTINGS,
@@ -53,6 +53,10 @@ const DENSITY_FACTORS: Record<UiDensity, number> = {
   spacious: 1.22,
 };
 
+export type UiPreviewOverrides = Partial<
+  Pick<FarmSettings, 'fontScale' | 'uiDensity' | 'mobileIconMode'>
+>;
+
 export interface UiScaleContextValue {
   settings: FarmSettings;
   width: number;
@@ -75,6 +79,7 @@ export interface UiScaleContextValue {
   font: (baseSize: number) => number;
   lineHeight: (baseFontSize: number, multiplier?: number) => number;
   space: (baseSpace: number) => number;
+  setPreviewOverrides: (overrides: UiPreviewOverrides | null) => void;
 }
 
 const UiScaleContext = createContext<UiScaleContextValue | null>(null);
@@ -82,7 +87,8 @@ const UiScaleContext = createContext<UiScaleContextValue | null>(null);
 function computeUiScale(
   settings: FarmSettings,
   width: number,
-  height: number
+  height: number,
+  setPreviewOverrides: (overrides: UiPreviewOverrides | null) => void
 ): UiScaleContextValue {
   const safeWidth = Math.max(width || 375, 280);
   const isCompactPhone = safeWidth < 360;
@@ -128,17 +134,27 @@ function computeUiScale(
       Math.round(font(baseFontSize) * multiplier),
     space: (baseSpace: number) =>
       Math.max(2, Math.round(baseSpace * densityMult * (isCompactPhone ? 0.92 : 1))),
+    setPreviewOverrides,
   };
 }
+
+const NOOP_SET_PREVIEW = () => {};
 
 export function UiScaleProvider({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
   const settingsQuery = useFarmSettings();
   const settings = settingsQuery.data ?? DEFAULT_FARM_SETTINGS;
+  const [previewOverrides, setPreviewOverrides] =
+    useState<UiPreviewOverrides | null>(null);
+
+  const effectiveSettings = useMemo<FarmSettings>(
+    () => (previewOverrides ? { ...settings, ...previewOverrides } : settings),
+    [settings, previewOverrides]
+  );
 
   const value = useMemo(
-    () => computeUiScale(settings, width, height),
-    [settings, width, height]
+    () => computeUiScale(effectiveSettings, width, height, setPreviewOverrides),
+    [effectiveSettings, width, height]
   );
 
   return (
@@ -151,7 +167,9 @@ export function useUiScale(): UiScaleContextValue {
   const { width, height } = useWindowDimensions();
 
   return useMemo(
-    () => ctx ?? computeUiScale(DEFAULT_FARM_SETTINGS, width, height),
+    () =>
+      ctx ??
+      computeUiScale(DEFAULT_FARM_SETTINGS, width, height, NOOP_SET_PREVIEW),
     [ctx, width, height]
   );
 }

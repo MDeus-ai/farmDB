@@ -436,12 +436,12 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <strong>
-                Signed in as {activeAccount?.displayName ?? 'Farm Owner (Administrator)'}
+                Signed in as {activeAccount?.displayName ?? settings.farmName}
               </strong>
               <span className="status-pill status-active">
                 {activeAccount
                   ? formatAccountRoleLabel(activeAccount.role)
-                  : 'Farm Owner (Admin)'}
+                  : 'Admin'}
               </span>
             </div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>

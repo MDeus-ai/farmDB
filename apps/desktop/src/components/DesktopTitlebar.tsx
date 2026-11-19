@@ -381,7 +381,7 @@ export function DesktopTitlebar({
               className="titlebar-pill-icon"
             />
             <span className="titlebar-account-name">
-              {activeAccount?.displayName ?? 'Farm Owner (Admin)'}
+              {activeAccount?.displayName ?? settings?.farmName ?? 'farmDB'}
             </span>
             <span className="titlebar-account-tier">
               {formatAccountTierLabel(activeAccount)}

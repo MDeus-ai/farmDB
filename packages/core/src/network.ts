@@ -167,11 +167,11 @@ export function normalizeAccountPermissions(
 
 export const DEFAULT_ADMIN_ACCOUNT: FarmAccount = {
   id: 'owner-admin',
-  displayName: 'Farm Owner (Administrator)',
+  displayName: 'farmDB Homestead',
   email: null,
   phone: null,
   role: 'admin',
-  relationship: 'Primary Farm Owner',
+  relationship: 'Admin',
   avatarKey: 'farmer',
   accessCode: null,
   supabaseUrl: null,
@@ -191,7 +191,7 @@ export const DEFAULT_ADMIN_ACCOUNT: FarmAccount = {
 export function formatAccountRoleLabel(role: FarmAccountRole): string {
   switch (role) {
     case 'admin':
-      return 'Farm Owner (Admin)';
+      return 'Admin';
     case 'manager':
       return 'Farm Manager';
     case 'family_member':

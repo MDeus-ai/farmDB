@@ -357,7 +357,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={[styles.brand, { fontSize: ui.font(15) }]} numberOfLines={1}>
-                {activeAccount?.displayName ?? 'farmDB Account'}
+                {activeAccount?.displayName ?? ui.settings.farmName}
               </Text>
               <Text
                 style={[styles.subBrand, { fontSize: ui.font(11) }]}

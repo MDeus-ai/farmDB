@@ -41,6 +41,7 @@ import {
 } from '@farmdb/db';
 import { MOBILE_APP_ICONS } from '../assets/icons';
 import { FARMDB_COLORS, FARMDB_FONTS, useUiScale } from '../theme/uiScale';
+import { EmailLink, PhoneLink } from './ContactLink';
 import { AppIcon, getAvatarIconName } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { ModernDropdown } from './ModernDropdown';
@@ -366,7 +367,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               style={[styles.heroSub, { fontSize: ui.font(12) }]}
               numberOfLines={2}
             >
-              Active: {activeAccount?.displayName ?? 'No Active Account'}
+              Active: {activeAccount?.displayName ?? settings.farmName}
             </Text>
           </View>
         </View>
@@ -555,6 +556,19 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                       Requested: {formatAccountRoleLabel(acc.role)}
                       {acc.relationship ? ` · ${acc.relationship}` : ''}
                     </Text>
+                    {acc.phone || acc.email ? (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        {acc.phone ? (
+                          <PhoneLink phone={acc.phone} fontSize={ui.font(11)} />
+                        ) : null}
+                        {acc.phone && acc.email ? (
+                          <Text style={[styles.subText, { fontSize: ui.font(11) }]}>·</Text>
+                        ) : null}
+                        {acc.email ? (
+                          <EmailLink email={acc.email} fontSize={ui.font(11)} />
+                        ) : null}
+                      </View>
+                    ) : null}
                   </View>
                 </View>
                 <Text style={[styles.pendingBadge, { fontSize: ui.font(10) }]}>
@@ -633,6 +647,19 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                       {formatAccountRoleLabel(acc.role)}
                       {acc.relationship ? ` · ${acc.relationship}` : ''}
                     </Text>
+                    {acc.phone || acc.email ? (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        {acc.phone ? (
+                          <PhoneLink phone={acc.phone} fontSize={ui.font(11)} />
+                        ) : null}
+                        {acc.phone && acc.email ? (
+                          <Text style={[styles.subText, { fontSize: ui.font(11) }]}>·</Text>
+                        ) : null}
+                        {acc.email ? (
+                          <EmailLink email={acc.email} fontSize={ui.font(11)} />
+                        ) : null}
+                      </View>
+                    ) : null}
                   </View>
                 </View>
                 <Text style={[styles.statusBadge, { fontSize: ui.font(10) }]}>
@@ -1043,7 +1070,10 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
         animationType="fade"
         onRequestClose={() => setJoinOpen(false)}
       >
-        <View style={styles.pinOverlay}>
+        <KeyboardAvoidingView
+          style={styles.pinOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <View style={styles.pinDialog}>
             <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
               Join Farm Network with Key
@@ -1078,7 +1108,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Change Password / PIN Modal */}
@@ -1088,7 +1118,10 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
         animationType="fade"
         onRequestClose={() => setPwdOpen(false)}
       >
-        <View style={styles.pinOverlay}>
+        <KeyboardAvoidingView
+          style={styles.pinOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <View style={styles.pinDialog}>
             <Text style={[styles.cardTitle, { fontSize: ui.font(16) }]}>
               Change Password / PIN
@@ -1138,7 +1171,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </FarmScrollView>
   );

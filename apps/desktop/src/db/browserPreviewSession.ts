@@ -1620,6 +1620,26 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
     }
   }
 
+  // Purge untouched legacy auto-seeded admin row so desktop preview also lets users pick accounts
+  const initialAccounts = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+  const filteredAccounts = initialAccounts.filter(
+    (a) =>
+      !(
+        a.id === 'owner-admin' &&
+        a.displayName === 'Farm Owner (Administrator)' &&
+        a.createdAt === 1 &&
+        a.updatedAt === 1 &&
+        !a.accessCode &&
+        !a.email &&
+        !a.phone &&
+        !a.supabaseUrl &&
+        !a.onboardingCompleted
+      )
+  );
+  if (filteredAccounts.length !== initialAccounts.length) {
+    writeJson(ACCOUNTS_KEY, filteredAccounts);
+  }
+
   const network: NetworkRepository = {
     async listAccountsRaw(): Promise<FarmAccount[]> {
       return readJson<FarmAccount[]>(ACCOUNTS_KEY, []).sort(
@@ -1629,7 +1649,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       );
     },
     async listAccounts(filter?: FarmAccountFilter): Promise<FarmAccount[]> {
-      await this.ensureAdminAccount();
       const search = filter?.search?.trim().toLowerCase() ?? '';
       return (await this.listAccountsRaw()).filter((a) => {
         if (filter?.role && filter.role !== 'all' && a.role !== filter.role) {
@@ -1672,19 +1691,27 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       return created;
     },
     async getActiveAccount(): Promise<FarmAccount | null> {
-      const admin = await this.ensureAdminAccount();
       const s = await settings.get();
-      if (s.activeAccountId === admin.id) return admin;
-      const found = await this.getAccountById(s.activeAccountId);
-      if (found && found.status !== 'suspended') return found;
-      await settings.update({ activeAccountId: admin.id });
-      return admin;
+      if (s.activeAccountId) {
+        const found = await this.getAccountById(s.activeAccountId);
+        if (found && found.status !== 'suspended') {
+          return found;
+        }
+      }
+      const all = await this.listAccountsRaw();
+      const fallback =
+        all.find((acc) => acc.isPrimaryAdmin && acc.status !== 'suspended') ??
+        all.find((acc) => acc.status !== 'suspended') ??
+        null;
+      if (fallback) {
+        await settings.update({ activeAccountId: fallback.id });
+      }
+      return fallback;
     },
     async switchActiveAccount(
       accountId: string,
       accessCode?: string
     ): Promise<FarmAccount> {
-      await this.ensureAdminAccount();
       const account = await this.getAccountById(accountId);
       if (!account) throw new FarmAccountNotFoundError(accountId);
       if (account.status === 'suspended' && !account.isPrimaryAdmin) {
@@ -1725,7 +1752,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       return account;
     },
     async createAccount(input: NewFarmAccountInput): Promise<FarmAccount> {
-      await this.ensureAdminAccount();
       const validation = validateNewFarmAccount(input);
       if (!validation.ok || !validation.data) {
         const msg =
@@ -1852,18 +1878,22 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       if (!existing) return false;
       if (existing.isPrimaryAdmin) {
         throw new NetworkValidationError(
-          { isPrimaryAdmin: 'Primary Farm Owner (Admin) account cannot be deleted.' },
-          'Primary Farm Owner (Admin) account cannot be deleted.'
+          { isPrimaryAdmin: 'Primary Admin account cannot be deleted.' },
+          'Primary Admin account cannot be deleted.'
         );
       }
       const s = await settings.get();
-      if (s.activeAccountId === id) {
-        await settings.update({ activeAccountId: DEFAULT_ADMIN_ACCOUNT.id });
-      }
-      writeJson(
-        ACCOUNTS_KEY,
-        readJson<FarmAccount[]>(ACCOUNTS_KEY, []).filter((a) => a.id !== id)
+      const nextRows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []).filter(
+        (a) => a.id !== id
       );
+      writeJson(ACCOUNTS_KEY, nextRows);
+      if (s.activeAccountId === id) {
+        const nextActive =
+          nextRows.find((a) => a.isPrimaryAdmin && a.status !== 'suspended') ??
+          nextRows.find((a) => a.status !== 'suspended') ??
+          null;
+        await settings.update({ activeAccountId: nextActive?.id ?? '' });
+      }
       events.emit(['network'], id);
       return true;
     },
@@ -1935,8 +1965,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           );
         }
       }
-
-      await this.ensureAdminAccount();
 
       let targetAccount: FarmAccount;
       if (input.accountId) {
@@ -2112,7 +2140,11 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       writeJson(ACCOUNTS_KEY, updatedRows);
       const recovered =
         updatedRows.find((a) => a.id === targetAdminId) ??
-        (await this.ensureAdminAccount());
+        updatedRows.find((a) => isAdminAccount(a)) ??
+        null;
+      if (!recovered) {
+        throw new Error('No Admin account was found in this cloud workspace.');
+      }
       const totalPulled =
         restoredCounts.livestockCount +
         restoredCounts.productCount +
@@ -2312,35 +2344,39 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           };
         }
 
-        const ensuredAdmin = await this.ensureAdminAccount();
+        const ensuredAdmin =
+          (await this.listAccountsRaw()).find((acc) => acc.isPrimaryAdmin) ??
+          null;
         const activeSyncAcc = await this.getActiveAccount();
         if (baseUrl && anonKey) {
           const targetId =
             activeSyncAcc && isAdminAccount(activeSyncAcc)
               ? activeSyncAcc.id
-              : ensuredAdmin.id;
-          const accRows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
-          let changedCreds = false;
-          const nextAccRows = accRows.map((a) => {
-            if (
-              a.id === targetId &&
-              (a.supabaseUrl !== baseUrl ||
-                a.supabaseAnonKey !== anonKey ||
-                a.cloudWorkspaceId !== workspaceId)
-            ) {
-              changedCreds = true;
-              return {
-                ...a,
-                supabaseUrl: baseUrl,
-                supabaseAnonKey: anonKey,
-                cloudWorkspaceId: workspaceId,
-                updatedAt: Date.now(),
-              };
+              : ensuredAdmin?.id;
+          if (targetId) {
+            const accRows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+            let changedCreds = false;
+            const nextAccRows = accRows.map((a) => {
+              if (
+                a.id === targetId &&
+                (a.supabaseUrl !== baseUrl ||
+                  a.supabaseAnonKey !== anonKey ||
+                  a.cloudWorkspaceId !== workspaceId)
+              ) {
+                changedCreds = true;
+                return {
+                  ...a,
+                  supabaseUrl: baseUrl,
+                  supabaseAnonKey: anonKey,
+                  cloudWorkspaceId: workspaceId,
+                  updatedAt: Date.now(),
+                };
+              }
+              return a;
+            });
+            if (changedCreds) {
+              writeJson(ACCOUNTS_KEY, nextAccRows);
             }
-            return a;
-          });
-          if (changedCreds) {
-            writeJson(ACCOUNTS_KEY, nextAccRows);
           }
         }
         const localSnap = await backup.exportSnapshot();

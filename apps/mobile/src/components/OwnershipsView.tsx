@@ -40,6 +40,7 @@ import { MOBILE_APP_ICONS } from '../assets/icons';
 import { FARMDB_COLORS, FARMDB_FONTS, useUiScale } from '../theme/uiScale';
 import { buildAnimalDropdownOption } from '../utils/animalOptions';
 import { AnimalEyeButton } from './AnimalQuickPreviewModal';
+import { SmartContactLink } from './ContactLink';
 import { AppIcon, SpeciesIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { MobileFileTabs } from './MobileFileTabs';
@@ -488,10 +489,15 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
                 <Text style={[styles.ownerTitle, { fontSize: ui.font(14) }]}>
                   {row.ownerName}
                 </Text>
-                <Text style={[styles.subText, { fontSize: ui.font(12) }]}>
-                  {formatOwnershipCategoryLabel(row.ownershipCategory)}
-                  {row.ownerContact ? ` · ${row.ownerContact}` : ''}
-                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+                  <Text style={[styles.subText, { fontSize: ui.font(12) }]}>
+                    {formatOwnershipCategoryLabel(row.ownershipCategory)}
+                    {row.ownerContact ? ' · ' : ''}
+                  </Text>
+                  {row.ownerContact ? (
+                    <SmartContactLink value={row.ownerContact} fontSize={ui.font(12)} />
+                  ) : null}
+                </View>
                 {linkedAcc ? (
                   <Text style={[styles.accLink, { fontSize: ui.font(11) }]}>
                     Network Account: {linkedAcc.displayName}
@@ -560,9 +566,7 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
                 </Text>
               </View>
               {grp.ownerContact ? (
-                <Text style={[styles.subText, { fontSize: ui.font(12) }]}>
-                  {grp.ownerContact}
-                </Text>
+                <SmartContactLink value={grp.ownerContact} fontSize={ui.font(12)} />
               ) : null}
               {grp.linkedAccount ? (
                 <Text style={[styles.accLink, { fontSize: ui.font(11) }]}>

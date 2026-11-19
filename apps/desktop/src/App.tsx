@@ -162,7 +162,8 @@ function DesktopShell({
   );
 
   const isPendingGate = activeAccount?.status === 'pending';
-  const showAuthPortal = authPortalOpen || isSignedOut || isPendingGate;
+  const showAuthPortal =
+    authPortalOpen || isSignedOut || isPendingGate || !activeAccount;
   const showOnboarding =
     !showAuthPortal &&
     !isSignedOut &&
@@ -442,7 +443,7 @@ function DesktopShell({
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {activeAccount?.displayName ?? 'Farm Owner (Admin)'}
+                  {activeAccount?.displayName ?? settings.farmName}
                 </span>
                 <small style={{ display: 'block', opacity: 0.78, fontWeight: 500 }}>
                   {formatAccountTierLabel(activeAccount)}
@@ -597,6 +598,18 @@ export default function App() {
         if (isRunningInsideTauri()) {
           const controller = await createTauriSqliteController('sqlite:farmdb.db');
           await runMigrations(controller.driver);
+          await controller.driver.execute(
+            `DELETE FROM farm_accounts
+             WHERE id = 'owner-admin'
+               AND display_name = 'Farm Owner (Administrator)'
+               AND created_at = 1
+               AND updated_at = 1
+               AND access_code IS NULL
+               AND email IS NULL
+               AND phone IS NULL
+               AND supabase_url IS NULL
+               AND onboarding_completed = 0;`
+          );
           if (!cancelled) {
             setSqlController(controller);
             setDriver(controller.driver);
@@ -643,7 +656,11 @@ export default function App() {
   }
 
   return (
-    <FarmDbProvider driver={driver ?? undefined} session={previewSession ?? undefined}>
+    <FarmDbProvider
+      driver={driver ?? undefined}
+      session={previewSession ?? undefined}
+      autoSeedDefaultAdmin={false}
+    >
       <AnimalQuickPreviewProvider>
         <DesktopShell sqlController={sqlController} />
         <FarmHoverHintOverlay />
