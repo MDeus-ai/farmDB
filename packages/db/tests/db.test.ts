@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildStandardUserPermissions,
+  encodeFarmNetworkJoinKey,
   getDefaultPermissionsForRole,
 } from '@farmdb/core';
 import {
@@ -1031,6 +1032,129 @@ describe('@farmdb/db migrations and repositories', () => {
       session.network.removeAccountWithCredentials(pinlessAdmin.id)
     ).resolves.toBe(true);
     expect(await session.network.listAccounts()).toEqual([]);
+
+    raw.close();
+  });
+
+  it('allows a signed-in non-admin User to join an Admin cloud network via Full Cloud Key without RBAC errors and rejects revoked keys before pulling data', async () => {
+    const { driver: adminDriver, raw: adminRaw } = createNodeSqliteDriver(':memory:');
+    await runMigrations(adminDriver);
+    const adminSession = createFarmDbSession(adminDriver, {
+      autoSeedDefaultAdmin: false,
+    });
+    const admin = await adminSession.network.signUpAccount({
+      displayName: 'Homestead Farm',
+      role: 'admin',
+      accessCode: '9999',
+      avatarKey: 'farmer',
+      isPrimaryAdmin: true,
+      canManageNetwork: true,
+      canSyncCloud: true,
+      status: 'active',
+      permissions: getDefaultPermissionsForRole('admin'),
+    });
+    await adminSession.network.switchActiveAccount(admin.id, '9999');
+    await adminSession.settings.update({
+      farmName: 'Sunrise Dairy',
+      networkJoinKey: 'FARM-9988',
+      supabaseUrl: 'https://join-test.supabase.co',
+      supabaseAnonKey: 'sb_publishable_join_test',
+      cloudWorkspaceId: 'ws-sunrise-1',
+    });
+    await adminSession.livestock.create({
+      species: 'cow',
+      sex: 'female',
+      tagNumber: 'ADMIN-COW-1',
+      name: 'Buttercup',
+    });
+    const cloudSnapshot = await adminSession.backup.exportSnapshot();
+    adminRaw.close();
+
+    const { driver, raw } = createNodeSqliteDriver(':memory:');
+    await runMigrations(driver);
+    const session = createFarmDbSession(driver, { autoSeedDefaultAdmin: false });
+    const megan = await session.network.signUpAccount({
+      displayName: 'Megan',
+      role: 'family_member',
+      accessCode: '1234',
+      avatarKey: 'farmerFemale',
+      isPrimaryAdmin: false,
+      canManageNetwork: false,
+      canSyncCloud: false,
+      status: 'active',
+      permissions: buildStandardUserPermissions(),
+    });
+    await session.network.switchActiveAccount(megan.id, '1234');
+
+    const pushedBodies: Array<{ snapshot?: { farmAccounts?: Array<{ id: string; status: string; displayName: string }> } }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: unknown, init?: { method?: string; body?: string }) => {
+      if ((init?.method ?? 'GET') === 'POST' && init?.body) {
+        const parsedBody = JSON.parse(init.body) as Array<{ snapshot?: { farmAccounts?: Array<{ id: string; status: string; displayName: string }> } }>;
+        if (parsedBody[0]) {
+          pushedBodies.push(parsedBody[0]);
+        }
+        return new Response('', { status: 201 });
+      }
+      return new Response(
+        JSON.stringify([
+          {
+            workspace_id: 'ws-sunrise-1',
+            farm_name: 'Sunrise Dairy',
+            snapshot: cloudSnapshot,
+            updated_at: '2026-11-19T12:00:00Z',
+          },
+        ]),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as typeof fetch;
+
+    try {
+      const revokedKey = encodeFarmNetworkJoinKey({
+        joinCode: 'FARM-0000',
+        workspaceId: 'ws-sunrise-1',
+        farmName: 'Sunrise Dairy',
+        supabaseUrl: 'https://join-test.supabase.co',
+        supabaseAnonKey: 'sb_publishable_join_test',
+      });
+      await expect(
+        session.network.joinNetworkWithKey({
+          joinKey: revokedKey,
+          accountId: megan.id,
+        })
+      ).rejects.toThrow(/rotated or revoked/i);
+      expect(await session.livestock.list()).toEqual([]);
+
+      const validFullKey = encodeFarmNetworkJoinKey({
+        joinCode: 'FARM-9988',
+        workspaceId: 'ws-sunrise-1',
+        farmName: 'Sunrise Dairy',
+        supabaseUrl: 'https://join-test.supabase.co',
+        supabaseAnonKey: 'sb_publishable_join_test',
+      });
+      const joinRes = await session.network.joinNetworkWithKey({
+        joinKey: validFullKey,
+        accountId: megan.id,
+      });
+
+      expect(joinRes.syncedWithCloud).toBe(true);
+      expect(joinRes.farmName).toBe('Sunrise Dairy');
+      expect(joinRes.account.status).toBe('pending');
+      expect(joinRes.account.canSyncCloud).toBe(true);
+      expect(joinRes.account.canManageNetwork).toBe(false);
+      expect(joinRes.account.permissions).toEqual(
+        getDefaultPermissionsForRole('family_member')
+      );
+      expect(
+        pushedBodies.some((payload) =>
+          (payload.snapshot?.farmAccounts ?? []).some(
+            (a) => a.id === megan.id && a.status === 'pending'
+          )
+        )
+      ).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
 
     raw.close();
   });

@@ -4,6 +4,7 @@ import {
   DEFAULT_ADMIN_ACCOUNT,
   generateId,
   generateShortJoinCode,
+  getDefaultPermissionsForRole,
   isAdminAccount,
   mergeFarmSnapshots,
   normalizeAccountPermissions,
@@ -173,6 +174,7 @@ export interface NetworkRepository {
   signUpAccount(input: NewFarmAccountInput): Promise<FarmAccount>;
   updateAccount(id: string, input: UpdateFarmAccountInput): Promise<FarmAccount>;
   removeAccount(id: string): Promise<boolean>;
+  removeAccountWithCredentials(id: string, accessCode?: string): Promise<boolean>;
   removeAccountWithCredentials(id: string, accessCode?: string): Promise<boolean>;
 
   rotateNetworkJoinKey(): Promise<string>;
@@ -345,6 +347,132 @@ export function createNetworkRepository(
     }
     events.emit(['network'], id);
     return createdAccount;
+  }
+
+  async function updateAccountInternal(
+    id: string,
+    input: UpdateFarmAccountInput
+  ): Promise<FarmAccount> {
+    const existingRow = await db
+      .select()
+      .from(farmAccounts)
+      .where(eq(farmAccounts.id, id))
+      .get();
+    if (!existingRow) {
+      throw new FarmAccountNotFoundError(id);
+    }
+    const existing = mapAccountRow(existingRow);
+
+    const validation = validateUpdateFarmAccount(input, existing.role);
+    if (!validation.ok || !validation.data) {
+      const msg =
+        Object.values(validation.errors).find(Boolean) ??
+        'Invalid account update.';
+      throw new NetworkValidationError(
+        validation.errors as ValidationErrors<Record<string, unknown>>,
+        msg
+      );
+    }
+
+    const activeAccountId = (await settingsRepo.get()).activeAccountId;
+    const preserveExistingAccessCode =
+      Boolean(activeAccountId) &&
+      activeAccountId !== existing.id &&
+      Boolean(existing.accessCode && existing.accessCode.trim().length > 0);
+
+    const nextRole: FarmAccountRole = existing.isPrimaryAdmin
+      ? 'admin'
+      : validation.data.role ?? existing.role;
+    const nextPermissions = existing.isPrimaryAdmin
+      ? normalizeAccountPermissions(undefined, 'admin')
+      : validation.data.permissions
+        ? normalizeAccountPermissions(validation.data.permissions, nextRole)
+        : existing.permissions;
+
+    const nextCanManageNetwork = existing.isPrimaryAdmin
+      ? true
+      : validation.data.canManageNetwork ?? existing.canManageNetwork;
+    const nextCanSyncCloud = existing.isPrimaryAdmin
+      ? true
+      : validation.data.canSyncCloud ?? existing.canSyncCloud;
+    const nextStatus: FarmAccountStatus = existing.isPrimaryAdmin
+      ? 'active'
+      : validation.data.status ?? existing.status;
+
+    const now = Date.now();
+    await db
+      .update(farmAccounts)
+      .set({
+        displayName: validation.data.displayName ?? existing.displayName,
+        email:
+          validation.data.email !== undefined
+            ? validation.data.email
+            : existing.email,
+        phone:
+          validation.data.phone !== undefined
+            ? validation.data.phone
+            : existing.phone,
+        role: nextRole,
+        relationship:
+          validation.data.relationship !== undefined
+            ? validation.data.relationship
+            : existing.relationship,
+        avatarKey: validation.data.avatarKey ?? existing.avatarKey,
+        accessCode: preserveExistingAccessCode
+          ? existing.accessCode
+          : validation.data.accessCode !== undefined
+            ? validation.data.accessCode
+            : existing.accessCode,
+        supabaseUrl:
+          existing.isPrimaryAdmin || nextRole === 'admin'
+            ? validation.data.supabaseUrl !== undefined
+              ? validation.data.supabaseUrl
+              : existing.supabaseUrl
+            : null,
+        supabaseAnonKey:
+          existing.isPrimaryAdmin || nextRole === 'admin'
+            ? validation.data.supabaseAnonKey !== undefined
+              ? validation.data.supabaseAnonKey
+              : existing.supabaseAnonKey
+            : null,
+        cloudWorkspaceId:
+          existing.isPrimaryAdmin || nextRole === 'admin'
+            ? validation.data.cloudWorkspaceId !== undefined
+              ? validation.data.cloudWorkspaceId
+              : existing.cloudWorkspaceId
+            : null,
+        canManageNetwork: nextCanManageNetwork,
+        canSyncCloud: nextCanSyncCloud,
+        permissionsJson: JSON.stringify(nextPermissions),
+        status: nextStatus,
+        onboardingCompleted:
+          validation.data.onboardingCompleted !== undefined
+            ? validation.data.onboardingCompleted
+            : existing.onboardingCompleted,
+        lastSyncedAt:
+          validation.data.lastSyncedAt !== undefined
+            ? validation.data.lastSyncedAt
+            : existing.lastSyncedAt,
+        updatedAt: now,
+      })
+      .where(eq(farmAccounts.id, id))
+      .run();
+
+    events.emit(['network'], id);
+
+    const updatedRow = await db
+      .select()
+      .from(farmAccounts)
+      .where(eq(farmAccounts.id, id))
+      .get();
+    if (!updatedRow) {
+      throw new FarmAccountNotFoundError(id);
+    }
+    const updated = mapAccountRow(updatedRow);
+    if (activeAccountId === updated.id) {
+      await applyAdminCloudCredentialsIfEmpty(updated);
+    }
+    return updated;
   }
 
   return {
@@ -552,121 +680,13 @@ export function createNetworkRepository(
       id: string,
       input: UpdateFarmAccountInput
     ): Promise<FarmAccount> {
-      const existing = await this.getAccountById(id);
-      if (!existing) {
-        throw new FarmAccountNotFoundError(id);
-      }
-
-      const validation = validateUpdateFarmAccount(input, existing.role);
-      if (!validation.ok || !validation.data) {
-        const msg =
-          Object.values(validation.errors).find(Boolean) ??
-          'Invalid account update.';
-        throw new NetworkValidationError(
-          validation.errors as ValidationErrors<Record<string, unknown>>,
-          msg
-        );
-      }
-
-      const currentActive = await this.getActiveAccount();
-      const preserveExistingAccessCode =
-        currentActive !== null &&
-        currentActive.id !== existing.id &&
-        Boolean(existing.accessCode && existing.accessCode.trim().length > 0);
-
-      const nextRole: FarmAccountRole = existing.isPrimaryAdmin
-        ? 'admin'
-        : validation.data.role ?? existing.role;
-      const nextPermissions = existing.isPrimaryAdmin
-        ? normalizeAccountPermissions(undefined, 'admin')
-        : validation.data.permissions
-          ? normalizeAccountPermissions(validation.data.permissions, nextRole)
-          : existing.permissions;
-
-      const nextCanManageNetwork = existing.isPrimaryAdmin
-        ? true
-        : validation.data.canManageNetwork ?? existing.canManageNetwork;
-      const nextCanSyncCloud = existing.isPrimaryAdmin
-        ? true
-        : validation.data.canSyncCloud ?? existing.canSyncCloud;
-      const nextStatus: FarmAccountStatus = existing.isPrimaryAdmin
-        ? 'active'
-        : validation.data.status ?? existing.status;
-
-      const now = Date.now();
-      await db
-        .update(farmAccounts)
-        .set({
-          displayName: validation.data.displayName ?? existing.displayName,
-          email:
-            validation.data.email !== undefined
-              ? validation.data.email
-              : existing.email,
-          phone:
-            validation.data.phone !== undefined
-              ? validation.data.phone
-              : existing.phone,
-          role: nextRole,
-          relationship:
-            validation.data.relationship !== undefined
-              ? validation.data.relationship
-              : existing.relationship,
-          avatarKey: validation.data.avatarKey ?? existing.avatarKey,
-          accessCode: preserveExistingAccessCode
-            ? existing.accessCode
-            : validation.data.accessCode !== undefined
-              ? validation.data.accessCode
-              : existing.accessCode,
-          supabaseUrl:
-            existing.isPrimaryAdmin || nextRole === 'admin'
-              ? validation.data.supabaseUrl !== undefined
-                ? validation.data.supabaseUrl
-                : existing.supabaseUrl
-              : null,
-          supabaseAnonKey:
-            existing.isPrimaryAdmin || nextRole === 'admin'
-              ? validation.data.supabaseAnonKey !== undefined
-                ? validation.data.supabaseAnonKey
-                : existing.supabaseAnonKey
-              : null,
-          cloudWorkspaceId:
-            existing.isPrimaryAdmin || nextRole === 'admin'
-              ? validation.data.cloudWorkspaceId !== undefined
-                ? validation.data.cloudWorkspaceId
-                : existing.cloudWorkspaceId
-              : null,
-          canManageNetwork: nextCanManageNetwork,
-          canSyncCloud: nextCanSyncCloud,
-          permissionsJson: JSON.stringify(nextPermissions),
-          status: nextStatus,
-          onboardingCompleted:
-            validation.data.onboardingCompleted !== undefined
-              ? validation.data.onboardingCompleted
-              : existing.onboardingCompleted,
-          lastSyncedAt:
-            validation.data.lastSyncedAt !== undefined
-              ? validation.data.lastSyncedAt
-              : existing.lastSyncedAt,
-          updatedAt: now,
-        })
-        .where(eq(farmAccounts.id, id))
-        .run();
-
-      events.emit(['network'], id);
-
-      const updated = await this.getAccountById(id);
-      if (!updated) {
-        throw new FarmAccountNotFoundError(id);
-      }
-      if (currentActive?.id === updated.id) {
-        await applyAdminCloudCredentialsIfEmpty(updated);
-      }
-      return updated;
+      return updateAccountInternal(id, input);
     },
 
     async removeAccount(id: string): Promise<boolean> {
       const existing = await this.getAccountById(id);
       if (!existing) return false;
+      const wasPending = existing.status === 'pending';
 
       const currentSettings = await settingsRepo.get();
       await db.delete(farmAccounts).where(eq(farmAccounts.id, id)).run();
@@ -705,6 +725,19 @@ export function createNetworkRepository(
         await settingsRepo.update({
           activeAccountId: nextActive?.id ?? '',
         });
+      }
+      if (
+        wasPending &&
+        currentSettings.cloudSyncEnabled &&
+        currentSettings.supabaseUrl &&
+        currentSettings.supabaseAnonKey &&
+        currentSettings.activeAccountId !== id
+      ) {
+        try {
+          await this.syncWithSupabase('push');
+        } catch {
+          // Declined account removal stays saved locally when offline.
+        }
       }
       events.emit(['network', 'settings'], id);
       return true;
@@ -763,12 +796,51 @@ export function createNetworkRepository(
         decoded.supabaseUrl &&
         decoded.supabaseAnonKey
       ) {
+        const baseUrl = normalizeSupabaseBaseUrl(decoded.supabaseUrl);
+        const anonKey = decoded.supabaseAnonKey.trim();
+        const workspaceId = decoded.workspaceId || 'farmdb-homestead-main';
+        const fetchSupabase = createSupabaseFetcher(anonKey);
+        const restEndpoint = `${baseUrl}/rest/v1/farmdb_cloud_snapshots`;
+        const preflightRes = await fetchSupabase(
+          `${restEndpoint}?workspace_id=eq.${encodeURIComponent(workspaceId)}&select=workspace_id,farm_name,snapshot,updated_at`,
+          { method: 'GET' }
+        );
+        if (!preflightRes.ok) {
+          const errText = await preflightRes.text();
+          throw new NetworkValidationError(
+            {
+              joinKey: `Unable to reach the Admin's Supabase cloud workspace (HTTP ${preflightRes.status}): ${errText.slice(0, 120)}`,
+            },
+            `Unable to reach the Admin's Supabase cloud workspace (HTTP ${preflightRes.status}).`
+          );
+        }
+        const preflightRows = (await preflightRes.json()) as Array<{
+          workspace_id: string;
+          farm_name?: string;
+          snapshot?: unknown;
+        }>;
+        if (preflightRows.length > 0 && preflightRows[0]?.snapshot) {
+          const remoteSnap = parseFarmSnapshotJson(
+            JSON.stringify(preflightRows[0].snapshot)
+          );
+          const remoteJoinCode = (
+            remoteSnap.settings.networkJoinKey ?? ''
+          )
+            .trim()
+            .toUpperCase();
+          if (remoteJoinCode && remoteJoinCode !== decoded.joinCode.toUpperCase()) {
+            throw new NetworkValidationError(
+              { joinKey: 'This Farm Network Join Key was rotated or revoked by the Admin. Request a new key.' },
+              'This Farm Network Join Key was rotated or revoked by the Admin. Request a new key.'
+            );
+          }
+        }
+
         await settingsRepo.update({
           cloudSyncEnabled: true,
-          supabaseUrl: decoded.supabaseUrl,
-          supabaseAnonKey: decoded.supabaseAnonKey,
-          cloudWorkspaceId:
-            decoded.workspaceId || 'farmdb-homestead-main',
+          supabaseUrl: baseUrl,
+          supabaseAnonKey: anonKey,
+          cloudWorkspaceId: workspaceId,
           networkJoinKey: decoded.joinCode,
         });
 
@@ -783,17 +855,6 @@ export function createNetworkRepository(
           throw new NetworkValidationError(
             { joinKey: `Unable to reach the Admin's Supabase cloud workspace: ${pullRes.message}` },
             `Unable to reach the Admin's Supabase cloud workspace: ${pullRes.message}`
-          );
-        }
-        const postPullSettings = await settingsRepo.get();
-        if (
-          pullRes.recordsPulled > 0 &&
-          postPullSettings.networkJoinKey.trim().toUpperCase() !==
-            decoded.joinCode.toUpperCase()
-        ) {
-          throw new NetworkValidationError(
-            { joinKey: 'This Farm Network Join Key was rotated or revoked by the Admin. Request a new key.' },
-            'This Farm Network Join Key was rotated or revoked by the Admin. Request a new key.'
           );
         }
         syncedWithCloud = true;
@@ -821,13 +882,16 @@ export function createNetworkRepository(
           throw new FarmAccountNotFoundError(input.accountId);
         }
         const isAdminJoining = existing.isPrimaryAdmin || existing.role === 'admin';
-        targetAccount = await this.updateAccount(existing.id, {
+        targetAccount = await updateAccountInternal(existing.id, {
           status: isAdminJoining ? 'active' : 'pending',
           canManageNetwork: isAdminJoining,
           canSyncCloud: true,
+          ...(isAdminJoining
+            ? {}
+            : { permissions: getDefaultPermissionsForRole(existing.role) }),
         });
       } else if (input.newAccount) {
-        targetAccount = await this.createAccount({
+        targetAccount = await insertValidatedAccount({
           ...input.newAccount,
           isPrimaryAdmin: false,
           canManageNetwork: false,
@@ -1057,7 +1121,7 @@ export function createNetworkRepository(
         throw new FarmAccountNotFoundError(accountId);
       }
 
-      const updated = await this.updateAccount(accountId, {
+      const updated = await updateAccountInternal(accountId, {
         status: 'active',
         canManageNetwork: existing.isPrimaryAdmin ? true : false,
         canSyncCloud: options?.canSyncCloud ?? true,

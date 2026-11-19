@@ -1,4 +1,4 @@
-# farmDB (v1.5.0)
+# farmDB (v1.5.3)
 
 Offline-first farm livestock, genetics, milk production, veterinary, HR, ownership custody, financial ledger, and analytics suite for **Desktop (React + Vite + Tauri v2)** and **Mobile (React Native + Expo SDK 58)** — backed locally by **SQLite + Drizzle ORM**, with optional **Supabase** cloud synchronization, image replication, and role-based multi-user Farm Networks.
 
@@ -25,19 +25,20 @@ Offline-first farm livestock, genetics, milk production, veterinary, HR, ownersh
 
 ### Accounts, RBAC Privileges & Cloud Sync
 - **Account Separation & Auth Flow**:
-  - Supports **Farm Owner Admin** accounts and standard **User** accounts with PIN/password verification.
+  - Zero auto-created default Admin profile: users explicitly create an **Admin Account** (labeled with their chosen Farm Name + `Admin` tag) or a standard **User Account** with PIN/password verification.
   - Enforces a clean **Sign Out** session boundary before signing into or creating another account; standalone Sign Up creates local accounts while **Join Network** lives inside the Farm Network screen.
-  - Strict credential isolation: Administrators manage permissions and can approve, suspend, or remove accounts, but cannot log into connected users' accounts without their credentials.
-  - **Change Password / PIN** inside Farm Network for signed-in users.
+  - Strict credential isolation: Administrators manage permissions and can approve, decline, suspend, or delete accounts, but cannot log into connected users' accounts without their credentials.
+  - **Delete Account** for both Admin and User profiles (inside Farm Network or directly from the Sign-In Portal with confirmation, PIN protection, and automatic Primary Admin promotion), plus **Change Password / PIN**.
 - **Farm Network & Repository RBAC (`packages/db/src/rbac.ts`)**:
-  - **Invite to Network**: Generate shareable short codes (`FARM-XXXX`) or full cloud Invite Keys (`FDB1:...`), with one-click **Rotate Key**.
-  - **Join Network**: Connect existing accounts via Join Key with pending approval review.
-  - Granular per-module access levels (**Hidden**, **View Only**, **View & Edit**, **Full Access**) enforced at the repository layer (`wrapSessionWithRbac`) across all modules including `family_tree` lineage fields.
+  - **Admin Network Join Key**: Copy and share Short Codes (`FARM-XXXX` same device) or Full Cloud Keys (`FDB1:...` across devices), or click **Generate New Key** to revoke old codes with remote pre-validation.
+  - **Join Network & Real-Time Approval Flow**: Any signed-in account joins via Key inside Farm Network, automatically notifying Admins (OS toast, top amber **Pending Network Join Request** banner, and live Farm Network count badge) while the requester's Pending Approval view polls every 20 seconds for approval.
+  - Granular per-module access levels (**Hidden**, **View Only**, **View & Edit**, **Full Access**) assigned via **Assign Privileges & Accept** and enforced at the repository layer (`wrapSessionWithRbac`) across all modules including `family_tree` lineage fields.
 - **Settings, Advanced Settings & Sync Logs (`Settings` | `Advanced Settings` | `Sync Logs`)**:
-  - **Settings**: Font scaling (`Small` -> `Extra Large`), UI density (`Compact` / `Comfortable` / `Spacious`), Mobile Icon Mode, currency & unit preferences, auto-accounting toggles, alert cadence, and delete confirmations.
+  - **Settings**: Font scaling (`Small` -> `Extra Large`), UI element size / spacing density (tuned for Mobile Large & Extra-Large readability), **Compact Icon UI** mode, currency & unit preferences, auto-accounting toggles, alert cadence, delete confirmations, plus Android keyboard-aware form scrolling and tappable phone/email links across HR, Ownerships, and Farm Network.
   - **Advanced Settings**:
     - **Native SQLite Database Storage & Read-Only Protection**: Inspect active `farmdb.db` location/size, relocate the SQLite storage folder on Desktop, toggle OS read-only lock / SQLite `PRAGMA query_only`, and maintain a verified shadow database copy (`farmdb.verified.db`).
-    - **Cloud Sync & Supabase Database (Admin Only)**: Configure Supabase Project URL, Anon/Publishable Key, and Workspace ID, copy the one-time SQL Setup Script, test connectivity with inline near-card feedback, copy full **Admin Cloud Keys (`FDB1:...`)** for cross-device sign-in & recovery, select conflict resolution (`Last Write Wins`, `Local Priority`, `Cloud Priority`), and toggle auto-sync.
+    - **Cloud Sync & Supabase Database (Admin Only)**: Configure Supabase Project URL, Anon/Publishable Key, and Workspace ID, toggle the collapsible **Show Script / Hide Script** SQL Setup Script, test connectivity with inline near-card feedback, copy full **Admin Cloud Keys (`FDB1:...`)** for cross-device sign-in & recovery, select conflict resolution (`Last Write Wins`, `Local Priority`, `Cloud Priority`), and toggle auto-sync.
+    - **Software Updates / App Updates**: Automatic update checks with in-app **Update Available** banners, OS notifications, interactive release-notes modals listing version number and fixes, signed Desktop installs, and Mobile Expo EAS OTA updates.
     - Admin Supabase credentials persist inside the Admin account and synced snapshots so logging into or recovering an Admin account on another device restores data, settings, and optimized animal photos automatically.
   - **Sync Logs (Admin Only)**: Full audit log of connection tests, pushes, pulls, and bidirectional sync outcomes.
 - **Export, Backup & Restore**: Portable RFC-4180 CSV spreadsheet bundles, full JSON snapshots (with optimized images, HR, ownerships, accounts, and settings), and raw single-file `farmdb.db` backup/restore with SQLite header validation and automatic re-migration.
@@ -131,7 +132,7 @@ powershell -ExecutionPolicy Bypass -File scripts/sync-app-icons.ps1 -SourceIcon 
 ### 1. First Launch, Login-First Security & One-Time Setup Wizard
 Both Desktop and Mobile strictly launch on the **Sign In / Sign Up** portal before exposing any farm modules or background sync workers. On a new account's first sign-in (`onboardingCompleted === false`), a one-time **First-Time Setup Wizard** opens automatically with plain-English explanations for:
 - **Database Storage Location & Read-Only Protection** (Desktop custom SQLite folder relocation / Mobile sandbox path)
-- **Font Size** & **UI Element Size (Spacing Density)**
+- **Font Size**, **UI Element Size (Spacing Density)** & **Compact Icon UI** (with real-time preview on Mobile)
 - **Volume Units** (`Liters` / `US Gallons`) & **Currency** (`$`, `UGX`, `£`, or custom)
 - **Optional Admin Cloud Setup**: Guided step-by-step Supabase setup (`supabase.com` -> copy/run SQL -> paste Project URL & Anon Key -> inline **Test Connection** -> enable Auto-Sync & copy Admin Cloud Key `FDB1:...`)
 
@@ -149,8 +150,8 @@ npm run typecheck
 npm run build:tauri
 ```
 Built Windows installers and signed updater artifacts are output under `apps/desktop/src-tauri/target/release/bundle/`:
-- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.0_x64-setup.exe`
-- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.0_x64_en-US.msi`
+- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.3_x64-setup.exe`
+- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.3_x64_en-US.msi`
 
 Desktop auto-updates are configured via `tauri-plugin-updater` (`apps/desktop/src-tauri/tauri.conf.json`) checking `https://github.com/MDeus-ai/farmDB/releases/latest/download/latest.json`, and can also be triggered manually from **Settings -> Advanced Settings -> Software Updates**.
 

@@ -18,6 +18,7 @@ import {
   useActiveFarmAccount,
   useAlertBackgroundWorker,
   useCloudAutoSyncWorker,
+  useFarmAccountList,
   useFarmDb,
   useFarmSettings,
   useFarmSummary,
@@ -121,6 +122,7 @@ function DesktopShell({
   const summaryQuery = useFarmSummary();
   const settingsQuery = useFarmSettings();
   const activeAccountQuery = useActiveFarmAccount();
+  const accountsListQuery = useFarmAccountList({});
   const livestockListQuery = useLivestockList({});
   const updateLivestockMut = useUpdateLivestock();
   const cloudSyncMut = useTriggerCloudSync();
@@ -365,15 +367,62 @@ function DesktopShell({
     [visibleSections]
   );
 
+  const isLockedShell = isSignedOut || showAuthPortal || showOnboarding;
+  const isAdminSession =
+    !isLockedShell &&
+    Boolean(
+      activeAccount &&
+        (isAdminAccount(activeAccount) || activeAccount.canManageNetwork)
+    );
+  const pendingJoinAccounts = useMemo(
+    () =>
+      isAdminSession
+        ? (accountsListQuery.data ?? []).filter((a) => a.status === 'pending')
+        : [],
+    [isAdminSession, accountsListQuery.data]
+  );
+  const pendingJoinSignature = useMemo(
+    () => pendingJoinAccounts.map((a) => a.id).sort().join(','),
+    [pendingJoinAccounts]
+  );
+  const notifiedPendingIdsRef = useRef<Set<string>>(new Set());
+  const [dismissedPendingSignature, setDismissedPendingSignature] = useState('');
+
+  useEffect(() => {
+    if (!isAdminSession || pendingJoinAccounts.length === 0) {
+      return;
+    }
+    const newlyArrived = pendingJoinAccounts.filter(
+      (a) => !notifiedPendingIdsRef.current.has(a.id)
+    );
+    if (newlyArrived.length === 0) {
+      return;
+    }
+    for (const acc of newlyArrived) {
+      notifiedPendingIdsRef.current.add(acc.id);
+    }
+    setDismissedPendingSignature('');
+    if (enableNotificationsRef.current) {
+      const title =
+        pendingJoinAccounts.length === 1
+          ? 'New Farm Network Join Request'
+          : `${pendingJoinAccounts.length} Pending Network Join Requests`;
+      const body = `${newlyArrived[0]!.displayName} wants to join ${settings.farmName}. Review & assign privileges before granting access.`;
+      void dispatchDesktopNotification({ title, body });
+    }
+  }, [isAdminSession, pendingJoinAccounts, settings.farmName]);
+
   function getCountForSection(id: AppSectionId): number | null {
+    if (id === 'network') {
+      return pendingJoinAccounts.length > 0 ? pendingJoinAccounts.length : null;
+    }
     if (!summary) {
       return id === 'backup' ||
         id === 'settings' ||
         id === 'family_tree' ||
         id === 'hr' ||
         id === 'statistics' ||
-        id === 'ownerships' ||
-        id === 'network'
+        id === 'ownerships'
         ? null
         : 0;
     }
@@ -384,7 +433,6 @@ function DesktopShell({
       case 'family_tree':
       case 'hr':
       case 'statistics':
-      case 'network':
         return null;
       case 'production':
         return summary.productRecordCount;
@@ -413,8 +461,6 @@ function DesktopShell({
       setSyncFeedback('Sync failed');
     }
   }
-
-  const isLockedShell = isSignedOut || showAuthPortal || showOnboarding;
 
   const titlebarProps: DesktopTitlebarProps = {
     minimal: isLockedShell,
@@ -668,6 +714,49 @@ function DesktopShell({
                   className="btn btn-secondary btn-sm"
                   onClick={() => setUpdateBannerDismissedVersion(availableUpdate.version)}
                   aria-label="Dismiss update notification banner"
+                >
+                  <img
+                    src={APP_ICONS.letterX}
+                    alt=""
+                    className="app-icon-sm"
+                  />
+                </button>
+              </div>
+            </div>
+          )}
+
+        {isAdminSession &&
+          pendingJoinAccounts.length > 0 &&
+          dismissedPendingSignature !== pendingJoinSignature && (
+            <div className="pending-join-banner" role="alert">
+              <div className="pending-join-main">
+                <img src={APP_ICONS.hourglass} alt="" className="app-icon-md" />
+                <div style={{ minWidth: 0 }}>
+                  <strong>
+                    Pending Network Join Request ({pendingJoinAccounts.length})
+                  </strong>
+                  <p className="pending-join-summary">
+                    {pendingJoinAccounts[0]!.displayName}
+                    {pendingJoinAccounts.length > 1
+                      ? ` (+${pendingJoinAccounts.length - 1} more)`
+                      : ''}{' '}
+                    wants to join {settings.farmName}. Assign privileges before granting access.
+                  </p>
+                </div>
+              </div>
+              <div className="row-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => setActiveSection('network')}
+                >
+                  Review &amp; Assign Privileges
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setDismissedPendingSignature(pendingJoinSignature)}
+                  aria-label="Dismiss pending request notification"
                 >
                   <img
                     src={APP_ICONS.letterX}

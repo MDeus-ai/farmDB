@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, ChevronLeft, ChevronRight, Lightbulb, X } from 'lucide-react';
 import {
+  FARMDB_APP_VERSION,
   getTutorialStepsForAccount,
   type AppSectionId,
   type FarmAccount,
@@ -80,7 +81,7 @@ export function TutorialOverlay({
                 farmDB Guide
               </strong>
               <span style={{ fontSize: '0.75rem', color: '#b7e4c7' }}>
-                {steps.length} Sections
+                v{FARMDB_APP_VERSION} · {steps.length} Sections
               </span>
             </div>
           </div>

@@ -24,7 +24,6 @@ import {
 import {
   useAcceptPendingAccount,
   useActiveFarmAccount,
-  useCreateFarmAccount,
   useDeleteFarmAccount,
   useFarmAccountList,
   useFarmSettings,
@@ -60,7 +59,6 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   const accountsQuery = useFarmAccountList({});
   const activeAccountQuery = useActiveFarmAccount();
 
-  const createAccountMut = useCreateFarmAccount();
   const updateAccountMut = useUpdateFarmAccount();
   const deleteAccountMut = useDeleteFarmAccount();
   const rotateKeyMut = useRotateNetworkJoinKey();
@@ -134,23 +132,6 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   );
   const [aError, setAError] = useState<string | null>(null);
 
-  function openAddAccountModal() {
-    setEditingAccount(null);
-    setApprovingMode(false);
-    setAName('');
-    setARole('family_member');
-    setARelationship('');
-    setAEmail('');
-    setAPhone('');
-    setAAvatar('farmerFemale');
-    setAAccessCode('');
-    setAStatus('active');
-    setACanSyncCloud(true);
-    setAPermissions(getDefaultPermissionsForRole('family_member'));
-    setAError(null);
-    setAccountModalOpen(true);
-  }
-
   function openEditAccountModal(acc: FarmAccount, approvePending = false) {
     setEditingAccount(acc);
     setApprovingMode(approvePending);
@@ -172,20 +153,16 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
 
   async function handleSaveAccount(e: React.FormEvent) {
     e.preventDefault();
+    if (!editingAccount) return;
     setAError(null);
     const enforcedPermissions: FarmAccountPermissions = aPermissions;
     const isAdminEditingOtherExistingWithPin = Boolean(
-      editingAccount &&
-        editingAccount.id !== activeAccount?.id &&
+      editingAccount.id !== activeAccount?.id &&
         editingAccount.accessCode &&
         editingAccount.accessCode.trim().length > 0
     );
-    if (!editingAccount && aRole !== 'admin' && aAccessCode.trim().length < 4) {
-      setAError('Please set a login PIN / passcode (4 to 32 characters) for this user account.');
-      return;
-    }
     try {
-      if (editingAccount && approvingMode) {
+      if (approvingMode) {
         await acceptPendingMut.mutateAsync({
           accountId: editingAccount.id,
           options: {
@@ -198,7 +175,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
         setStatusNotice(
           `Assigned privileges and accepted ${editingAccount.displayName} into ${settings.farmName}.`
         );
-      } else if (editingAccount) {
+      } else {
         await updateAccountMut.mutateAsync({
           id: editingAccount.id,
           input: {
@@ -218,26 +195,23 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
           },
         });
         setStatusNotice(`Updated privileges and profile for ${aName}.`);
-      } else {
-        await createAccountMut.mutateAsync({
-          displayName: aName,
-          role: aRole,
-          relationship: aRelationship || null,
-          email: aEmail || null,
-          phone: aPhone || null,
-          avatarKey: aAvatar,
-          accessCode: aAccessCode || null,
-          status: aStatus,
-          canManageNetwork: false,
-          canSyncCloud: aCanSyncCloud,
-          permissions: enforcedPermissions,
-        });
-        setStatusNotice(`Added ${aName} to Farm Network.`);
       }
       setAccountModalOpen(false);
     } catch (err) {
       setAError(
         err instanceof Error ? err.message : 'Unable to save farm network account.'
+      );
+    }
+  }
+
+  async function handleDeclinePending(acc: FarmAccount) {
+    setErrorNotice(null);
+    try {
+      await deleteAccountMut.mutateAsync(acc.id);
+      setStatusNotice(`Declined join request from ${acc.displayName}.`);
+    } catch (err) {
+      setErrorNotice(
+        err instanceof Error ? err.message : 'Unable to decline join request.'
       );
     }
   }
@@ -409,16 +383,6 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
             <img src={APP_ICONS.settings} alt="" className="app-icon-sm" />
             Change Password
           </button>
-          {isAdminOrManager && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={openAddAccountModal}
-            >
-              <img src={APP_ICONS.plus} alt="" className="app-icon-sm" />
-              Invite to Network
-            </button>
-          )}
           {onSignOut && (
             <button
               type="button"
@@ -496,9 +460,12 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
         <div className="card network-join-key-card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
             <div>
-              <h2 className="card-section-title" style={{ marginBottom: 0 }}>
-                Admin Network Join Key &amp; Invitations
+              <h2 className="card-section-title" style={{ marginBottom: 4 }}>
+                Admin Network Join Key
               </h2>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                Share your Full Cloud Key (FDB1:...) for another phone or PC, or Short Code (FARM-XXXX) on this device. Members who join will appear under Pending Network Requests so you can assign privileges before letting them in.
+              </p>
             </div>
             <button
               type="button"
@@ -531,7 +498,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
 
             <div className="join-key-box" style={{ flex: 2 }}>
               <span className="hr-sub-label">
-                Full Cloud Key (Member Invites &amp; Cross-Device Admin Sign-In)
+                Full Cloud Key (Member Join Key &amp; Cross-Device Admin Sign-In)
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
                 <input
@@ -547,7 +514,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                     onClick={() => {
                       void navigator.clipboard?.writeText(fullJoinKey);
                       setStatusNotice(
-                        'Copied Full Cloud Key! Use it to invite members or sign into your Admin account + cloud DB on another device.'
+                        'Copied Full Cloud Key! Share it with a team member to join from Farm Network -> Join Network, or use it to sign into your Admin cloud workspace on another device.'
                       );
                     }}
                   >
@@ -617,7 +584,8 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   <button
                     type="button"
                     className="btn btn-danger btn-sm"
-                    onClick={() => void deleteAccountMut.mutateAsync(acc.id)}
+                    disabled={deleteAccountMut.isPending}
+                    onClick={() => void handleDeclinePending(acc)}
                   >
                     Decline
                   </button>
@@ -783,7 +751,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   ? `Assign Privileges & Accept: ${editingAccount.displayName}`
                   : editingAccount
                     ? `Manage Account: ${editingAccount.displayName}`
-                    : 'Invite Member to Farm Network'}
+                    : 'Manage Account'}
               </h2>
               <button
                 type="button"
@@ -1042,7 +1010,6 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   type="submit"
                   className="btn btn-primary"
                   disabled={
-                    createAccountMut.isPending ||
                     updateAccountMut.isPending ||
                     acceptPendingMut.isPending
                   }

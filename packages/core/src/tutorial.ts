@@ -33,17 +33,17 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Getting Started',
     targetSection: 'livestock',
     summary:
-      'farmDB keeps your entire livestock operation organized in one offline-first SQLite database on Desktop and Mobile, with optional Admin-controlled Supabase cloud synchronization.',
+      'farmDB keeps your entire livestock operation organized in one offline-first SQLite database on Desktop and Mobile, with optional Admin-controlled Supabase cloud synchronization and automatic update alerts.',
     cardsAndFeatures: [
       {
-        name: 'Navigation Menu & Custom Desktop Titlebar',
+        name: 'Navigation Menu, Custom Desktop Titlebar & Compact Icon UI',
         explanation:
-          'On Desktop, use the dark-green sidebar to switch modules and the top titlebar for quick Cloud Sync status, Alert shortcuts, Settings, Account, and custom window controls. On Mobile, use the floating bottom bar or tap the top-left ☰ menu for all modules, Settings, and Sign Out.',
+          'On Desktop, use the dark-green sidebar to switch modules and the top titlebar for quick Cloud Sync status, Alert shortcuts, Settings, Account, and custom window controls. On Mobile, toggle Compact Icon UI in Setup or Settings to switch between the floating bottom icon dock or labeled menu via the top-left ☰ drawer, with Android keyboard-aware scrolling keeping lower form fields visible above the keyboard.',
       },
       {
-        name: 'Live Record Counters & Active Focus Highlights',
+        name: 'Live Record Counters, Pending Join Banner & Update Alerts',
         explanation:
-          'Badges beside menu items show current counts for active animals, milk entries, medical records, finances, staff, and open alerts, framed with clear green selection/hover highlights.',
+          'Badges beside menu items show current counts for active animals, milk entries, medical records, finances, staff, open alerts, and Admin pending Farm Network join requests. When a team member requests access or a new farmDB release is ready, clear amber Pending Network Join Request or Update Available banners appear at the top.',
       },
       {
         name: 'Farm Hover Hints (Desktop)',
@@ -53,7 +53,7 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
       {
         name: 'Account Card & Sign Out',
         explanation:
-          'Displays the currently signed-in Admin or User profile at the bottom of the menu. Click Sign Out whenever you need to exit your active session before signing into or registering another account.',
+          'Displays the currently signed-in Admin or User profile at the bottom of the menu (with your Farm Name and Admin tag for Administrators). Click Sign Out whenever you need to exit your active session before signing into, registering, or deleting another account.',
       },
     ],
     howToSteps: [
@@ -119,7 +119,7 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
       {
         name: 'Custody Records vs. Owners Directory Tabs',
         explanation:
-          'Switch between individual custody agreements and a grouped directory organized by each external owner or partner.',
+          'Switch between individual custody agreements and a grouped directory organized by each external owner or partner. Saved phone numbers and email addresses work as clickable contact links on Mobile to dial or email owners directly.',
       },
       {
         name: 'Ownership Form & Date Validation',
@@ -138,7 +138,7 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
       'Update status to Returned or Picked Up once the animal leaves your custody.',
     ],
     proTip:
-      'Animals with active non-farm custody display an owner badge directly inside Herd Registry so workers always know which stock belongs to external partners or buyers.',
+      'Animals with active non-farm custody display an owner badge directly inside Herd Registry, and on Mobile you can tap any owner phone number or email link right from Ownerships to call or email the buyer or partner.',
   },
   {
     id: 'family_tree',
@@ -347,7 +347,7 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
       {
         name: 'Three Tabs: Staff Directory, Salary Ledger, Allocated Tasks',
         explanation:
-          'Manage worker profiles and pay frequencies, track pending vs. paid wage disbursements, and assign prioritized daily chores.',
+          'Manage worker profiles and pay frequencies, track pending vs. paid wage disbursements, and assign prioritized daily chores. On Mobile, worker phone numbers and email links open your dialer or email app directly, and Android forms automatically scroll lower fields above the on-screen keyboard.',
       },
       {
         name: 'Record Payment & Mark Paid',
@@ -361,12 +361,12 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
       },
     ],
     howToSteps: [
-      'Add workers with Role, Phone, Salary Amount, Pay Frequency (monthly/weekly/etc.), and next due date.',
+      'Add workers with Role, Phone, Email, Salary Amount, Pay Frequency (monthly/weekly/etc.), and next due date.',
       'Use Salary Ledger to generate or confirm wage payments and mark them Paid.',
       'Create tasks under Allocated Tasks and update progress from Pending to Completed.',
     ],
     proTip:
-      'Set "Payment Alert Lead Days" in Settings to be notified ahead of upcoming paydays before wages become overdue.',
+      'Set "Payment Alert Lead Days" in Settings to be notified ahead of upcoming paydays before wages become overdue, and tap any worker phone or email link on Mobile to contact staff in one tap.',
   },
   {
     id: 'statistics',
@@ -409,42 +409,42 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
   {
     id: 'accounts_auth',
     stepNumber: 11,
-    title: 'Accounts, Sign-Up & Sign Out',
+    title: 'Accounts, Sign-Up, Join Flow & Deletion',
     category: 'Accounts & System',
     targetSection: null,
     summary:
-      'farmDB separates Farm Owner Admin Accounts from User Accounts, enforcing strict Sign Out before switching accounts and keeping Admin cloud credentials portable across devices.',
+      'farmDB never auto-creates a hidden Administrator account — you choose whether to register an Admin Account (labeled with your chosen Farm Name + Admin tag) or a User Account, delete accounts anytime with PIN safety, and keep sessions strictly isolated.',
     cardsAndFeatures: [
       {
-        name: 'Sign In vs. Sign Up (No Auth-Screen Join Key Tab)',
+        name: 'User-Chosen Sign Up (No Auto-Seeded Admin Account)',
         explanation:
-          'On the Login / Sign Up portal, create either a standalone User Account or an Admin Account (local or cloud-recovered). Joining an existing Admin’s farm via Join Key happens inside your created account’s Farm Network page.',
+          'Both Desktop and Mobile open cleanly with zero default Admin profile created behind your back. During Sign Up, explicitly choose whether to create an Admin Account (displayed as your chosen Farm Name with an Admin badge) or a standalone User Account. Connecting a User account to an Admin’s farm happens inside Farm Network via Join Network.',
       },
       {
-        name: 'Strict Login-First Launch & First-Time Setup Wizard',
+        name: 'Strict Login-First Launch & Live First-Time Setup Wizard',
         explanation:
-          'Both Desktop and Mobile strictly open on the Sign In / Sign Up portal by default so no farm records are exposed before authentication. The very first time a new account signs in, a one-time First-Time Setup Wizard walks through database location/read-only protection, Font Size, UI Element Size, Volume Units, Currency, and (for Admins) optional step-by-step Supabase Cloud DB setup.',
+          'farmDB strictly launches on the Sign In / Sign Up portal so no farm records appear before authentication. On a new account’s first sign-in, First-Time Setup walks through SQLite protection, Volume Units, Currency, and real-time Font Size, UI Element Size, and Mobile Compact Icon UI previews before opening your dashboard.',
       },
       {
-        name: 'Strict Sign Out Flow',
+        name: 'Joining via Key & Automatic Approval Check (Every 20 Seconds)',
         explanation:
-          'Once signed into an account, you must click Sign Out first to return to the Sign In / Sign Up portal before accessing or creating another account.',
+          'Sign into your created User or Admin account, open Farm Network -> Join Network, and paste an Admin’s Short Code (FARM-XXXX) or Full Cloud Key (FDB1:...). Your device verifies the key first, notifies the Admin, and automatically polls for approval every 20 seconds on the Pending Administrator Approval screen (or anytime via Check Approval).',
       },
       {
-        name: 'Admin Cloud Recovery & Credential Persistence',
+        name: 'Delete Account & Strict Sign Out Flow',
         explanation:
-          'Admin accounts save their linked Supabase URL, Anon/Publishable Key, and Workspace ID so logging in or recovering with a Cloud Key / credentials on another device automatically downloads your entire farm database, settings, and optimized animal photos.',
+          'Click Sign Out before switching accounts on a shared device. You can safely use Delete Account for either an Admin or User account right inside Farm Network or directly from the Sign-In Portal (with confirmation and PIN verification for protected accounts) without erasing farm records — if other Admins exist, Primary Admin promotes automatically.',
       },
       {
-        name: 'Credential Isolation & Change Password / PIN',
+        name: 'Admin Cloud Recovery & Credential Isolation',
         explanation:
-          'Admins manage permissions and can remove accounts, but cannot enter another user’s account without that user’s login credentials. Every signed-in user can change their own Password / PIN in Farm Network.',
+          'Admin accounts store their linked Supabase URL, Anon/Publishable Key, and Workspace ID so Cloud Recovery on another laptop or phone restores records, settings, and optimized animal photos automatically. Admins manage permissions without seeing or entering another member’s Password / PIN.',
       },
     ],
     howToSteps: [
-      'Use Sign Up to create an initial Admin Account (or a standalone User Account), optionally setting an Email and access Password / PIN.',
-      'Use Sign Out in the menu or Farm Network page whenever switching users on a shared device.',
-      'To recover an Admin database on a second PC or phone, open Sign In / Cloud Admin Recovery, enter your Cloud Key (or Supabase URL + Anon Key + PIN), and sync down.',
+      'Use Sign Up to create only the Admin (custom Farm Name + Admin tag) or User accounts you want on this device.',
+      'To join an Admin’s farm as a User, create/sign into your User account, open Farm Network -> Join Network, paste the FARM-XXXX or FDB1:... key, and wait cleanly while farmDB checks every 20 seconds for Admin approval.',
+      'Use Sign Out when switching users, Delete Account (in Farm Network or on the Sign-In Portal) to remove unwanted Admin or User profiles, and Change Password / PIN inside Farm Network anytime.',
     ],
     proTip:
       'Save your Admin Full Cloud Key (FDB1:...) from Advanced Settings -> Cloud Sync in a password manager so restoring onto a new laptop or phone takes one paste.',
@@ -457,33 +457,33 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     targetSection: 'network',
     adminOnly: true,
     summary:
-      'Admins manage shared farm access from Farm Network — generating Invite Keys, approving join requests, enforcing per-module RBAC privileges, and removing inactive members.',
+      'Admins control shared farm collaboration from Farm Network — sharing Join Keys (FARM-XXXX or FDB1:...), receiving live notifications when someone requests to join, assigning per-module RBAC privileges, and removing inactive accounts.',
     cardsAndFeatures: [
       {
-        name: 'Invite to Network (Short FARM-XXXX Key & Full FDB1 Key)',
+        name: 'Admin Network Join Key (Short FARM-XXXX Code & Full FDB1:... Cloud Key)',
         explanation:
-          'Click Invite to Network to view or share your short code (same workspace) or full cloud Invite Key (FDB1:...), and Rotate Key anytime to invalidate old codes.',
+          'Copy and share your Short Code (FARM-XXXX on the same device) or Full Cloud Key (FDB1:... across devices via Supabase Cloud DB) directly from Farm Network. Click Generate New Key anytime to revoke old codes immediately — farmDB validates keys against the Admin’s live cloud state before letting a new device sync.',
+      },
+      {
+        name: 'Join Notifications, Pending Network Join Request Banner & RBAC',
+        explanation:
+          'When a user pastes your key inside Join Network, Admins receive an instant OS notification, a top amber Pending Network Join Request banner, and a live count badge on Farm Network. Click Assign Privileges & Accept to choose module-by-module access (Hidden, View Only, View & Edit, or Full Access), use Quick Accept, or Decline to clear the request locally and in Supabase.',
       },
       {
         name: 'Join Network (In-Account Connection)',
         explanation:
-          'Both User and Admin accounts have a Join Network button inside Farm Network to connect to another farm’s network using a Join Key.',
+          'Any signed-in User or Admin account connects to a shared network exclusively via Farm Network -> Join Network (with automatic 20-second pending approval polling once submitted).',
       },
       {
-        name: 'Pending Requests & Per-Module RBAC Permissions',
+        name: 'Member Contact Links, Change Password / PIN & Delete Account',
         explanation:
-          'Review pending members, assign module-by-module access (Hidden, View Only, View & Edit, or Full Access), and enforce rules at the database repository level.',
-      },
-      {
-        name: 'Change Password / PIN & Member Management',
-        explanation:
-          'Users update their own password/PIN cleanly, while Admins can adjust member privileges or remove accounts without accessing users’ private credentials.',
+          'Tap member phone numbers or emails on Mobile to call or email teammates directly, let each user change their own Password / PIN, and use Delete Account cleanly on any Admin or User profile without affecting farm livestock or ledger records.',
       },
     ],
     howToSteps: [
-      'Configure Cloud Sync & Supabase Database under Settings -> Advanced Settings if sharing across separate devices.',
-      'Click Invite to Network in Farm Network and share your FARM-XXXX code or FDB1:... Invite Key with a family member, vet, or partner.',
-      'Have them sign into their own farmDB account, open Farm Network -> Join Network, and paste the key; then approve them and set module privileges.',
+      'Configure Cloud Sync & Supabase Database under Settings -> Advanced Settings if sharing across separate phones or PCs.',
+      'Copy your Short Code (FARM-XXXX) or Full Cloud Key (FDB1:...) from Farm Network and share it with your family member, vet, or manager.',
+      'Have them sign into their farmDB account, open Farm Network -> Join Network, and paste the key; click Assign Privileges & Accept from your notification or Pending Network Join Request banner when their request arrives.',
     ],
     proTip:
       'External animal owners or vets can be restricted to View Only or Hidden on Financial Ledger and HR while keeping Medical or Ownerships editable as needed.',
@@ -528,12 +528,12 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
     category: 'Accounts & System',
     targetSection: 'settings',
     summary:
-      'Organized into three clean tabs — Settings (Display, Units, Defaults), Advanced Settings (Native SQLite Storage & Read-Only Protection + Cloud Sync & Supabase), and Sync Logs.',
+      'Organized into three clean tabs — Settings (Display, Compact Icon UI, Units, Defaults), Advanced Settings (Native SQLite Storage & Read-Only Protection, Cloud Sync & Supabase, and Software/App Updates), and Sync Logs.',
     cardsAndFeatures: [
       {
-        name: 'Settings Tab (Display, Units & Automation)',
+        name: 'Settings Tab (Display, Compact Icon UI, Units & Automation)',
         explanation:
-          'Configure Font Size (Small to Extra Large), Spacing Density, Mobile Icon Mode, Liters vs. US Gallons, Date Format, Currency ($ / UGX / £ / custom), Milk Rate, Auto-Ledger flags, and Confirm Before Delete.',
+          'Configure Font Size (Small to Extra Large), UI Element Size / Spacing Density (tuned cleanly on Mobile even in Large & Extra-Large modes), Compact Icon UI, Liters vs. US Gallons, Date Format, Currency ($ / UGX / £ / custom), Milk Rate, Auto-Ledger flags, and Confirm Before Delete.',
       },
       {
         name: 'Advanced Settings: Native SQLite Database Storage & Read-Only Protection',
@@ -543,12 +543,12 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
       {
         name: 'Advanced Settings: Cloud Sync & Supabase Database (Admin Only)',
         explanation:
-          'Enter your Supabase Project URL, Anon/Publishable Key, and Workspace ID; copy the one-time SQL Setup Script; test connection with instant inline feedback beside the card; pick conflict strategy (Last Write Wins / Local Priority / Cloud Priority); and toggle auto-sync.',
+          'Enter your Supabase Project URL, Anon/Publishable Key, and Workspace ID; expand or collapse the one-time SQL Setup Script with Show Script / Hide Script; test connection with instant inline feedback beside the card; pick conflict strategy (Last Write Wins / Local Priority / Cloud Priority); and toggle auto-sync.',
       },
       {
-        name: 'Advanced Settings: In-App Software Updates',
+        name: 'Advanced Settings: Software Updates, App Updates & What\'s New Alerts',
         explanation:
-          'Check for and install signed Desktop updates (Windows installer / silent updater via GitHub Releases) or fetch Mobile over-the-air (OTA) Expo updates right inside Advanced Settings without reinstalling manually.',
+          'Automatically checks for new releases after sign-in and surfaces in-app Update Available banners and OS toast notifications showing the version number and full list of fixes inside an interactive Update Available / What\'s New modal. Install signed Desktop updates (GitHub Releases) or Mobile Expo EAS OTA updates without reinstalling an APK — banners clear automatically as soon as the latest version is active.',
       },
       {
         name: 'Sync Logs Tab (Admin Only)',
@@ -557,12 +557,12 @@ export const FARMDB_TUTORIAL_STEPS: readonly TutorialStep[] = [
       },
     ],
     howToSteps: [
-      'Adjust Font Size, Currency, and Liters vs. Gallons in the Settings tab.',
-      'Open Advanced Settings to verify Native SQLite Read-Only Protection is enabled and, for Admins, configure Supabase URL + Key and run the SQL Setup Script in Supabase.',
-      'Click Test Connection right inside the Cloud Sync card, turn on Auto-Sync, and review Sync Logs anytime.',
+      'Adjust Font Size, UI Element Size, Compact Icon UI, Currency, and Liters vs. Gallons in the Settings tab (or preview them live in First-Time Setup on Mobile).',
+      'Open Advanced Settings to verify Native SQLite Read-Only Protection is enabled and, for Admins, configure Supabase URL + Key and toggle Show Script to copy/run the SQL Setup Script in Supabase.',
+      'Click Check for Updates or What\'s New in Software Updates / App Updates anytime, and review Cloud Sync -> Sync Logs after Two-Way Sync.',
     ],
     proTip:
-      'Test Connection feedback appears directly inside the Cloud Sync & Supabase Database card so you never have to scroll away to verify status.',
+      'Test Connection feedback appears directly inside the Cloud Sync & Supabase Database card, and clicking any Update Available banner opens the exact version number and list of fixes before you install.',
   },
 ] as const;
 

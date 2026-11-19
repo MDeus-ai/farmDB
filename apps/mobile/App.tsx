@@ -43,6 +43,7 @@ import {
   useActiveFarmAccount,
   useAlertBackgroundWorker,
   useCloudAutoSyncWorker,
+  useFarmAccountList,
   useFarmSummary,
   type AlertNotificationPayload,
 } from '@farmdb/db';
@@ -155,6 +156,7 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
   const autoUpdateCheckedRef = useRef(false);
   const summaryQuery = useFarmSummary();
   const activeAccountQuery = useActiveFarmAccount();
+  const accountsListQuery = useFarmAccountList({});
   const summary = summaryQuery.data;
   const activeAccount = activeAccountQuery.data;
   const ui = useUiScale();
@@ -382,7 +384,56 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
     }
   }, [activeAccount, activeSection, primarySections, visibleSections]);
 
+  const isAdminSession =
+    !isSignedOut &&
+    !showAuthPortal &&
+    !showOnboarding &&
+    Boolean(
+      activeAccount &&
+        (isAdminAccount(activeAccount) || activeAccount.canManageNetwork)
+    );
+  const pendingJoinAccounts = useMemo(
+    () =>
+      isAdminSession
+        ? (accountsListQuery.data ?? []).filter((a) => a.status === 'pending')
+        : [],
+    [isAdminSession, accountsListQuery.data]
+  );
+  const pendingJoinSignature = useMemo(
+    () => pendingJoinAccounts.map((a) => a.id).sort().join(','),
+    [pendingJoinAccounts]
+  );
+  const notifiedPendingIdsRef = useRef<Set<string>>(new Set());
+  const [dismissedPendingSignature, setDismissedPendingSignature] = useState('');
+
+  useEffect(() => {
+    if (!isAdminSession || pendingJoinAccounts.length === 0) {
+      return;
+    }
+    const newlyArrived = pendingJoinAccounts.filter(
+      (a) => !notifiedPendingIdsRef.current.has(a.id)
+    );
+    if (newlyArrived.length === 0) {
+      return;
+    }
+    for (const acc of newlyArrived) {
+      notifiedPendingIdsRef.current.add(acc.id);
+    }
+    setDismissedPendingSignature('');
+    if (enableNotificationsRef.current) {
+      const title =
+        pendingJoinAccounts.length === 1
+          ? 'New Farm Network Join Request'
+          : `${pendingJoinAccounts.length} Pending Network Join Requests`;
+      const body = `${newlyArrived[0]!.displayName} wants to join ${ui.settings.farmName}. Review & assign privileges before granting access.`;
+      void dispatchMobileNotification({ title, body });
+    }
+  }, [isAdminSession, pendingJoinAccounts, ui.settings.farmName]);
+
   function getCountForSection(id: AppSectionId): number | null {
+    if (id === 'network') {
+      return pendingJoinAccounts.length > 0 ? pendingJoinAccounts.length : null;
+    }
     if (!summary) {
       return null;
     }
@@ -566,6 +617,65 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
               accessibilityLabel="Dismiss update banner"
             >
               <AppIcon name="close" size={ui.font(14)} color="#173e2b" />
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {isAdminSession &&
+      pendingJoinAccounts.length > 0 &&
+      dismissedPendingSignature !== pendingJoinSignature ? (
+        <View
+          style={[
+            styles.pendingJoinBanner,
+            {
+              paddingHorizontal: ui.contentPadding,
+              paddingVertical: ui.space(9),
+            },
+          ]}
+        >
+          <View style={styles.updateBannerLeft}>
+            <AppIcon name="hourglass" size={ui.font(18)} />
+            <View style={{ flex: 1, minWidth: 160 }}>
+              <Text style={[styles.pendingJoinTitle, { fontSize: ui.font(12.5) }]}>
+                Join Request ({pendingJoinAccounts.length})
+              </Text>
+              <Text
+                style={[styles.pendingJoinBody, { fontSize: ui.font(11) }]}
+                numberOfLines={2}
+              >
+                {pendingJoinAccounts[0]!.displayName}
+                {pendingJoinAccounts.length > 1
+                  ? ` (+${pendingJoinAccounts.length - 1} more)`
+                  : ''}{' '}
+                wants to join {ui.settings.farmName} — assign privileges.
+              </Text>
+            </View>
+          </View>
+          <View style={styles.updateBannerActions}>
+            <Pressable
+              onPress={() => setActiveSection('network')}
+              style={[
+                styles.pendingJoinActionBtn,
+                {
+                  minHeight: Math.max(32, ui.chipHeight - 4),
+                  paddingHorizontal: ui.space(12),
+                  paddingVertical: ui.space(5),
+                },
+              ]}
+              accessibilityLabel="Review pending join request"
+            >
+              <Text style={[styles.updateBannerActionText, { fontSize: ui.font(11.5) }]}>
+                Review
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setDismissedPendingSignature(pendingJoinSignature)}
+              style={styles.alertBannerDismiss}
+              hitSlop={8}
+              accessibilityLabel="Dismiss join request banner"
+            >
+              <AppIcon name="close" size={ui.font(14)} color={FARMDB_COLORS.warnText} />
             </Pressable>
           </View>
         </View>
@@ -1301,6 +1411,31 @@ const styles = StyleSheet.create({
   updateBannerActionText: {
     fontFamily: FARMDB_FONTS.bold,
     color: '#ffffff',
+  },
+  pendingJoinBanner: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    backgroundColor: FARMDB_COLORS.warnBg,
+    borderBottomWidth: 1,
+    borderBottomColor: FARMDB_COLORS.warnBorder,
+  },
+  pendingJoinTitle: {
+    fontFamily: FARMDB_FONTS.bold,
+    color: FARMDB_COLORS.warnText,
+  },
+  pendingJoinBody: {
+    fontFamily: FARMDB_FONTS.regular,
+    color: FARMDB_COLORS.warnText,
+  },
+  pendingJoinActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: FARMDB_COLORS.warnText,
+    borderRadius: 999,
   },
   drawerUpdateBadge: {
     paddingHorizontal: 8,

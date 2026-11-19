@@ -982,11 +982,16 @@ export function useCloudAutoSyncWorker(
     };
     g.addEventListener?.('online', handleOnline);
 
+    const initialTimer = setTimeout(() => {
+      void syncNow().catch(() => {});
+    }, 2500);
+
     const timer = setInterval(() => {
-      void syncNow();
+      void syncNow().catch(() => {});
     }, intervalMs);
 
     return () => {
+      clearTimeout(initialTimer);
       clearInterval(timer);
       g.removeEventListener?.('online', handleOnline);
     };

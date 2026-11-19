@@ -226,12 +226,18 @@ export function wrapSessionWithRbac(
   };
 
   const network: FarmDbContextValue['network'] = {
-    ...raw.network,
+    listAccounts: (filter) => raw.network.listAccounts(filter),
+    listAccountsRaw: () => raw.network.listAccountsRaw(),
+    getAccountById: (id) => raw.network.getAccountById(id),
+    ensureAdminAccount: () => raw.network.ensureAdminAccount(),
+    getActiveAccount: () => raw.network.getActiveAccount(),
+    switchActiveAccount: (accountId, accessCode) =>
+      raw.network.switchActiveAccount(accountId, accessCode),
     async createAccount(input) {
       await assertNetworkAdmin('create farm accounts');
       return raw.network.createAccount(input);
     },
-    signUpAccount: raw.network.signUpAccount,
+    signUpAccount: (input) => raw.network.signUpAccount(input),
     async updateAccount(id, input) {
       const actor = await getActiveActor();
       if (actor && !isNetworkManager(actor)) {
@@ -260,15 +266,19 @@ export function wrapSessionWithRbac(
       }
       return raw.network.removeAccount(id);
     },
-    removeAccountWithCredentials: raw.network.removeAccountWithCredentials,
+    removeAccountWithCredentials: (id, accessCode) =>
+      raw.network.removeAccountWithCredentials(id, accessCode),
     async rotateNetworkJoinKey() {
       await assertNetworkAdmin('rotate Farm Network join keys');
       return raw.network.rotateNetworkJoinKey();
     },
+    joinNetworkWithKey: (input) => raw.network.joinNetworkWithKey(input),
+    recoverAdminFromCloud: (input) => raw.network.recoverAdminFromCloud(input),
     async acceptPendingAccount(accountId, options) {
       await assertNetworkAdmin('approve pending farm accounts');
       return raw.network.acceptPendingAccount(accountId, options);
     },
+    listSyncLogs: (limit) => raw.network.listSyncLogs(limit),
     async clearSyncLogs() {
       const actor = await getActiveActor();
       if (actor && !isNetworkManager(actor) && !actor.canSyncCloud) {
@@ -278,6 +288,7 @@ export function wrapSessionWithRbac(
       }
       return raw.network.clearSyncLogs();
     },
+    syncWithSupabase: (direction) => raw.network.syncWithSupabase(direction),
   };
 
   return {

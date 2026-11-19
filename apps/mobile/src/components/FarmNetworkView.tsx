@@ -32,7 +32,6 @@ import {
 import {
   useAcceptPendingAccount,
   useActiveFarmAccount,
-  useCreateFarmAccount,
   useDeleteFarmAccount,
   useFarmAccountList,
   useJoinFarmNetwork,
@@ -57,7 +56,6 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   const accountsQuery = useFarmAccountList({});
   const activeAccountQuery = useActiveFarmAccount();
 
-  const createMut = useCreateFarmAccount();
   const updateMut = useUpdateFarmAccount();
   const deleteMut = useDeleteFarmAccount();
   const rotateKeyMut = useRotateNetworkJoinKey();
@@ -134,23 +132,6 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   );
   const [aError, setAError] = useState<string | null>(null);
 
-  function openAddAccount() {
-    setEditingAcc(null);
-    setApprovingMode(false);
-    setAName('');
-    setARole('family_member');
-    setARel('');
-    setAEmail('');
-    setAPhone('');
-    setAAvatar('farmerFemale');
-    setAPin('');
-    setAStatus('active');
-    setACanSync(true);
-    setAPerms(getDefaultPermissionsForRole('family_member'));
-    setAError(null);
-    setAccModalOpen(true);
-  }
-
   function openEditAccount(acc: FarmAccount, approvePending = false) {
     setEditingAcc(acc);
     setApprovingMode(approvePending);
@@ -169,20 +150,16 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
   }
 
   async function handleSaveAccount() {
+    if (!editingAcc) return;
     setAError(null);
     const enforcedPerms: FarmAccountPermissions = aPerms;
     const isAdminEditingOtherExistingWithPin = Boolean(
-      editingAcc &&
-        editingAcc.id !== activeAccount?.id &&
+      editingAcc.id !== activeAccount?.id &&
         editingAcc.accessCode &&
         editingAcc.accessCode.trim().length > 0
     );
-    if (!editingAcc && aRole !== 'admin' && aPin.trim().length < 4) {
-      setAError('Set a login PIN / passcode (4 to 32 characters) for this user account.');
-      return;
-    }
     try {
-      if (editingAcc && approvingMode) {
+      if (approvingMode) {
         await acceptPendingMut.mutateAsync({
           accountId: editingAcc.id,
           options: {
@@ -207,21 +184,25 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
             ? {}
             : { accessCode: aPin || null }),
           status: aStatus,
-          canManageNetwork: Boolean(editingAcc?.isPrimaryAdmin),
+          canManageNetwork: Boolean(editingAcc.isPrimaryAdmin),
           canSyncCloud: aCanSync,
           permissions: enforcedPerms,
         };
-        if (editingAcc) {
-          await updateMut.mutateAsync({ id: editingAcc.id, input: payload });
-          setNotice(`Updated account & privileges for ${aName}.`);
-        } else {
-          await createMut.mutateAsync(payload);
-          setNotice(`Added ${aName} to Farm Network.`);
-        }
+        await updateMut.mutateAsync({ id: editingAcc.id, input: payload });
+        setNotice(`Updated account & privileges for ${aName}.`);
       }
       setAccModalOpen(false);
     } catch (err) {
       setAError(err instanceof Error ? err.message : 'Invalid account input.');
+    }
+  }
+
+  async function handleDeclinePending(acc: FarmAccount) {
+    try {
+      await deleteMut.mutateAsync(acc.id);
+      setNotice(`Declined join request from ${acc.displayName}.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to decline join request.');
     }
   }
 
@@ -411,17 +392,6 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               Password
             </Text>
           </Pressable>
-          {isAdminOrManager ? (
-            <Pressable
-              style={[styles.primaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
-              onPress={openAddAccount}
-            >
-              <AppIcon name="plus" size={ui.font(14)} />
-              <Text style={[styles.primaryBtnText, { fontSize: ui.font(12) }]}>
-                Invite to Network
-              </Text>
-            </Pressable>
-          ) : null}
           {onSignOut ? (
             <Pressable
               style={[styles.secondaryBtn, { minHeight: ui.chipHeight, paddingVertical: ui.space(6) }]}
@@ -478,6 +448,10 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
           </Pressable>
         </View>
 
+        <Text style={[styles.subText, { fontSize: ui.font(11.5) }]}>
+          Share your Full Cloud Key (FDB1:...) for another phone or PC, or Short Code (FARM-XXXX) on this device. You will be notified to assign privileges when someone joins.
+        </Text>
+
         <View style={styles.joinCodeBox}>
           <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
             <Text style={[styles.label, { fontSize: ui.font(11) }]}>
@@ -502,11 +476,11 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
           <View style={styles.joinCodeBox}>
             <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
               <Text style={[styles.label, { fontSize: ui.font(11) }]}>
-                Cloud Key (Invites &amp; Admin Cross-Device Login)
+                Full Cloud Key (Member Join Key &amp; Admin Cross-Device Login)
               </Text>
               <Pressable
                 onPress={() =>
-                  void copyKeyIfPossible(fullJoinKey, 'Cloud Invite Key')
+                  void copyKeyIfPossible(fullJoinKey, 'Full Cloud Key')
                 }
               >
                 <Text style={[styles.copyLinkText, { fontSize: ui.font(11) }]}>
@@ -608,7 +582,8 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   </Pressable>
                   <Pressable
                     style={styles.smallDeleteBtn}
-                    onPress={() => void handleDelete(acc)}
+                    disabled={deleteMut.isPending}
+                    onPress={() => void handleDeclinePending(acc)}
                   >
                     <AppIcon name="trash" size={ui.font(12)} />
                     <Text style={[styles.smallDeleteText, { fontSize: ui.font(11) }]}>
@@ -779,7 +754,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                 ? 'Assign Privileges & Accept Request'
                 : editingAcc
                   ? 'Edit Account & Privileges'
-                  : 'Invite to Farm Network'}
+                  : 'Manage Account'}
             </Text>
             <Pressable onPress={() => setAccModalOpen(false)} hitSlop={8} style={{ flexShrink: 0 }}>
               <AppIcon name="close" size={ui.font(20)} />
@@ -1082,7 +1057,6 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                 style={[styles.submitBtn, { minHeight: ui.controlHeight, paddingHorizontal: ui.space(14), paddingVertical: ui.space(8) }]}
                 onPress={() => void handleSaveAccount()}
                 disabled={
-                  createMut.isPending ||
                   updateMut.isPending ||
                   acceptPendingMut.isPending
                 }
@@ -1118,22 +1092,31 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               {activeAccount?.displayName ?? 'your account'}.
             </Text>
             <TextInput
-              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(14) }]}
+              style={[
+                styles.input,
+                {
+                  minHeight: Math.max(ui.controlHeight * 1.8, 72),
+                  fontSize: ui.font(13),
+                  textAlignVertical: 'top',
+                },
+              ]}
+              multiline
+              numberOfLines={3}
               value={joinKeyInput}
               onChangeText={setJoinKeyInput}
-              placeholder="FARM-XXXX or FDB1:..."
+              placeholder="Paste FARM-XXXX or FDB1:..."
               autoCapitalize="none"
             />
             {joinErr ? <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>{joinErr}</Text> : null}
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
               <Pressable
-                style={[styles.secondaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight }]}
+                style={[styles.secondaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight, paddingHorizontal: ui.space(12), paddingVertical: ui.space(6) }]}
                 onPress={() => setJoinOpen(false)}
               >
                 <Text style={[styles.secondaryBtnText, { fontSize: ui.font(13) }]}>Cancel</Text>
               </Pressable>
               <Pressable
-                style={[styles.primaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight }]}
+                style={[styles.primaryBtn, { flex: 1, minWidth: 104, minHeight: ui.controlHeight, paddingHorizontal: ui.space(12), paddingVertical: ui.space(6) }]}
                 disabled={joinNetworkMut.isPending}
                 onPress={() => void handleJoinNetworkSubmit()}
               >

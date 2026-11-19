@@ -6,6 +6,7 @@ import {
   DEFAULT_FARM_SETTINGS,
   generateId,
   generateShortJoinCode,
+  getDefaultPermissionsForRole,
   getTodayIsoDate,
   inferDefaultLivestockSex,
   isAdminAccount,
@@ -2007,6 +2008,9 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           status: isAdminJoining ? 'active' : 'pending',
           canManageNetwork: isAdminJoining,
           canSyncCloud: true,
+          ...(isAdminJoining
+            ? {}
+            : { permissions: getDefaultPermissionsForRole(existing.role) }),
         });
       } else if (input.newAccount) {
         targetAccount = await this.createAccount({

@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  FARMDB_APP_VERSION,
   getTutorialStepsForAccount,
   type AppSectionId,
   type FarmAccount,
@@ -74,7 +75,8 @@ export function TutorialModal({
               <View style={styles.headerTopRow}>
                 <View style={styles.kickerPill}>
                   <Text style={[styles.kickerText, { fontSize: ui.font(10) }]}>
-                    GUIDE {stepIndex + 1} OF {steps.length} · {currentStep.category.toUpperCase()}
+                    GUIDE {stepIndex + 1}/{steps.length} · v{FARMDB_APP_VERSION} ·{' '}
+                    {currentStep.category.toUpperCase()}
                   </Text>
                 </View>
 
@@ -113,7 +115,14 @@ export function TutorialModal({
                   return (
                     <Pressable
                       key={step.id}
-                      style={[styles.chapterChip, active && styles.chapterChipActive]}
+                      style={[
+                        styles.chapterChip,
+                        {
+                          paddingHorizontal: ui.space(10),
+                          paddingVertical: ui.space(6),
+                        },
+                        active && styles.chapterChipActive,
+                      ]}
                       onPress={() => setStepIndex(idx)}
                     >
                       <Text
@@ -232,7 +241,10 @@ export function TutorialModal({
                 style={[
                   styles.prevBtn,
                   isFirst && styles.disabledBtn,
-                  { minHeight: ui.controlHeight },
+                  {
+                    minHeight: ui.controlHeight,
+                    paddingVertical: ui.space(8),
+                  },
                 ]}
                 disabled={isFirst}
                 onPress={() => setStepIndex((prev) => Math.max(0, prev - 1))}
@@ -253,7 +265,13 @@ export function TutorialModal({
 
               {isLast ? (
                 <Pressable
-                  style={[styles.nextBtn, { minHeight: ui.controlHeight }]}
+                  style={[
+                    styles.nextBtn,
+                    {
+                      minHeight: ui.controlHeight,
+                      paddingVertical: ui.space(8),
+                    },
+                  ]}
                   onPress={onClose}
                 >
                   <Text style={[styles.nextBtnText, { fontSize: ui.font(13) }]}>
@@ -263,7 +281,13 @@ export function TutorialModal({
                 </Pressable>
               ) : (
                 <Pressable
-                  style={[styles.nextBtn, { minHeight: ui.controlHeight }]}
+                  style={[
+                    styles.nextBtn,
+                    {
+                      minHeight: ui.controlHeight,
+                      paddingVertical: ui.space(8),
+                    },
+                  ]}
                   onPress={() =>
                     setStepIndex((prev) => Math.min(steps.length - 1, prev + 1))
                   }
@@ -311,10 +335,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    flexWrap: 'wrap',
     gap: 8,
   },
   kickerPill: {
+    flexShrink: 1,
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 999,
@@ -417,9 +441,6 @@ const styles = StyleSheet.create({
     padding: 11,
   },
   howToNum: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
     backgroundColor: FARMDB_COLORS.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',

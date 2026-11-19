@@ -292,6 +292,53 @@ export function AuthPortalView({
     }
   }
 
+  const pendingPollBusyRef = useRef(false);
+  const syncPullRef = useRef(syncMut.mutateAsync);
+  syncPullRef.current = syncMut.mutateAsync;
+  const activeAccRefetchRef = useRef(activeAccountQuery.refetch);
+  activeAccRefetchRef.current = activeAccountQuery.refetch;
+  const onEnterAppRef = useRef(onSuccessEnterApp);
+  onEnterAppRef.current = onSuccessEnterApp;
+
+  useEffect(() => {
+    if (
+      !isPendingGate ||
+      !settings.supabaseUrl.trim() ||
+      !settings.supabaseAnonKey.trim()
+    ) {
+      return;
+    }
+
+    const pollApproval = async () => {
+      if (pendingPollBusyRef.current) return;
+      if (
+        typeof navigator !== 'undefined' &&
+        (navigator as unknown as { onLine?: boolean }).onLine === false
+      ) {
+        return;
+      }
+      pendingPollBusyRef.current = true;
+      try {
+        await syncPullRef.current('pull');
+        const refreshed = await activeAccRefetchRef.current();
+        if (refreshed.data?.status === 'active') {
+          setNotice('Approved! Entering farm workspace...');
+          onEnterAppRef.current?.();
+        }
+      } catch {
+        // Ignore transient offline errors during background approval polling.
+      } finally {
+        pendingPollBusyRef.current = false;
+      }
+    };
+
+    const timer = setInterval(() => {
+      void pollApproval();
+    }, 20000);
+
+    return () => clearInterval(timer);
+  }, [isPendingGate, settings.supabaseUrl, settings.supabaseAnonKey]);
+
   async function handleCheckApprovalStatus() {
     setErrorMsg(null);
     setNotice(null);

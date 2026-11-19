@@ -6,6 +6,17 @@
 
 # farmDB Changelog
 
+## [1.5.3] - 2026-11-19
+
+Fixed Join Key Farm Network onboarding for non-admin users, added real-time Admin join notifications and automatic approval polling, removed unused invite flows, and updated the in-app Guide.
+
+### Fixes & Improvements
+- Fixed RBAC `this`-binding and repository pre-validation so signed-in non-admin users can join an Admin's Farm Network via Full Cloud Key (`FDB1:...`) or Short Code (`FARM-XXXX`) while revoked keys fail before pulling data.
+- Added instant Admin notifications (OS notification, top amber **Pending Network Join Request** banner, and live sidebar/drawer count badge) whenever a member submits a Join Key request.
+- Added automatic 20-second background approval polling on the **Pending Administrator Approval** portal alongside the manual **Check Approval** button, and pushed declined pending requests back to Supabase.
+- Removed the unused **Invite to Network** flow from Desktop and Mobile Farm Network views so onboarding consistently uses Join Keys.
+- Updated the in-app App Guide (`packages/core/src/tutorial.ts`, Desktop `TutorialOverlay`, and Mobile `TutorialModal`) and `README.md` across Getting Started, Ownerships, HR, Accounts & Join Flow, Farm Network, and Settings / Updates.
+
 ## [1.5.2] - 2026-11-19
 
 Added full Admin and User account deletion, accurate installed version reporting, and polished Mobile Large/Extra-Large layouts.
