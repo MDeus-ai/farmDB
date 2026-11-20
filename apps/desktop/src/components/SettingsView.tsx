@@ -1,19 +1,25 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  CURRENT_RELEASE_HIGHLIGHTS,
   CURRENCY_OPTIONS,
+  CURRENT_RELEASE_HIGHLIGHTS,
+  DATE_FORMAT_HINTS,
   DATE_FORMATS,
   DEFAULT_FARM_SETTINGS,
   describeModuleAccessLevel,
   FARMDB_APP_VERSION,
+  FONT_SCALE_HINTS,
   FONT_SCALES,
   formatCurrency,
   formatSpeciesLabel,
   generateSupabaseSetupSql,
   isAdminAccount,
+  SPECIES_HINTS,
   SPECIES_LIST,
+  SYNC_CONFLICT_HINTS,
   SYNC_CONFLICT_STRATEGIES,
   UI_DENSITIES,
+  UI_DENSITY_HINTS,
+  VOLUME_UNIT_HINTS,
   VOLUME_UNITS,
   type CloudSyncDirection,
   type DateFormatPreference,
@@ -520,11 +526,13 @@ export function SettingsView({
         value: opt.symbol,
         label: opt.label,
         iconSrc: getCurrencyFlagIcon(opt.flagKey),
+        hint: `Displays all amounts and summaries with ${opt.code} (${opt.symbol}).`,
       })),
       {
         value: '__custom__',
         label: 'Custom Symbol...',
         iconSrc: APP_ICONS.dollarSymbol,
+        hint: 'Enter any custom currency symbol or 3-letter code (e.g. KES, EUR, €).',
       },
     ],
     []
@@ -604,12 +612,12 @@ export function SettingsView({
           },
           ...(isAdmin
             ? [
-                {
-                  id: 'logs' as const,
-                  label: `Sync Logs (${syncLogs.length})`,
-                  iconSrc: APP_ICONS.dataSync,
-                },
-              ]
+              {
+                id: 'logs' as const,
+                label: `Sync Logs (${syncLogs.length})`,
+                iconSrc: APP_ICONS.dataSync,
+              },
+            ]
             : []),
         ]}
       />
@@ -738,539 +746,545 @@ export function SettingsView({
         </section>
       ) : activeTab === 'settings' ? (
         <div className="settings-grid">
-            <div className="settings-column">
-              <section className="card settings-card">
-                <div className="settings-card-header">
-                  <div className="settings-card-title-row">
-                    <div className="settings-card-icon">
-                      <img src={APP_ICONS.settings} alt="" className="app-icon-sm" />
-                    </div>
-                    <h2 className="card-section-title" style={{ margin: 0 }}>
-                      Appearance &amp; Readability
-                    </h2>
+          <div className="settings-column">
+            <section className="card settings-card">
+              <div className="settings-card-header">
+                <div className="settings-card-title-row">
+                  <div className="settings-card-icon">
+                    <img src={APP_ICONS.settings} alt="" className="app-icon-sm" />
                   </div>
-                  <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
-                    Adjust text scale and UI control sizing without changing farmDB colors.
-                  </p>
+                  <h2 className="card-section-title" style={{ margin: 0 }}>
+                    Appearance &amp; Readability
+                  </h2>
+                </div>
+                <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
+                  Adjust text scale and UI control sizing without changing farmDB colors.
+                </p>
+              </div>
+
+              <div className="settings-field-group">
+                <label className="form-label">Font Size</label>
+                <div className="segmented-group" role="group" aria-label="Font Size">
+                  {FONT_SCALES.map((scale) => (
+                    <button
+                      key={scale}
+                      type="button"
+                      disabled={!canEdit}
+                      title={FONT_SCALE_HINTS[scale]}
+                      className={`segmented-btn ${settings.fontScale === scale ? 'active' : ''
+                        }`}
+                      onClick={() =>
+                        void patchSetting(
+                          { fontScale: scale },
+                          `Font size set to ${FONT_SCALE_LABELS[scale]}.`
+                        )
+                      }
+                    >
+                      {FONT_SCALE_LABELS[scale]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="settings-field-group">
+                <label className="form-label">UI Element Size &amp; Density</label>
+                <div
+                  className="segmented-group"
+                  role="group"
+                  aria-label="UI Element Size"
+                >
+                  {UI_DENSITIES.map((density) => (
+                    <button
+                      key={density}
+                      type="button"
+                      disabled={!canEdit}
+                      title={UI_DENSITY_HINTS[density]}
+                      className={`segmented-btn ${settings.uiDensity === density ? 'active' : ''
+                        }`}
+                      onClick={() =>
+                        void patchSetting(
+                          { uiDensity: density },
+                          `UI element sizing set to ${UI_DENSITY_LABELS[density]}.`
+                        )
+                      }
+                    >
+                      {UI_DENSITY_LABELS[density]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="card settings-card">
+              <div className="settings-card-header">
+                <div className="settings-card-title-row">
+                  <div className="settings-card-icon">
+                    <img src={APP_ICONS.notification} alt="" className="app-icon-sm" />
+                  </div>
+                  <h2 className="card-section-title" style={{ margin: 0 }}>
+                    Automation, Notifications &amp; Safety
+                  </h2>
+                </div>
+                <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
+                  Control auto-ledger creation, local reminders, delete prompts, and defaults.
+                </p>
+              </div>
+
+              <div className="toggle-list">
+                <label className="toggle-card">
+                  <div>
+                    <div className="form-label">Auto-record milk sale income</div>
+                    <div className="rate-preview">
+                      Pre-select automatic financial income when logging milk yields.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    disabled={!canEdit}
+                    checked={settings.autoRecordMilkSaleByDefault}
+                    onChange={(e) =>
+                      void patchSetting(
+                        { autoRecordMilkSaleByDefault: e.target.checked },
+                        'Milk sale automation default updated.'
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="toggle-card">
+                  <div>
+                    <div className="form-label">Auto-record medical expenses</div>
+                    <div className="rate-preview">
+                      Pre-select automatic expense entries for treatments with cost &gt; 0.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    disabled={!canEdit}
+                    checked={settings.autoRecordMedicalExpenseByDefault}
+                    onChange={(e) =>
+                      void patchSetting(
+                        { autoRecordMedicalExpenseByDefault: e.target.checked },
+                        'Medical expense automation default updated.'
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="toggle-card">
+                  <div>
+                    <div className="form-label">Auto-record salary payments as expenses</div>
+                    <div className="rate-preview">
+                      Pre-select automatic Payroll Expense creation in Financial Ledger when paying workers.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    disabled={!canEdit}
+                    checked={settings.autoRecordPayrollExpenseByDefault}
+                    onChange={(e) =>
+                      void patchSetting(
+                        { autoRecordPayrollExpenseByDefault: e.target.checked },
+                        'Payroll expense automation default updated.'
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="toggle-card">
+                  <div>
+                    <div className="form-label">Background due-alert notifications</div>
+                    <div className="rate-preview">
+                      Check SQLite periodically and notify when scheduled tasks fall due.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    disabled={!canEdit}
+                    checked={settings.enableNotifications}
+                    onChange={(e) =>
+                      void patchSetting(
+                        { enableNotifications: e.target.checked },
+                        e.target.checked
+                          ? 'Background alert notifications enabled.'
+                          : 'Background alert notifications paused.'
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="toggle-card">
+                  <div>
+                    <div className="form-label">Confirm before deleting records</div>
+                    <div className="rate-preview">
+                      Require a confirmation click before removing animals, logs, or alerts.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    disabled={!canEdit}
+                    checked={settings.confirmBeforeDelete}
+                    onChange={(e) =>
+                      void patchSetting(
+                        { confirmBeforeDelete: e.target.checked },
+                        e.target.checked
+                          ? 'Delete confirmation protection enabled.'
+                          : 'Single-click delete enabled.'
+                      )
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="section-divider" />
+
+              <div className="settings-footer-bar">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <img src={APP_ICONS.databaseLeaf} alt="" className="app-icon-sm" />
+                  <span className="rate-preview">
+                    All settings are stored locally inside SQLite <code>farm_settings</code>.
+                  </span>
                 </div>
 
-                <div className="settings-field-group">
-                  <label className="form-label">Font Size</label>
-                  <div className="segmented-group" role="group" aria-label="Font Size">
-                    {FONT_SCALES.map((scale) => (
+                {canDelete ? (
+                  confirmReset ? (
+                    <div className="row-actions">
                       <button
-                        key={scale}
                         type="button"
-                        disabled={!canEdit}
-                        className={`segmented-btn ${settings.fontScale === scale ? 'active' : ''
-                          }`}
-                        onClick={() =>
-                          void patchSetting(
-                            { fontScale: scale },
-                            `Font size set to ${FONT_SCALE_LABELS[scale]}.`
-                          )
-                        }
+                        className="btn btn-danger btn-sm"
+                        disabled={resetMutation.isPending}
+                        onClick={() => void handleResetDefaults()}
                       >
-                        {FONT_SCALE_LABELS[scale]}
+                        <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                        Confirm Reset
                       </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="settings-field-group">
-                  <label className="form-label">UI Element Size &amp; Density</label>
-                  <div
-                    className="segmented-group"
-                    role="group"
-                    aria-label="UI Element Size"
-                  >
-                    {UI_DENSITIES.map((density) => (
-                      <button
-                        key={density}
-                        type="button"
-                        disabled={!canEdit}
-                        className={`segmented-btn ${settings.uiDensity === density ? 'active' : ''
-                          }`}
-                        onClick={() =>
-                          void patchSetting(
-                            { uiDensity: density },
-                            `UI element sizing set to ${UI_DENSITY_LABELS[density]}.`
-                          )
-                        }
-                      >
-                        {UI_DENSITY_LABELS[density]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </section>
-
-              <section className="card settings-card">
-                <div className="settings-card-header">
-                  <div className="settings-card-title-row">
-                    <div className="settings-card-icon">
-                      <img src={APP_ICONS.notification} alt="" className="app-icon-sm" />
-                    </div>
-                    <h2 className="card-section-title" style={{ margin: 0 }}>
-                      Automation, Notifications &amp; Safety
-                    </h2>
-                  </div>
-                  <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
-                    Control auto-ledger creation, local reminders, delete prompts, and defaults.
-                  </p>
-                </div>
-
-                <div className="toggle-list">
-                  <label className="toggle-card">
-                    <div>
-                      <div className="form-label">Auto-record milk sale income</div>
-                      <div className="rate-preview">
-                        Pre-select automatic financial income when logging milk yields.
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      disabled={!canEdit}
-                      checked={settings.autoRecordMilkSaleByDefault}
-                      onChange={(e) =>
-                        void patchSetting(
-                          { autoRecordMilkSaleByDefault: e.target.checked },
-                          'Milk sale automation default updated.'
-                        )
-                      }
-                    />
-                  </label>
-
-                  <label className="toggle-card">
-                    <div>
-                      <div className="form-label">Auto-record medical expenses</div>
-                      <div className="rate-preview">
-                        Pre-select automatic expense entries for treatments with cost &gt; 0.
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      disabled={!canEdit}
-                      checked={settings.autoRecordMedicalExpenseByDefault}
-                      onChange={(e) =>
-                        void patchSetting(
-                          { autoRecordMedicalExpenseByDefault: e.target.checked },
-                          'Medical expense automation default updated.'
-                        )
-                      }
-                    />
-                  </label>
-
-                  <label className="toggle-card">
-                    <div>
-                      <div className="form-label">Auto-record salary payments as expenses</div>
-                      <div className="rate-preview">
-                        Pre-select automatic Payroll Expense creation in Financial Ledger when paying workers.
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      disabled={!canEdit}
-                      checked={settings.autoRecordPayrollExpenseByDefault}
-                      onChange={(e) =>
-                        void patchSetting(
-                          { autoRecordPayrollExpenseByDefault: e.target.checked },
-                          'Payroll expense automation default updated.'
-                        )
-                      }
-                    />
-                  </label>
-
-                  <label className="toggle-card">
-                    <div>
-                      <div className="form-label">Background due-alert notifications</div>
-                      <div className="rate-preview">
-                        Check SQLite periodically and notify when scheduled tasks fall due.
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      disabled={!canEdit}
-                      checked={settings.enableNotifications}
-                      onChange={(e) =>
-                        void patchSetting(
-                          { enableNotifications: e.target.checked },
-                          e.target.checked
-                            ? 'Background alert notifications enabled.'
-                            : 'Background alert notifications paused.'
-                        )
-                      }
-                    />
-                  </label>
-
-                  <label className="toggle-card">
-                    <div>
-                      <div className="form-label">Confirm before deleting records</div>
-                      <div className="rate-preview">
-                        Require a confirmation click before removing animals, logs, or alerts.
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      disabled={!canEdit}
-                      checked={settings.confirmBeforeDelete}
-                      onChange={(e) =>
-                        void patchSetting(
-                          { confirmBeforeDelete: e.target.checked },
-                          e.target.checked
-                            ? 'Delete confirmation protection enabled.'
-                            : 'Single-click delete enabled.'
-                        )
-                      }
-                    />
-                  </label>
-                </div>
-
-                <div className="section-divider" />
-
-                <div className="settings-footer-bar">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <img src={APP_ICONS.databaseLeaf} alt="" className="app-icon-sm" />
-                    <span className="rate-preview">
-                      All settings are stored locally inside SQLite <code>farm_settings</code>.
-                    </span>
-                  </div>
-
-                  {canDelete ? (
-                    confirmReset ? (
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          disabled={resetMutation.isPending}
-                          onClick={() => void handleResetDefaults()}
-                        >
-                          <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                          Confirm Reset
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => setConfirmReset(false)}
-                        >
-                          <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
-                          Keep Current
-                        </button>
-                      </div>
-                    ) : (
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
-                        onClick={() => setConfirmReset(true)}
+                        onClick={() => setConfirmReset(false)}
                       >
-                        <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
-                        Reset Defaults
+                        <img src={APP_ICONS.letterX} alt="" className="app-icon-sm" />
+                        Keep Current
                       </button>
-                    )
+                    </div>
                   ) : (
-                    <span className="rate-preview">Full privilege required to reset defaults</span>
-                  )}
-                </div>
-              </section>
-            </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setConfirmReset(true)}
+                    >
+                      <img src={APP_ICONS.sync} alt="" className="app-icon-sm" />
+                      Reset Defaults
+                    </button>
+                  )
+                ) : (
+                  <span className="rate-preview">Full privilege required to reset defaults</span>
+                )}
+              </div>
+            </section>
+          </div>
 
-            <div className="settings-column">
-              <section className="card settings-card">
-                <div className="settings-card-header">
-                  <div className="settings-card-title-row">
-                    <div className="settings-card-icon">
-                      <img src={APP_ICONS.calendar} alt="" className="app-icon-sm" />
+          <div className="settings-column">
+            <section className="card settings-card">
+              <div className="settings-card-header">
+                <div className="settings-card-title-row">
+                  <div className="settings-card-icon">
+                    <img src={APP_ICONS.calendar} alt="" className="app-icon-sm" />
+                  </div>
+                  <h2 className="card-section-title" style={{ margin: 0 }}>
+                    Formatting &amp; Herd Defaults
+                  </h2>
+                </div>
+                <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
+                  Applies immediately across logs, analytics cards, and new animal forms.
+                </p>
+              </div>
+
+              <div className="settings-field-group">
+                <label className="form-label">Date Format</label>
+                <div className="segmented-group" role="group" aria-label="Date Format">
+                  {DATE_FORMATS.map((fmt) => (
+                    <button
+                      key={fmt}
+                      type="button"
+                      disabled={!canEdit}
+                      title={DATE_FORMAT_HINTS[fmt]}
+                      className={`segmented-btn ${settings.dateFormat === fmt ? 'active' : ''
+                        }`}
+                      onClick={() =>
+                        void patchSetting(
+                          { dateFormat: fmt },
+                          `Date format set to ${DATE_FORMAT_LABELS[fmt]}.`
+                        )
+                      }
+                    >
+                      {DATE_FORMAT_LABELS[fmt]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="settings-field-group">
+                <label className="form-label">Milk Yield Display Unit</label>
+                <div
+                  className="segmented-group"
+                  role="group"
+                  aria-label="Milk Volume Unit"
+                >
+                  {VOLUME_UNITS.map((unit) => (
+                    <button
+                      key={unit}
+                      type="button"
+                      disabled={!canEdit}
+                      title={VOLUME_UNIT_HINTS[unit]}
+                      className={`segmented-btn ${settings.volumeUnit === unit ? 'active' : ''
+                        }`}
+                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      onClick={() =>
+                        void patchSetting(
+                          { volumeUnit: unit },
+                          `Milk yields will display in ${VOLUME_UNIT_LABELS[unit]}.`
+                        )
+                      }
+                    >
+                      <img
+                        src={unit === 'liters' ? APP_ICONS.liter : APP_ICONS.gallon}
+                        alt=""
+                        className="app-icon-sm"
+                      />
+                      {VOLUME_UNIT_LABELS[unit]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="settings-field-group">
+                <label className="form-label">Default Species for New Livestock</label>
+                <div
+                  className="segmented-group"
+                  role="group"
+                  aria-label="Default Livestock Species"
+                >
+                  {SPECIES_LIST.map((sp) => (
+                    <button
+                      key={sp}
+                      type="button"
+                      disabled={!canEdit}
+                      title={SPECIES_HINTS[sp]}
+                      className={`segmented-btn ${settings.defaultSpecies === sp ? 'active' : ''
+                        }`}
+                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      onClick={() =>
+                        void patchSetting(
+                          { defaultSpecies: sp },
+                          `Default species set to ${formatSpeciesLabel(sp)}.`
+                        )
+                      }
+                    >
+                      <img src={getSpeciesPngIcon(sp)} alt="" className="app-icon-sm" />
+                      {formatSpeciesLabel(sp)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="card settings-card">
+              <div className="settings-card-header">
+                <div className="settings-card-title-row">
+                  <div className="settings-card-icon">
+                    <img src={APP_ICONS.farmer} alt="" className="app-icon-sm" />
+                  </div>
+                  <h2 className="card-section-title" style={{ margin: 0 }}>
+                    Farm Profile &amp; Financial Rate
+                  </h2>
+                </div>
+                <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
+                  Configure your operation header, currency (USD, UGX, GBP), default milk price, and check interval.
+                </p>
+              </div>
+
+              <form className="settings-form" onSubmit={handleSaveNumericAndText}>
+                <fieldset
+                  disabled={!canEdit}
+                  style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
+                >
+                  <div className="form-grid">
+                    <div className="form-field full">
+                      <label className="form-label" htmlFor="set-farm-name">
+                        Farm / Operation Name
+                      </label>
+                      <input
+                        id="set-farm-name"
+                        className="input"
+                        value={farmName}
+                        maxLength={60}
+                        onChange={(e) => setFarmName(e.target.value)}
+                        placeholder="farmDB Homestead"
+                      />
                     </div>
-                    <h2 className="card-section-title" style={{ margin: 0 }}>
-                      Formatting &amp; Herd Defaults
-                    </h2>
-                  </div>
-                  <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
-                    Applies immediately across logs, analytics cards, and new animal forms.
-                  </p>
-                </div>
 
-                <div className="settings-field-group">
-                  <label className="form-label">Date Format</label>
-                  <div className="segmented-group" role="group" aria-label="Date Format">
-                    {DATE_FORMATS.map((fmt) => (
-                      <button
-                        key={fmt}
-                        type="button"
-                        disabled={!canEdit}
-                        className={`segmented-btn ${settings.dateFormat === fmt ? 'active' : ''
-                          }`}
-                        onClick={() =>
-                          void patchSetting(
-                            { dateFormat: fmt },
-                            `Date format set to ${DATE_FORMAT_LABELS[fmt]}.`
-                          )
-                        }
-                      >
-                        {DATE_FORMAT_LABELS[fmt]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="settings-field-group">
-                  <label className="form-label">Milk Yield Display Unit</label>
-                  <div
-                    className="segmented-group"
-                    role="group"
-                    aria-label="Milk Volume Unit"
-                  >
-                    {VOLUME_UNITS.map((unit) => (
-                      <button
-                        key={unit}
-                        type="button"
-                        disabled={!canEdit}
-                        className={`segmented-btn ${settings.volumeUnit === unit ? 'active' : ''
-                          }`}
-                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                        onClick={() =>
-                          void patchSetting(
-                            { volumeUnit: unit },
-                            `Milk yields will display in ${VOLUME_UNIT_LABELS[unit]}.`
-                          )
-                        }
-                      >
-                        <img
-                          src={unit === 'liters' ? APP_ICONS.liter : APP_ICONS.gallon}
-                          alt=""
-                          className="app-icon-sm"
-                        />
-                        {VOLUME_UNIT_LABELS[unit]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="settings-field-group">
-                  <label className="form-label">Default Species for New Livestock</label>
-                  <div
-                    className="segmented-group"
-                    role="group"
-                    aria-label="Default Livestock Species"
-                  >
-                    {SPECIES_LIST.map((sp) => (
-                      <button
-                        key={sp}
-                        type="button"
-                        disabled={!canEdit}
-                        className={`segmented-btn ${settings.defaultSpecies === sp ? 'active' : ''
-                          }`}
-                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                        onClick={() =>
-                          void patchSetting(
-                            { defaultSpecies: sp },
-                            `Default species set to ${formatSpeciesLabel(sp)}.`
-                          )
-                        }
-                      >
-                        <img src={getSpeciesPngIcon(sp)} alt="" className="app-icon-sm" />
-                        {formatSpeciesLabel(sp)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </section>
-
-              <section className="card settings-card">
-                <div className="settings-card-header">
-                  <div className="settings-card-title-row">
-                    <div className="settings-card-icon">
-                      <img src={APP_ICONS.farmer} alt="" className="app-icon-sm" />
-                    </div>
-                    <h2 className="card-section-title" style={{ margin: 0 }}>
-                      Farm Profile &amp; Financial Rate
-                    </h2>
-                  </div>
-                  <p className="page-subtitle" style={{ margin: 0, fontSize: '0.84rem' }}>
-                    Configure your operation header, currency (USD, UGX, GBP), default milk price, and check interval.
-                  </p>
-                </div>
-
-                <form className="settings-form" onSubmit={handleSaveNumericAndText}>
-                  <fieldset
-                    disabled={!canEdit}
-                    style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
-                  >
-                    <div className="form-grid">
+                    {isAdmin && activeAccount && (
                       <div className="form-field full">
-                        <label className="form-label" htmlFor="set-farm-name">
-                          Farm / Operation Name
+                        <label
+                          className="form-label"
+                          htmlFor="set-admin-display-name"
+                          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                        >
+                          <span>Admin Display Name</span>
+                          <span
+                            className="status-pill status-active"
+                            style={{ fontSize: '0.68rem', padding: '1px 7px' }}
+                          >
+                            Admin
+                          </span>
                         </label>
                         <input
-                          id="set-farm-name"
+                          id="set-admin-display-name"
                           className="input"
-                          value={farmName}
+                          value={adminDisplayName}
                           maxLength={60}
-                          onChange={(e) => setFarmName(e.target.value)}
-                          placeholder="farmDB Homestead"
+                          onChange={(e) => setAdminDisplayName(e.target.value)}
+                          placeholder="e.g. Greenfields Owner"
                         />
                       </div>
+                    )}
 
-                      {isAdmin && activeAccount && (
-                        <div className="form-field full">
-                          <label
-                            className="form-label"
-                            htmlFor="set-admin-display-name"
-                            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                          >
-                            <span>Admin Display Name</span>
-                            <span
-                              className="status-pill status-active"
-                              style={{ fontSize: '0.68rem', padding: '1px 7px' }}
-                            >
-                              Admin
-                            </span>
-                          </label>
-                          <input
-                            id="set-admin-display-name"
-                            className="input"
-                            value={adminDisplayName}
-                            maxLength={60}
-                            onChange={(e) => setAdminDisplayName(e.target.value)}
-                            placeholder="e.g. Greenfields Owner"
-                          />
-                        </div>
+                    <div className="form-field">
+                      <label className="form-label" htmlFor="set-currency-preset">
+                        Currency
+                      </label>
+                      <ModernSelect
+                        id="set-currency-preset"
+                        fullWidth
+                        showSelectedHint
+                        value={isPresetCurrency ? currencySymbol : '__custom__'}
+                        options={currencyPresetOptions}
+                        ariaLabel="Select currency"
+                        onChange={(next) => {
+                          if (!canEdit) return;
+                          if (next === '__custom__') {
+                            setCurrencySymbol((prev) =>
+                              CURRENCY_OPTIONS.some((o) => o.symbol === prev)
+                                ? ''
+                                : prev
+                            );
+                          } else {
+                            setCurrencySymbol(next);
+                            void patchSetting(
+                              { currencySymbol: next },
+                              `Currency set to ${next}.`
+                            );
+                          }
+                        }}
+                      />
+                      {!isPresetCurrency && (
+                        <input
+                          id="set-currency"
+                          className="input"
+                          style={{ marginTop: 6 }}
+                          value={currencySymbol}
+                          maxLength={6}
+                          onChange={(e) => setCurrencySymbol(e.target.value)}
+                          placeholder="Enter symbol (e.g. KES)"
+                        />
                       )}
+                    </div>
 
-                      <div className="form-field">
-                        <label className="form-label" htmlFor="set-currency-preset">
-                          Currency
-                        </label>
-                        <ModernSelect
-                          id="set-currency-preset"
-                          fullWidth
-                          value={isPresetCurrency ? currencySymbol : '__custom__'}
-                          options={currencyPresetOptions}
-                          ariaLabel="Select currency"
-                          onChange={(next) => {
-                            if (!canEdit) return;
-                            if (next === '__custom__') {
-                              setCurrencySymbol((prev) =>
-                                CURRENCY_OPTIONS.some((o) => o.symbol === prev)
-                                  ? ''
-                                  : prev
-                              );
-                            } else {
-                              setCurrencySymbol(next);
-                              void patchSetting(
-                                { currencySymbol: next },
-                                `Currency set to ${next}.`
-                              );
-                            }
-                          }}
-                        />
-                        {!isPresetCurrency && (
-                          <input
-                            id="set-currency"
-                            className="input"
-                            style={{ marginTop: 6 }}
-                            value={currencySymbol}
-                            maxLength={6}
-                            onChange={(e) => setCurrencySymbol(e.target.value)}
-                            placeholder="Enter symbol (e.g. KES)"
-                          />
-                        )}
-                      </div>
+                    <div className="form-field">
+                      <label className="form-label" htmlFor="set-milk-rate">
+                        Default Milk Rate ({currencySymbol || '$'} / Liter)
+                      </label>
+                      <NumberStepper
+                        id="set-milk-rate"
+                        ariaLabel="Default Milk Rate"
+                        min={0}
+                        step={currencySymbol === 'UGX' ? 100 : 0.05}
+                        decimals={currencySymbol === 'UGX' ? 0 : 2}
+                        value={rateText}
+                        onChange={setRateText}
+                      />
+                    </div>
 
-                      <div className="form-field">
-                        <label className="form-label" htmlFor="set-milk-rate">
-                          Default Milk Rate ({currencySymbol || '$'} / Liter)
-                        </label>
+                    <div className="form-field full">
+                      <label className="form-label" htmlFor="set-alert-interval">
+                        Alert Check Interval (seconds: 15–3600)
+                      </label>
+                      <div className="inline-rate-row">
+                        <img src={APP_ICONS.hourglass} alt="" className="app-icon-md" />
                         <NumberStepper
-                          id="set-milk-rate"
-                          ariaLabel="Default Milk Rate"
-                          min={0}
-                          step={currencySymbol === 'UGX' ? 100 : 0.05}
-                          decimals={currencySymbol === 'UGX' ? 0 : 2}
-                          value={rateText}
-                          onChange={setRateText}
+                          id="set-alert-interval"
+                          ariaLabel="Alert Check Interval"
+                          compact
+                          min={15}
+                          max={3600}
+                          step={5}
+                          decimals={0}
+                          value={intervalText}
+                          onChange={setIntervalText}
                         />
-                      </div>
-
-                      <div className="form-field full">
-                        <label className="form-label" htmlFor="set-alert-interval">
-                          Alert Check Interval (seconds: 15–3600)
-                        </label>
-                        <div className="inline-rate-row">
-                          <img src={APP_ICONS.hourglass} alt="" className="app-icon-md" />
-                          <NumberStepper
-                            id="set-alert-interval"
-                            ariaLabel="Alert Check Interval"
-                            compact
-                            min={15}
-                            max={3600}
-                            step={5}
-                            decimals={0}
-                            value={intervalText}
-                            onChange={setIntervalText}
-                          />
-                          <PresetStrip
-                            label="Alert check interval presets"
-                            value={intervalText}
-                            presets={INTERVAL_PRESETS}
-                            onSelect={setIntervalText}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="form-field full">
-                        <label className="form-label" htmlFor="set-payment-lead-days">
-                          Alert Before Worker Payment Due (days: 0–30)
-                        </label>
-                        <div className="inline-rate-row">
-                          <img src={APP_ICONS.money} alt="" className="app-icon-md" />
-                          <NumberStepper
-                            id="set-payment-lead-days"
-                            ariaLabel="Payment Alert Lead Days"
-                            compact
-                            min={0}
-                            max={30}
-                            step={1}
-                            decimals={0}
-                            value={leadDaysText}
-                            onChange={setLeadDaysText}
-                          />
-                          <PresetStrip
-                            label="Payment lead days presets"
-                            value={leadDaysText}
-                            presets={LEAD_DAYS_PRESETS}
-                            onSelect={setLeadDaysText}
-                          />
-                        </div>
+                        <PresetStrip
+                          label="Alert check interval presets"
+                          value={intervalText}
+                          presets={INTERVAL_PRESETS}
+                          onSelect={setIntervalText}
+                        />
                       </div>
                     </div>
-                  </fieldset>
 
-                  <div className="settings-actions" style={{ marginTop: 6 }}>
-                    {canEdit && (
-                      <button
-                        type="submit"
-                        className="btn btn-primary"
-                        disabled={updateMutation.isPending}
-                      >
-                        <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
-                        {updateMutation.isPending ? 'Saving...' : 'Save Profile & Rates'}
-                      </button>
-                    )}
-                    <span className="rate-preview">
-                      10 L est.:{' '}
-                      <strong>
-                        {formatCurrency(
-                          (Number(rateText) || 0) * 10,
-                          currencySymbol || '$'
-                        )}
-                      </strong>
-                    </span>
+                    <div className="form-field full">
+                      <label className="form-label" htmlFor="set-payment-lead-days">
+                        Alert Before Worker Payment Due (days: 0–30)
+                      </label>
+                      <div className="inline-rate-row">
+                        <img src={APP_ICONS.money} alt="" className="app-icon-md" />
+                        <NumberStepper
+                          id="set-payment-lead-days"
+                          ariaLabel="Payment Alert Lead Days"
+                          compact
+                          min={0}
+                          max={30}
+                          step={1}
+                          decimals={0}
+                          value={leadDaysText}
+                          onChange={setLeadDaysText}
+                        />
+                        <PresetStrip
+                          label="Payment lead days presets"
+                          value={leadDaysText}
+                          presets={LEAD_DAYS_PRESETS}
+                          onSelect={setLeadDaysText}
+                        />
+                      </div>
+                    </div>
                   </div>
-                </form>
-              </section>
-            </div>
+                </fieldset>
+
+                <div className="settings-actions" style={{ marginTop: 6 }}>
+                  {canEdit && (
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={updateMutation.isPending}
+                    >
+                      <img src={APP_ICONS.checkmark} alt="" className="app-icon-sm" />
+                      {updateMutation.isPending ? 'Saving...' : 'Save Profile & Rates'}
+                    </button>
+                  )}
+                  <span className="rate-preview">
+                    10 L est.:{' '}
+                    <strong>
+                      {formatCurrency(
+                        (Number(rateText) || 0) * 10,
+                        currencySymbol || '$'
+                      )}
+                    </strong>
+                  </span>
+                </div>
+              </form>
+            </section>
           </div>
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           <section className="card">
@@ -1540,11 +1554,13 @@ export function SettingsView({
                       <label className="form-label">Sync Conflict Resolution</label>
                       <ModernSelect
                         fullWidth
+                        showSelectedHint
                         value={conflictStrategy}
                         options={SYNC_CONFLICT_STRATEGIES.map((st) => ({
                           value: st,
                           label: getSyncStrategyLabel(st),
                           iconSrc: APP_ICONS.dataSync,
+                          hint: SYNC_CONFLICT_HINTS[st],
                         }))}
                         onChange={setConflictStrategy}
                       />
@@ -1730,13 +1746,12 @@ export function SettingsView({
                     </h2>
                     <span className="update-version-pill">v{currentVersion}</span>
                     <span
-                      className={`update-status-pill ${
-                        availableUpdate
-                          ? 'is-available'
-                          : updateBusy
-                            ? 'is-checking'
-                            : 'is-current'
-                      }`}
+                      className={`update-status-pill ${availableUpdate
+                        ? 'is-available'
+                        : updateBusy
+                          ? 'is-checking'
+                          : 'is-current'
+                        }`}
                     >
                       {updateController?.installing
                         ? 'Installing...'
@@ -1854,11 +1869,10 @@ export function SettingsView({
                       <div
                         className="update-progress-fill"
                         style={{
-                          width: `${
-                            updateController.progressPercent !== null
-                              ? Math.max(8, updateController.progressPercent)
-                              : 45
-                          }%`,
+                          width: `${updateController.progressPercent !== null
+                            ? Math.max(8, updateController.progressPercent)
+                            : 45
+                            }%`,
                         }}
                       />
                     </div>

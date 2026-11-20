@@ -66,6 +66,10 @@ function escapeLikePattern(raw: string): string {
   return raw.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+function normDupText(raw?: string | null): string {
+  return (raw ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export interface MedicalRepository {
   list(filter?: MedicalRecordFilter): Promise<MedicalRecord[]>;
   getById(id: string): Promise<MedicalRecord | null>;
@@ -168,6 +172,27 @@ export function createMedicalRepository(
         );
       }
 
+      const sameDayRows = await db
+        .select()
+        .from(medicalRecords)
+        .where(
+          and(
+            eq(medicalRecords.livestockId, validation.data.livestockId),
+            eq(medicalRecords.date, validation.data.date)
+          )
+        );
+      const targetCond = normDupText(validation.data.condition);
+      const targetTreat = normDupText(validation.data.treatment);
+      const duplicate = sameDayRows.find(
+        (r) =>
+          normDupText(r.condition) === targetCond &&
+          normDupText(r.treatment) === targetTreat
+      );
+      if (duplicate) {
+        const msg = `Duplicate medical record detected for this animal on ${validation.data.date} with the same condition and treatment.`;
+        throw new MedicalValidationError({ condition: msg }, msg);
+      }
+
       const now = Date.now();
       const row: typeof medicalRecords.$inferInsert = {
         id: generateId(),
@@ -247,6 +272,32 @@ export function createMedicalRepository(
         const msg =
           'Medical record date cannot be earlier than the animal’s date of birth.';
         throw new MedicalValidationError({ date: msg }, msg);
+      }
+
+      const nextLivestockId = validation.data.livestockId ?? existing.livestockId;
+      const nextDate = validation.data.date ?? existing.date;
+      const nextCondition = validation.data.condition ?? existing.condition;
+      const nextTreatment = validation.data.treatment ?? existing.treatment;
+      const sameDayRows = await db
+        .select()
+        .from(medicalRecords)
+        .where(
+          and(
+            eq(medicalRecords.livestockId, nextLivestockId),
+            eq(medicalRecords.date, nextDate)
+          )
+        );
+      const targetCond = normDupText(nextCondition);
+      const targetTreat = normDupText(nextTreatment);
+      const duplicate = sameDayRows.find(
+        (r) =>
+          r.id !== id &&
+          normDupText(r.condition) === targetCond &&
+          normDupText(r.treatment) === targetTreat
+      );
+      if (duplicate) {
+        const msg = `Duplicate medical record detected for this animal on ${nextDate} with the same condition and treatment.`;
+        throw new MedicalValidationError({ condition: msg }, msg);
       }
 
       const now = Date.now();

@@ -145,6 +145,14 @@ function escapeLikePattern(raw: string): string {
   return raw.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+function normDupText(raw?: string | null): string {
+  return (raw ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normPhoneDigits(raw?: string | null): string {
+  return (raw ?? '').replace(/\D+/g, '');
+}
+
 export interface HrRepository {
   listWorkers(filter?: FarmWorkerFilter): Promise<FarmWorker[]>;
   getWorkerById(id: string): Promise<FarmWorker | null>;
@@ -246,6 +254,21 @@ export function createHrRepository(
         );
       }
 
+      const existingWorkers = await db.select().from(workers);
+      const targetName = normDupText(validation.data.name);
+      const targetRole = normDupText(validation.data.role);
+      const targetPhone = normPhoneDigits(validation.data.phone);
+      const dupWorker = existingWorkers.find((w) => {
+        if (normDupText(w.name) !== targetName) return false;
+        const rowPhone = normPhoneDigits(w.phone);
+        if (targetPhone && rowPhone && targetPhone === rowPhone) return true;
+        return normDupText(w.role) === targetRole;
+      });
+      if (dupWorker) {
+        const msg = `A worker named "${validation.data.name}" with the same phone or role already exists.`;
+        throw new HrValidationError({ name: msg }, msg);
+      }
+
       const now = Date.now();
       const record: typeof workers.$inferInsert = {
         id: generateId(),
@@ -286,6 +309,26 @@ export function createHrRepository(
           validation.errors as ValidationErrors<Record<string, unknown>>,
           msg
         );
+      }
+
+      const existingWorkers = await db.select().from(workers);
+      const nextName = validation.data.name ?? existing.name;
+      const nextRole = validation.data.role ?? existing.role;
+      const nextPhone =
+        validation.data.phone !== undefined ? validation.data.phone : existing.phone;
+      const targetName = normDupText(nextName);
+      const targetRole = normDupText(nextRole);
+      const targetPhone = normPhoneDigits(nextPhone);
+      const dupWorker = existingWorkers.find((w) => {
+        if (w.id === id) return false;
+        if (normDupText(w.name) !== targetName) return false;
+        const rowPhone = normPhoneDigits(w.phone);
+        if (targetPhone && rowPhone && targetPhone === rowPhone) return true;
+        return normDupText(w.role) === targetRole;
+      });
+      if (dupWorker) {
+        const msg = `A worker named "${nextName}" with the same phone or role already exists.`;
+        throw new HrValidationError({ name: msg }, msg);
       }
 
       const dueChanged =
@@ -404,6 +447,28 @@ export function createHrRepository(
         );
       }
 
+      const existingPays = await db
+        .select()
+        .from(workerPayments)
+        .where(
+          and(
+            eq(workerPayments.workerId, validation.data.workerId),
+            eq(workerPayments.dueDate, validation.data.dueDate)
+          )
+        );
+      const targetPayCents = Math.round(validation.data.amount * 100);
+      const targetPeriod = normDupText(validation.data.periodLabel);
+      if (
+        existingPays.some(
+          (p) =>
+            Math.round(Number(p.amount) * 100) === targetPayCents &&
+            normDupText(p.periodLabel) === targetPeriod
+        )
+      ) {
+        const msg = `Duplicate payroll payment detected for this worker on ${validation.data.dueDate}.`;
+        throw new HrValidationError({ dueDate: msg }, msg);
+      }
+
       let generatedExpenseLog: FinancialLog | null = null;
       if (validation.data.status === 'paid' && options?.autoRecordExpense) {
         const effectiveDate = validation.data.paidDate ?? getTodayIsoDate();
@@ -487,6 +552,36 @@ export function createHrRepository(
           validation.errors as ValidationErrors<Record<string, unknown>>,
           msg
         );
+      }
+
+      const nextWorkerId = validation.data.workerId ?? existing.workerId;
+      const nextDueDate = validation.data.dueDate ?? existing.dueDate;
+      const nextAmount = validation.data.amount ?? existing.amount;
+      const nextPeriod =
+        validation.data.periodLabel !== undefined
+          ? validation.data.periodLabel
+          : existing.periodLabel;
+      const existingPays = await db
+        .select()
+        .from(workerPayments)
+        .where(
+          and(
+            eq(workerPayments.workerId, nextWorkerId),
+            eq(workerPayments.dueDate, nextDueDate)
+          )
+        );
+      const targetPayCents = Math.round(nextAmount * 100);
+      const targetPeriod = normDupText(nextPeriod);
+      if (
+        existingPays.some(
+          (p) =>
+            p.id !== id &&
+            Math.round(Number(p.amount) * 100) === targetPayCents &&
+            normDupText(p.periodLabel) === targetPeriod
+        )
+      ) {
+        const msg = `Duplicate payroll payment detected for this worker on ${nextDueDate}.`;
+        throw new HrValidationError({ dueDate: msg }, msg);
       }
 
       const nextStatus = validation.data.status ?? existing.status;
@@ -681,6 +776,26 @@ export function createHrRepository(
         );
       }
 
+      const existingTasks = await db
+        .select()
+        .from(workerTasks)
+        .where(eq(workerTasks.workerId, validation.data.workerId));
+      const targetTaskTitle = normDupText(validation.data.title);
+      const targetTaskDue = validation.data.dueDate ?? null;
+      const targetTaskLivestock = validation.data.livestockId ?? null;
+      if (
+        existingTasks.some(
+          (t) =>
+            normDupText(t.title) === targetTaskTitle &&
+            (t.dueDate ?? null) === targetTaskDue &&
+            (t.livestockId ?? null) === targetTaskLivestock
+        )
+      ) {
+        const msg =
+          'Duplicate task detected for this worker with the same title and due date.';
+        throw new HrValidationError({ title: msg }, msg);
+      }
+
       const now = Date.now();
       const record: typeof workerTasks.$inferInsert = {
         id: generateId(),
@@ -718,6 +833,35 @@ export function createHrRepository(
           validation.errors as ValidationErrors<Record<string, unknown>>,
           msg
         );
+      }
+
+      const nextWorkerId = validation.data.workerId ?? existing.workerId;
+      const nextTitle = validation.data.title ?? existing.title;
+      const nextDueDate =
+        validation.data.dueDate !== undefined
+          ? validation.data.dueDate
+          : existing.dueDate;
+      const nextLivestockId =
+        validation.data.livestockId !== undefined
+          ? validation.data.livestockId
+          : existing.livestockId;
+      const existingTasks = await db
+        .select()
+        .from(workerTasks)
+        .where(eq(workerTasks.workerId, nextWorkerId));
+      const targetTaskTitle = normDupText(nextTitle);
+      if (
+        existingTasks.some(
+          (t) =>
+            t.id !== id &&
+            normDupText(t.title) === targetTaskTitle &&
+            (t.dueDate ?? null) === (nextDueDate ?? null) &&
+            (t.livestockId ?? null) === (nextLivestockId ?? null)
+        )
+      ) {
+        const msg =
+          'Duplicate task detected for this worker with the same title and due date.';
+        throw new HrValidationError({ title: msg }, msg);
       }
 
       const now = Date.now();

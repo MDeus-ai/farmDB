@@ -28,7 +28,6 @@ import {
 } from '@farmdb/core';
 import {
   useDeleteLivestock,
-  useFarmSummary,
   useLivestockList,
   useModulePermissions,
   useOwnershipList,
@@ -94,7 +93,6 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
   const listQuery = useLivestockList(filter);
   const allForTagsQuery = useLivestockList({});
   const ownershipsQuery = useOwnershipList({ status: 'active' });
-  const summaryQuery = useFarmSummary();
   const deleteMutation = useDeleteLivestock();
 
   const ownershipByAnimal = useMemo(
@@ -111,7 +109,6 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
     () => sortLivestockItems(listQuery.data ?? [], sortBy),
     [listQuery.data, sortBy]
   );
-  const summary = summaryQuery.data;
 
   const sortOptions = useMemo<ModernDropdownOption<LivestockSortOption>[]>(
     () => [
@@ -336,47 +333,6 @@ export function LivestockListView({ onOpenFamilyTree }: LivestockListViewProps) 
           styles.listContent,
           { gap: ui.space(10), paddingBottom: ui.bottomDockReserve },
         ]}
-        ListHeaderComponent={
-          <View
-            style={[
-              styles.statsBar,
-              {
-                paddingVertical: ui.space(6),
-                paddingHorizontal: ui.space(6),
-                borderRadius: Math.max(9, ui.radius - 3),
-                flexWrap: 'wrap',
-                gap: ui.space(4),
-              },
-            ]}
-          >
-            {[
-              { label: 'Active', value: summary?.activeLivestock ?? 0 },
-              { label: 'Cows', value: summary?.cowCount ?? 0 },
-              { label: 'Total', value: summary?.totalLivestock ?? 0 },
-            ].map((stat, idx) => (
-              <React.Fragment key={stat.label}>
-                {idx > 0 && !ui.isCramped ? <View style={styles.statDivider} /> : null}
-                <View
-                  style={[
-                    styles.statInlineItem,
-                    {
-                      flexWrap: 'wrap',
-                      minWidth: ui.isCramped ? 84 : 70,
-                      paddingVertical: 2,
-                    },
-                  ]}
-                >
-                  <Text style={[styles.statLabel, { fontSize: ui.font(11) }]}>
-                    {stat.label}
-                  </Text>
-                  <Text style={[styles.statValue, { fontSize: ui.font(13) }]}>
-                    {stat.value}
-                  </Text>
-                </View>
-              </React.Fragment>
-            ))}
-          </View>
-        }
         ListEmptyComponent={
           <View
             style={[
@@ -632,29 +588,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
   },
-  statsBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#ddd6c8',
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 6,
-  },
-  statInlineItem: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    paddingHorizontal: 4,
-  },
-  statDivider: {
-    width: 1,
-    height: 14,
-    backgroundColor: '#e7e1d4',
-  },
   searchActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -683,16 +616,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     flexShrink: 1,
-  },
-  statLabel: {
-    fontSize: 11,
-    fontFamily: FARMDB_FONTS.medium,
-    color: '#5d675f',
-  },
-  statValue: {
-    fontSize: 13,
-    fontFamily: FARMDB_FONTS.bold,
-    color: '#2d6a4f',
   },
   addBtn: {
     backgroundColor: '#2d6a4f',

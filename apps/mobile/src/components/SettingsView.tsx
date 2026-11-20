@@ -11,19 +11,26 @@ import {
   View,
 } from 'react-native';
 import {
-  CURRENT_RELEASE_HIGHLIGHTS,
   CURRENCY_OPTIONS,
+  CURRENT_RELEASE_HIGHLIGHTS,
+  DATE_FORMAT_HINTS,
   DATE_FORMATS,
   describeModuleAccessLevel,
   FARMDB_APP_VERSION,
+  FONT_SCALE_HINTS,
   FONT_SCALES,
   formatCurrency,
   formatSpeciesLabel,
   generateSupabaseSetupSql,
   isAdminAccount,
+  MOBILE_ICON_MODE_HINT,
+  SPECIES_HINTS,
   SPECIES_LIST,
+  SYNC_CONFLICT_HINTS,
   SYNC_CONFLICT_STRATEGIES,
   UI_DENSITIES,
+  UI_DENSITY_HINTS,
+  VOLUME_UNIT_HINTS,
   VOLUME_UNITS,
   type CloudSyncDirection,
   type DateFormatPreference,
@@ -474,7 +481,7 @@ export function SettingsView({
         value: fmt,
         label: DATE_FORMAT_LABELS[fmt],
         iconSource: MOBILE_APP_ICONS.calendar,
-        hint: fmt === 'iso' ? 'ISO standard' : fmt === 'mdy' ? 'Month first' : 'Day first',
+        hint: DATE_FORMAT_HINTS[fmt],
       })),
     []
   );
@@ -486,6 +493,7 @@ export function SettingsView({
         label: VOLUME_UNIT_LABELS[unit],
         iconSource:
           unit === 'liters' ? MOBILE_APP_ICONS.liter : MOBILE_APP_ICONS.gallon,
+        hint: VOLUME_UNIT_HINTS[unit],
       })),
     []
   );
@@ -496,6 +504,7 @@ export function SettingsView({
         value: sp,
         label: formatSpeciesLabel(sp),
         iconSource: getSpeciesPngSource(sp),
+        hint: SPECIES_HINTS[sp],
       })),
     []
   );
@@ -506,13 +515,13 @@ export function SettingsView({
         value: opt.symbol,
         label: opt.label,
         iconSource: getCurrencyOptionFlagSource(opt),
-        hint: opt.code,
+        hint: `Displays all financial totals with ${opt.code} (${opt.symbol}).`,
       })),
       {
         value: '__custom__',
         label: 'Custom symbol...',
         iconSource: getCurrencyFlagSource(currencySymbol),
-        hint: 'Enter any custom code or sign',
+        hint: 'Enter any custom currency symbol or 3-letter code (e.g. KES, EUR, €).',
       },
     ],
     [currencySymbol]
@@ -902,6 +911,9 @@ export function SettingsView({
                 );
               })}
             </View>
+            <Text style={[styles.subHeading, { fontSize: ui.font(10.5), marginTop: 2 }]}>
+              {FONT_SCALE_HINTS[settings.fontScale]}
+            </Text>
           </View>
 
           <View style={{ gap: ui.space(6) }}>
@@ -951,6 +963,9 @@ export function SettingsView({
                 );
               })}
             </View>
+            <Text style={[styles.subHeading, { fontSize: ui.font(10.5), marginTop: 2 }]}>
+              {UI_DENSITY_HINTS[settings.uiDensity]}
+            </Text>
           </View>
 
           <View style={styles.switchRow}>
@@ -959,7 +974,7 @@ export function SettingsView({
                 Compact Icon UI (Default)
               </Text>
               <Text style={[styles.subHeading, { fontSize: ui.font(11) }]}>
-                Use icons for navigation tabs, species badges, and row actions. Switch off for text labels. System buttons always stay iconic.
+                {MOBILE_ICON_MODE_HINT}
               </Text>
             </View>
             <Switch
@@ -995,6 +1010,7 @@ export function SettingsView({
                 Date Format
               </Text>
               <ModernDropdown
+                showSelectedHint
                 value={settings.dateFormat}
                 options={dateFormatOptions}
                 title="Date Format"
@@ -1013,6 +1029,7 @@ export function SettingsView({
                 Milk Yield Display Unit
               </Text>
               <ModernDropdown
+                showSelectedHint
                 value={settings.volumeUnit}
                 options={volumeUnitOptions}
                 title="Milk Yield Display Unit"
@@ -1031,6 +1048,7 @@ export function SettingsView({
                 Default Species for New Livestock
               </Text>
               <ModernDropdown
+                showSelectedHint
                 value={settings.defaultSpecies}
                 options={speciesOptions}
                 title="Default Livestock Species"
@@ -1108,6 +1126,7 @@ export function SettingsView({
                 Currency
               </Text>
               <ModernDropdown
+                showSelectedHint
                 value={selectedCurrencyValue}
                 options={currencyOptions}
                 title="Select Currency"
@@ -1682,6 +1701,7 @@ export function SettingsView({
               Sync Conflict Resolution
             </Text>
             <ModernDropdown
+              showSelectedHint
               value={strategy}
               options={SYNC_CONFLICT_STRATEGIES.map((s) => ({
                 value: s,
@@ -1692,6 +1712,7 @@ export function SettingsView({
                       ? 'Local Device Priority'
                       : 'Cloud Priority',
                 iconSource: MOBILE_APP_ICONS.dataSync,
+                hint: SYNC_CONFLICT_HINTS[s],
               }))}
               title="Conflict Resolution"
               onChange={setStrategy}

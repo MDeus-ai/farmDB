@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import {
+  ALERT_KIND_HINTS,
   DEFAULT_FARM_SETTINGS,
   describeModuleAccessLevel,
   formatDisplayDate,
@@ -267,6 +268,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
             <button
               type="button"
               className={entryKind === 'alert' ? 'active' : ''}
+              title={ALERT_KIND_HINTS.alert}
               onClick={() => setEntryKind('alert')}
               style={{ padding: '8px 14px', display: 'inline-flex', gap: 6, alignItems: 'center' }}
             >
@@ -276,6 +278,7 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
             <button
               type="button"
               className={entryKind === 'note' ? 'active' : ''}
+              title={ALERT_KIND_HINTS.note}
               onClick={() => setEntryKind('note')}
               style={{ padding: '8px 14px', display: 'inline-flex', gap: 6, alignItems: 'center' }}
             >

@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  ACCOUNT_ROLE_HINTS,
+  ACCOUNT_STATUS_HINTS,
   buildAllModulePermissions,
   encodeFarmNetworkJoinKey,
   FARM_ACCOUNT_AVATARS,
@@ -39,6 +41,7 @@ import {
   useRotateNetworkJoinKey,
   useUpdateFarmAccount,
 } from '@farmdb/db';
+import { MOBILE_AVATAR_OPTIONS } from '../assets/avatars';
 import { MOBILE_APP_ICONS } from '../assets/icons';
 import { FARMDB_COLORS, FARMDB_FONTS, useUiScale } from '../theme/uiScale';
 import { EmailLink, PhoneLink } from './ContactLink';
@@ -158,8 +161,8 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
     const enforcedPerms: FarmAccountPermissions = aPerms;
     const isAdminEditingOtherExistingWithPin = Boolean(
       editingAcc.id !== activeAccount?.id &&
-        editingAcc.accessCode &&
-        editingAcc.accessCode.trim().length > 0
+      editingAcc.accessCode &&
+      editingAcc.accessCode.trim().length > 0
     );
     try {
       if (approvingMode) {
@@ -499,68 +502,47 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
 
       {/* Admin Network Join Key Card */}
       {isAdminOrManager ? (
-      <View
-        style={[
-          styles.card,
-          { padding: ui.space(12), borderRadius: ui.radius, gap: ui.space(10) },
-        ]}
-      >
-        <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
-          <View style={{ flex: 1, minWidth: 140 }}>
-            <Text style={[styles.cardTitle, { fontSize: ui.font(14) }]}>
-              Admin Network Join Key
-            </Text>
-          </View>
-          <Pressable
-            style={[styles.secondaryBtn, { minHeight: Math.max(34, ui.chipHeight - 2), paddingVertical: ui.space(4) }]}
-            disabled={rotateKeyMut.isPending}
-            onPress={() => void handleRotateJoinKey()}
-          >
-            <AppIcon name="refresh" size={ui.font(13)} />
-            <Text style={[styles.secondaryBtnText, { fontSize: ui.font(11) }]}>
-              New Key
-            </Text>
-          </Pressable>
-        </View>
-
-        <Text style={[styles.subText, { fontSize: ui.font(11.5) }]}>
-          Share your Full Cloud Key (FDB1:...) for another phone or PC, or Short Code (FARM-XXXX) on this device. You will be notified to assign privileges when someone joins.
-        </Text>
-        {!activeAccount?.accessCode?.trim() ? (
-          <Text style={[styles.subText, { fontSize: ui.font(11), color: '#8a5300', fontFamily: FARMDB_FONTS.semibold }]}>
-            Security tip: Tap Password above to set an Admin PIN so Cloud Admin Recovery stays protected.
-          </Text>
-        ) : null}
-
-        <View style={styles.joinCodeBox}>
+        <View
+          style={[
+            styles.card,
+            { padding: ui.space(12), borderRadius: ui.radius, gap: ui.space(10) },
+          ]}
+        >
           <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
-            <Text style={[styles.label, { fontSize: ui.font(11) }]}>
-              Local Join Code
-            </Text>
+            <View style={{ flex: 1, minWidth: 140 }}>
+              <Text style={[styles.cardTitle, { fontSize: ui.font(14) }]}>
+                Admin Network Join Key
+              </Text>
+            </View>
             <Pressable
-              onPress={() =>
-                void copyKeyIfPossible(settings.networkJoinKey, 'Join Code')
-              }
+              style={[styles.secondaryBtn, { minHeight: Math.max(34, ui.chipHeight - 2), paddingVertical: ui.space(4) }]}
+              disabled={rotateKeyMut.isPending}
+              onPress={() => void handleRotateJoinKey()}
             >
-              <Text style={[styles.copyLinkText, { fontSize: ui.font(11) }]}>
-                Copy
+              <AppIcon name="refresh" size={ui.font(13)} />
+              <Text style={[styles.secondaryBtnText, { fontSize: ui.font(11) }]}>
+                New Key
               </Text>
             </Pressable>
           </View>
-          <Text style={[styles.joinCodeValue, { fontSize: ui.font(16) }]} selectable>
-            {settings.networkJoinKey}
-          </Text>
-        </View>
 
-        {hasCloudKey ? (
+          <Text style={[styles.subText, { fontSize: ui.font(11.5) }]}>
+            Share your Full Cloud Key (FDB1:...) for another phone or PC, or Short Code (FARM-XXXX) on this device. You will be notified to assign privileges when someone joins.
+          </Text>
+          {!activeAccount?.accessCode?.trim() ? (
+            <Text style={[styles.subText, { fontSize: ui.font(11), color: '#8a5300', fontFamily: FARMDB_FONTS.semibold }]}>
+              Security tip: Tap Password above to set an Admin PIN so Cloud Admin Recovery stays protected.
+            </Text>
+          ) : null}
+
           <View style={styles.joinCodeBox}>
             <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
               <Text style={[styles.label, { fontSize: ui.font(11) }]}>
-                Full Cloud Key (Member Join Key &amp; Admin Cross-Device Login)
+                Local Join Code
               </Text>
               <Pressable
                 onPress={() =>
-                  void copyKeyIfPossible(fullJoinKey, 'Full Cloud Key')
+                  void copyKeyIfPossible(settings.networkJoinKey, 'Join Code')
                 }
               >
                 <Text style={[styles.copyLinkText, { fontSize: ui.font(11) }]}>
@@ -568,15 +550,36 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                 </Text>
               </Pressable>
             </View>
-            <Text
-              style={[styles.cloudKeyValue, { fontSize: ui.font(10) }]}
-              selectable
-            >
-              {fullJoinKey}
+            <Text style={[styles.joinCodeValue, { fontSize: ui.font(16) }]} selectable>
+              {settings.networkJoinKey}
             </Text>
           </View>
-        ) : null}
-      </View>
+
+          {hasCloudKey ? (
+            <View style={styles.joinCodeBox}>
+              <View style={[styles.rowBetween, { flexWrap: 'wrap' }]}>
+                <Text style={[styles.label, { fontSize: ui.font(11) }]}>
+                  Full Cloud Key (Member Join Key &amp; Admin Cross-Device Login)
+                </Text>
+                <Pressable
+                  onPress={() =>
+                    void copyKeyIfPossible(fullJoinKey, 'Full Cloud Key')
+                  }
+                >
+                  <Text style={[styles.copyLinkText, { fontSize: ui.font(11) }]}>
+                    Copy
+                  </Text>
+                </Pressable>
+              </View>
+              <Text
+                style={[styles.cloudKeyValue, { fontSize: ui.font(10) }]}
+                selectable
+              >
+                {fullJoinKey}
+              </Text>
+            </View>
+          ) : null}
+        </View>
       ) : null}
 
       {/* Pending Join Requests Card */}
@@ -883,7 +886,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               {approvingMode
                 ? 'Assign Privileges & Accept Request'
                 : editingAcc &&
-                    (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin')
+                  (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin')
                   ? 'Edit Admin Profile'
                   : editingAcc
                     ? 'Edit Account & Privileges'
@@ -907,12 +910,12 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <Text style={[styles.label, { fontSize: ui.font(12) }]}>
                     {editingAcc &&
-                    (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin')
+                      (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin')
                       ? 'Admin Display Name *'
                       : 'Display Name *'}
                   </Text>
                   {editingAcc &&
-                  (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin') ? (
+                    (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin') ? (
                     <View style={styles.adminPill}>
                       <Text style={[styles.adminPillText, { fontSize: ui.font(10) }]}>
                         Admin
@@ -927,7 +930,7 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   editable={!approvingMode}
                   placeholder={
                     editingAcc &&
-                    (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin')
+                      (editingAcc.isPrimaryAdmin || editingAcc.role === 'admin')
                       ? 'e.g. Greenfields Owner'
                       : 'e.g. Martha Mukasa'
                   }
@@ -953,11 +956,13 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                     Role
                   </Text>
                   <ModernDropdown
+                    showSelectedHint
                     value={aRole}
                     options={FARM_ACCOUNT_ROLES.map((r) => ({
                       value: r,
                       label: formatAccountRoleLabel(r),
                       iconSource: MOBILE_APP_ICONS.networking,
+                      hint: ACCOUNT_ROLE_HINTS[r],
                     }))}
                     title="Select Role"
                     onChange={(r) => {
@@ -975,25 +980,15 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                       Avatar
                     </Text>
                     <ModernDropdown
+                      searchable
                       value={aAvatar}
-                      options={FARM_ACCOUNT_AVATARS.map((av) => ({
-                        value: av,
-                        label:
-                          av === 'farmerFemale'
-                            ? 'Farmer Female'
-                            : av === 'peasant'
-                              ? 'Partner / Owner'
-                              : av === 'staff'
-                                ? 'Team'
-                                : 'Farmer Classic',
-                        iconSource:
-                          av === 'farmerFemale'
-                            ? MOBILE_APP_ICONS.farmerFemale
-                            : av === 'peasant'
-                              ? MOBILE_APP_ICONS.peasant
-                              : av === 'staff'
-                                ? MOBILE_APP_ICONS.staff
-                                : MOBILE_APP_ICONS.farmer,
+                      options={MOBILE_AVATAR_OPTIONS.map((av) => ({
+                        value: av.value,
+                        label: av.label,
+                        iconSource: av.source,
+                        hint: av.isFolderAvator
+                          ? 'Farm Avatar Library'
+                          : 'Built-in Avatar',
                       }))}
                       title="Avatar Icon"
                       onChange={setAAvatar}
@@ -1032,8 +1027,8 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                         : 'Login PIN / Passcode'}
                     </Text>
                     {editingAcc &&
-                    editingAcc.id !== activeAccount?.id &&
-                    editingAcc.accessCode ? (
+                      editingAcc.id !== activeAccount?.id &&
+                      editingAcc.accessCode ? (
                       <Text style={[styles.subText, { fontSize: ui.font(12) }]}>
                         Login credentials are private to this user. Admin can edit privileges or delete the account.
                       </Text>
@@ -1062,11 +1057,13 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                         Status
                       </Text>
                       <ModernDropdown
+                        showSelectedHint
                         value={aStatus}
                         options={FARM_ACCOUNT_STATUSES.map((s) => ({
                           value: s,
                           label: formatAccountStatusLabel(s),
                           iconSource: MOBILE_APP_ICONS.checkmark,
+                          hint: ACCOUNT_STATUS_HINTS[s],
                         }))}
                         title="Account Status"
                         onChange={setAStatus}

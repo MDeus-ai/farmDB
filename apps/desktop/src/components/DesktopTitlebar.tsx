@@ -10,6 +10,7 @@ import {
   type FarmSettings,
 } from '@farmdb/core';
 import type { SqlDriverKind } from '@farmdb/db';
+import { resolveDesktopAvatarSrc } from '../assets/avatars';
 import { APP_ICONS } from '../assets/icons';
 
 export function getSectionIconSrc(id: AppSectionId): string {
@@ -399,13 +400,10 @@ export function DesktopTitlebar({
             title="Open Farm Network, Join Keys & Account settings"
           >
             <img
-              src={
-                isAdminAccount(activeAccount)
-                  ? APP_ICONS.networking
-                  : APP_ICONS.farmer
-              }
+              src={resolveDesktopAvatarSrc(activeAccount?.avatarKey)}
               alt=""
               className="titlebar-pill-icon"
+              style={{ borderRadius: 4 }}
             />
             <span className="titlebar-account-name">
               {activeAccount?.displayName ?? settings?.farmName ?? 'farmDB'}

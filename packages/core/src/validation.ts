@@ -1,4 +1,5 @@
 import { DEFAULT_FARM_SETTINGS } from './analytics';
+import { findCanonicalBreed } from './breeds';
 import {
   normalizeAccountPermissions,
   normalizeSupabaseBaseUrl,
@@ -7,7 +8,6 @@ import {
   ALERT_ENTRY_KINDS,
   DATE_FORMATS,
   EXPENSE_CATEGORIES,
-  FARM_ACCOUNT_AVATARS,
   FARM_ACCOUNT_ROLES,
   FARM_ACCOUNT_STATUSES,
   FINANCIAL_CATEGORIES,
@@ -15,6 +15,7 @@ import {
   INCOME_CATEGORIES,
   inferDefaultLivestockSex,
   isMilkProducingSpecies,
+  isValidFarmAccountAvatar,
   LIVESTOCK_SEXES,
   LIVESTOCK_STATUSES,
   OWNERSHIP_CATEGORIES,
@@ -192,6 +193,17 @@ export function validateNewLivestock(
     errors.status = 'Invalid livestock status.';
   }
 
+  const rawBreed = normalizeOptionalText(input.breed);
+  let canonicalBreed: string | null = rawBreed;
+  if (rawBreed !== null && SPECIES_LIST.includes(species)) {
+    const matchedBreed = findCanonicalBreed(species, rawBreed);
+    if (!matchedBreed) {
+      errors.breed = `"${rawBreed}" is not in the ${species} breed dictionary. Choose a valid breed from the list.`;
+    } else {
+      canonicalBreed = matchedBreed.name;
+    }
+  }
+
   const dob = normalizeOptionalText(input.dob);
   if (dob !== null) {
     if (!isValidIsoDate(dob)) {
@@ -250,7 +262,7 @@ export function validateNewLivestock(
       sex,
       tagNumber,
       name: normalizeOptionalText(input.name),
-      breed: normalizeOptionalText(input.breed),
+      breed: canonicalBreed,
       dob,
       imageUri: normalizeOptionalText(input.imageUri),
       sireId,
@@ -267,6 +279,7 @@ export function validateUpdateLivestock(
     currentTag?: string;
     currentId?: string;
     currentSpecies?: Species;
+    currentBreed?: string | null;
     currentDob?: string | null;
     todayIso?: string;
     allLivestock?: readonly Livestock[];
@@ -325,7 +338,31 @@ export function validateUpdateLivestock(
     sanitized.name = normalizeOptionalText(input.name);
   }
   if (input.breed !== undefined) {
-    sanitized.breed = normalizeOptionalText(input.breed);
+    const rawBreed = normalizeOptionalText(input.breed);
+    if (rawBreed === null) {
+      sanitized.breed = null;
+    } else {
+      const effectiveSpecies =
+        sanitized.species ??
+        options?.currentSpecies ??
+        options?.allLivestock?.find((a) => a.id === options?.currentId)?.species;
+      if (effectiveSpecies && SPECIES_LIST.includes(effectiveSpecies)) {
+        const matchedBreed = findCanonicalBreed(effectiveSpecies, rawBreed);
+        if (matchedBreed) {
+          sanitized.breed = matchedBreed.name;
+        } else if (
+          options?.currentBreed &&
+          rawBreed.trim().replace(/\s+/g, ' ').toLowerCase() ===
+            options.currentBreed.trim().replace(/\s+/g, ' ').toLowerCase()
+        ) {
+          sanitized.breed = rawBreed;
+        } else {
+          errors.breed = `"${rawBreed}" is not in the ${effectiveSpecies} breed dictionary. Choose a valid breed from the list.`;
+        }
+      } else {
+        sanitized.breed = rawBreed;
+      }
+    }
   }
   if (input.imageUri !== undefined) {
     sanitized.imageUri = normalizeOptionalText(input.imageUri);
@@ -1836,7 +1873,7 @@ export function validateNewFarmAccount(
 
   const avatarKey = (input.avatarKey ??
     (role === 'external_owner' ? 'peasant' : 'farmer')) as FarmAccountAvatar;
-  if (!FARM_ACCOUNT_AVATARS.includes(avatarKey)) {
+  if (!isValidFarmAccountAvatar(avatarKey)) {
     errors.avatarKey = 'Select a valid account avatar.';
   }
 
@@ -1977,7 +2014,7 @@ export function validateUpdateFarmAccount(
   }
 
   if (input.avatarKey !== undefined) {
-    if (!FARM_ACCOUNT_AVATARS.includes(input.avatarKey)) {
+    if (!isValidFarmAccountAvatar(input.avatarKey)) {
       errors.avatarKey = 'Select a valid avatar.';
     } else {
       sanitized.avatarKey = input.avatarKey;

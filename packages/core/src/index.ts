@@ -13,3 +13,5 @@ export * from './network';
 export * from './tutorial';
 export * from './chartAxis';
 export * from './updates';
+export * from './breeds';
+export * from './optionHints';

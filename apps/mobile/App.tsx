@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   Modal,
   Platform,
   Pressable,
@@ -67,7 +68,7 @@ import { AlertsView } from './src/components/AlertsView';
 import { BackupView } from './src/components/BackupView';
 import { AnimalQuickPreviewProvider } from './src/components/AnimalQuickPreviewModal';
 import { FamilyTreeView } from './src/components/FamilyTreeView';
-import { AppIcon, getAvatarIconName, type AppIconName } from './src/components/FarmIcons';
+import { AccountAvatarIcon, AppIcon, type AppIconName } from './src/components/FarmIcons';
 import { AuthPortalView } from './src/components/AuthPortalView';
 import { FarmNetworkView } from './src/components/FarmNetworkView';
 import { FarmStatisticsView } from './src/components/FarmStatisticsView';
@@ -233,13 +234,32 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
     },
   });
 
-  useCloudAutoSyncWorker(ui.settings, {
+  const {
+    syncNow: autoSyncNow,
+    flushPendingSync,
+    lastSyncCompletedAtRef,
+  } = useCloudAutoSyncWorker(ui.settings, {
     canSyncAccount:
       !isSignedOut &&
       !showAuthPortal &&
       !showOnboarding &&
       (isAdminAccount(activeAccount) || Boolean(activeAccount?.canSyncCloud)),
   });
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        void flushPendingSync(4500);
+      } else if (nextState === 'active') {
+        if (Date.now() - lastSyncCompletedAtRef.current >= 8_000) {
+          void autoSyncNow().catch(() => {});
+        }
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [autoSyncNow, flushPendingSync, lastSyncCompletedAtRef]);
 
   useEffect(() => {
     if (!refreshFeedback) return;
@@ -607,8 +627,8 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
                 },
               ]}
             >
-              <AppIcon
-                name={getAvatarIconName(activeAccount?.avatarKey)}
+              <AccountAvatarIcon
+                avatarKey={activeAccount?.avatarKey}
                 size={ui.isCompactPhone ? 20 : 24}
               />
             </View>

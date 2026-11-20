@@ -423,6 +423,40 @@ export function createNetworkRepository(
     return ids;
   }
 
+  async function assertNoDuplicateAccount(
+    candidate: {
+      displayName: string;
+      role: FarmAccountRole;
+      email?: string | null;
+    },
+    excludeId?: string
+  ): Promise<void> {
+    const norm = (v?: string | null) =>
+      (v ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const targetName = norm(candidate.displayName);
+    const targetEmail = norm(candidate.email);
+    const rows = await db.select().from(farmAccounts);
+    const byNameAndRole = rows.find(
+      (r) =>
+        r.id !== excludeId &&
+        norm(r.displayName) === targetName &&
+        r.role === candidate.role
+    );
+    if (byNameAndRole) {
+      const msg = `An account for "${candidate.displayName}" with the same role already exists.`;
+      throw new NetworkValidationError({ displayName: msg }, msg);
+    }
+    if (targetEmail) {
+      const byEmail = rows.find(
+        (r) => r.id !== excludeId && norm(r.email) === targetEmail
+      );
+      if (byEmail) {
+        const msg = `Email "${candidate.email}" is already assigned to another account (${byEmail.displayName}).`;
+        throw new NetworkValidationError({ email: msg }, msg);
+      }
+    }
+  }
+
   async function insertValidatedAccount(
     input: NewFarmAccountInput
   ): Promise<FarmAccount> {
@@ -821,6 +855,11 @@ export function createNetworkRepository(
       if (autoSeedDefaultAdmin) {
         await this.ensureAdminAccount();
       }
+      await assertNoDuplicateAccount({
+        displayName: input.displayName ?? '',
+        role: (input.role ?? 'family_member') as FarmAccountRole,
+        email: input.email ?? null,
+      });
       return insertValidatedAccount(input);
     },
 
@@ -832,6 +871,11 @@ export function createNetworkRepository(
           safeInput = { ...input, isPrimaryAdmin: false };
         }
       }
+      await assertNoDuplicateAccount({
+        displayName: safeInput.displayName ?? '',
+        role: (safeInput.role ?? 'family_member') as FarmAccountRole,
+        email: safeInput.email ?? null,
+      });
       return insertValidatedAccount(safeInput);
     },
 
@@ -839,6 +883,26 @@ export function createNetworkRepository(
       id: string,
       input: UpdateFarmAccountInput
     ): Promise<FarmAccount> {
+      if (
+        input.displayName !== undefined ||
+        input.role !== undefined ||
+        input.email !== undefined
+      ) {
+        const existing = await this.getAccountById(id);
+        if (existing) {
+          const nextRole = existing.isPrimaryAdmin
+            ? 'admin'
+            : ((input.role ?? existing.role) as FarmAccountRole);
+          await assertNoDuplicateAccount(
+            {
+              displayName: input.displayName ?? existing.displayName,
+              role: nextRole,
+              email: input.email !== undefined ? input.email : existing.email,
+            },
+            id
+          );
+        }
+      }
       return updateAccountInternal(id, input);
     },
 

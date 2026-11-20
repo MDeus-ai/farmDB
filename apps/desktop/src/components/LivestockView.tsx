@@ -24,7 +24,6 @@ import {
 import {
   useDeleteLivestock,
   useFarmSettings,
-  useFarmSummary,
   useLivestockList,
   useModulePermissions,
   useOwnershipList,
@@ -77,7 +76,6 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
   const listQuery = useLivestockList(filter);
   const allForTagsQuery = useLivestockList({});
   const ownershipsQuery = useOwnershipList({ status: 'active' });
-  const summaryQuery = useFarmSummary();
   const deleteMutation = useDeleteLivestock();
 
   const ownershipByAnimal = useMemo(
@@ -94,8 +92,6 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
     () => sortLivestockItems(listQuery.data ?? [], sortBy),
     [listQuery.data, sortBy]
   );
-
-  const summary = summaryQuery.data;
 
   const speciesOptions = useMemo<ModernSelectOption<SpeciesFilterChoice>[]>(
     () => [
@@ -190,27 +186,6 @@ export function LivestockView({ onOpenFamilyTree }: LivestockViewProps) {
               Add Livestock
             </button>
           )}
-        </div>
-      </div>
-
-      <div className="stats-grid">
-        <div className="stat-card">
-          <p className="stat-label">Active Animals</p>
-          <p className="stat-value">{summary?.activeLivestock ?? 0}</p>
-        </div>
-        <div className="stat-card">
-          <p className="stat-label">Registered Cows</p>
-          <p className="stat-value">{summary?.cowCount ?? 0}</p>
-        </div>
-        <div className="stat-card">
-          <p className="stat-label">Total Herd Records</p>
-          <p className="stat-value">{summary?.totalLivestock ?? 0}</p>
-        </div>
-        <div className="stat-card">
-          <p className="stat-label">Sold / Deceased</p>
-          <p className="stat-value">
-            {(summary?.soldLivestock ?? 0) + (summary?.deceasedLivestock ?? 0)}
-          </p>
         </div>
       </div>
 

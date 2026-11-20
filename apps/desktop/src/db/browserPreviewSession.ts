@@ -172,6 +172,14 @@ function writeJson<T>(key: string, value: T): void {
   }
 }
 
+function normDupText(raw?: string | null): string {
+  return (raw ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normPhoneDigits(raw?: string | null): string {
+  return (raw ?? '').replace(/\D+/g, '');
+}
+
 /**
  * Browser-only fallback session used when Vite is opened outside the Tauri
  * desktop shell so UI development works without failing on Tauri IPC.
@@ -299,6 +307,26 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           'Invalid financial entry.';
         throw new FinancialValidationError(validation.errors, msg);
       }
+      const rows = readJson<FinancialLog[]>(FINANCIAL_KEY, []);
+      const targetCents = Math.round(validation.data.amount * 100);
+      const targetLivestock = validation.data.livestockId ?? null;
+      const targetNotes = normDupText(validation.data.notes);
+      const targetProdId = validation.data.productRecordId ?? null;
+      if (
+        rows.some(
+          (r) =>
+            (targetProdId !== null && r.productRecordId === targetProdId) ||
+            (r.date === validation.data!.date &&
+              r.transactionType === validation.data!.transactionType &&
+              r.category === validation.data!.category &&
+              Math.round(Number(r.amount) * 100) === targetCents &&
+              (r.livestockId ?? null) === targetLivestock &&
+              normDupText(r.notes) === targetNotes)
+        )
+      ) {
+        const msg = `Duplicate financial entry detected: an identical ${validation.data.transactionType} record on ${validation.data.date} already exists.`;
+        throw new FinancialValidationError({ amount: msg }, msg);
+      }
       const now = Date.now();
       const created: FinancialLog = {
         id: generateId(),
@@ -312,7 +340,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         createdAt: now,
         updatedAt: now,
       };
-      const rows = readJson<FinancialLog[]>(FINANCIAL_KEY, []);
       writeJson(FINANCIAL_KEY, [created, ...rows]);
       events.emit(['financial'], created.id);
       return created;
@@ -334,6 +361,36 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           Object.values(validation.errors).find(Boolean) ??
           'Invalid financial entry update.';
         throw new FinancialValidationError(validation.errors, msg);
+      }
+      const nextDate = validation.data.date ?? rows[idx].date;
+      const nextType =
+        validation.data.transactionType ?? rows[idx].transactionType;
+      const nextCategory = validation.data.category ?? rows[idx].category;
+      const nextAmount = validation.data.amount ?? rows[idx].amount;
+      const nextLivestock =
+        validation.data.livestockId !== undefined
+          ? validation.data.livestockId
+          : rows[idx].livestockId;
+      const nextNotes =
+        validation.data.notes !== undefined
+          ? validation.data.notes
+          : rows[idx].notes;
+      const targetCents = Math.round(nextAmount * 100);
+      const targetNotes = normDupText(nextNotes);
+      if (
+        rows.some(
+          (r) =>
+            r.id !== id &&
+            r.date === nextDate &&
+            r.transactionType === nextType &&
+            r.category === nextCategory &&
+            Math.round(Number(r.amount) * 100) === targetCents &&
+            (r.livestockId ?? null) === (nextLivestock ?? null) &&
+            normDupText(r.notes) === targetNotes
+        )
+      ) {
+        const msg = `Duplicate financial entry detected: an identical ${nextType} record on ${nextDate} already exists.`;
+        throw new FinancialValidationError({ amount: msg }, msg);
       }
       const updated: FinancialLog = {
         ...rows[idx],
@@ -422,6 +479,22 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         );
       }
 
+      const rows = readJson<ProductRecord[]>(PRODUCTION_KEY, []);
+      const targetCenti = Math.round(validation.data.yieldAmount * 100);
+      const targetNotes = normDupText(validation.data.qualityNotes);
+      if (
+        rows.some(
+          (r) =>
+            r.livestockId === validation.data!.livestockId &&
+            r.date === validation.data!.date &&
+            Math.round(Number(r.yieldAmount) * 100) === targetCenti &&
+            normDupText(r.qualityNotes) === targetNotes
+        )
+      ) {
+        const msg = `Duplicate milk yield entry detected for this animal on ${validation.data.date} (${validation.data.yieldAmount} L).`;
+        throw new ProductionValidationError({ yieldAmount: msg }, msg);
+      }
+
       const now = Date.now();
       const record: ProductRecord = {
         id: generateId(),
@@ -432,7 +505,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         createdAt: now,
         updatedAt: now,
       };
-      const rows = readJson<ProductRecord[]>(PRODUCTION_KEY, []);
       writeJson(PRODUCTION_KEY, [record, ...rows]);
 
       let generatedIncomeLog: FinancialLog | null = null;
@@ -499,6 +571,28 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         const msg =
           'Production date cannot be earlier than the animal’s date of birth.';
         throw new ProductionValidationError({ date: msg }, msg);
+      }
+      const nextLivestockId = validation.data.livestockId ?? rows[idx].livestockId;
+      const nextDate = validation.data.date ?? rows[idx].date;
+      const nextYield = validation.data.yieldAmount ?? rows[idx].yieldAmount;
+      const nextNotes =
+        validation.data.qualityNotes !== undefined
+          ? validation.data.qualityNotes
+          : rows[idx].qualityNotes;
+      const targetCenti = Math.round(nextYield * 100);
+      const targetNotes = normDupText(nextNotes);
+      if (
+        rows.some(
+          (r) =>
+            r.id !== id &&
+            r.livestockId === nextLivestockId &&
+            r.date === nextDate &&
+            Math.round(Number(r.yieldAmount) * 100) === targetCenti &&
+            normDupText(r.qualityNotes) === targetNotes
+        )
+      ) {
+        const msg = `Duplicate milk yield entry detected for this animal on ${nextDate} (${nextYield} L).`;
+        throw new ProductionValidationError({ yieldAmount: msg }, msg);
       }
       const updated: ProductRecord = {
         ...rows[idx],
@@ -576,6 +670,22 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         );
       }
 
+      const rows = readJson<MedicalRecord[]>(MEDICAL_KEY, []);
+      const targetCond = normDupText(validation.data.condition);
+      const targetTreat = normDupText(validation.data.treatment);
+      if (
+        rows.some(
+          (r) =>
+            r.livestockId === validation.data!.livestockId &&
+            r.date === validation.data!.date &&
+            normDupText(r.condition) === targetCond &&
+            normDupText(r.treatment) === targetTreat
+        )
+      ) {
+        const msg = `Duplicate medical record detected for this animal on ${validation.data.date} with the same condition and treatment.`;
+        throw new MedicalValidationError({ condition: msg }, msg);
+      }
+
       const now = Date.now();
       const record: MedicalRecord = {
         id: generateId(),
@@ -588,7 +698,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         createdAt: now,
         updatedAt: now,
       };
-      const rows = readJson<MedicalRecord[]>(MEDICAL_KEY, []);
       writeJson(MEDICAL_KEY, [record, ...rows]);
 
       let generatedExpenseLog: FinancialLog | null = null;
@@ -624,6 +733,23 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           Object.values(validation.errors).find(Boolean) ??
           'Invalid medical record update.';
         throw new MedicalValidationError(validation.errors, msg);
+      }
+      const nextLivestockId = validation.data.livestockId ?? rows[idx].livestockId;
+      const nextDate = validation.data.date ?? rows[idx].date;
+      const nextCondition = validation.data.condition ?? rows[idx].condition;
+      const nextTreatment = validation.data.treatment ?? rows[idx].treatment;
+      if (
+        rows.some(
+          (r) =>
+            r.id !== id &&
+            r.livestockId === nextLivestockId &&
+            r.date === nextDate &&
+            normDupText(r.condition) === normDupText(nextCondition) &&
+            normDupText(r.treatment) === normDupText(nextTreatment)
+        )
+      ) {
+        const msg = `Duplicate medical record detected for this animal on ${nextDate} with the same condition and treatment.`;
+        throw new MedicalValidationError({ condition: msg }, msg);
       }
       const updated: MedicalRecord = {
         ...rows[idx],
@@ -692,6 +818,25 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           'Invalid alert or note.';
         throw new AlertValidationError(validation.errors, msg);
       }
+      const rows = readJson<AlertItem[]>(ALERTS_KEY, []);
+      const targetTitle = normDupText(validation.data.title);
+      const targetLivestock = validation.data.livestockId ?? null;
+      const targetResolved = Boolean(validation.data.isResolved);
+      if (
+        rows.some(
+          (r) =>
+            r.entryKind === validation.data!.entryKind &&
+            r.triggerDate === validation.data!.triggerDate &&
+            Boolean(r.isResolved) === targetResolved &&
+            (r.livestockId ?? null) === targetLivestock &&
+            normDupText(r.title) === targetTitle
+        )
+      ) {
+        const kindWord =
+          validation.data.entryKind === 'note' ? 'farm note' : 'alert';
+        const msg = `Duplicate ${kindWord} detected with the same title and date.`;
+        throw new AlertValidationError({ title: msg }, msg);
+      }
       const now = Date.now();
       const item: AlertItem = {
         id: generateId(),
@@ -705,7 +850,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         createdAt: now,
         updatedAt: now,
       };
-      const rows = readJson<AlertItem[]>(ALERTS_KEY, []);
       writeJson(ALERTS_KEY, [item, ...rows]);
       events.emit(['alerts'], item.id);
       return item;
@@ -723,6 +867,32 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           Object.values(validation.errors).find(Boolean) ??
           'Invalid alert update.';
         throw new AlertValidationError(validation.errors, msg);
+      }
+      const nextKind = validation.data.entryKind ?? existing.entryKind;
+      const nextDate = validation.data.triggerDate ?? existing.triggerDate;
+      const nextTitle = validation.data.title ?? existing.title;
+      const nextLivestock =
+        validation.data.livestockId !== undefined
+          ? validation.data.livestockId
+          : existing.livestockId;
+      const nextResolved =
+        validation.data.isResolved !== undefined
+          ? Boolean(validation.data.isResolved)
+          : Boolean(existing.isResolved);
+      if (
+        rows.some(
+          (r) =>
+            r.id !== id &&
+            r.entryKind === nextKind &&
+            r.triggerDate === nextDate &&
+            Boolean(r.isResolved) === nextResolved &&
+            (r.livestockId ?? null) === (nextLivestock ?? null) &&
+            normDupText(r.title) === normDupText(nextTitle)
+        )
+      ) {
+        const kindWord = nextKind === 'note' ? 'farm note' : 'alert';
+        const msg = `Duplicate ${kindWord} detected with the same title and date.`;
+        throw new AlertValidationError({ title: msg }, msg);
       }
       const resetNotified =
         validation.data.triggerDate !== undefined &&
@@ -845,6 +1015,21 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         throw new LivestockValidationError(validation.errors, msg);
       }
 
+      const normTargetName = normDupText(validation.data.name);
+      if (normTargetName && validation.data.dob) {
+        const dupAnimal = rows.find(
+          (r) =>
+            r.species === validation.data!.species &&
+            r.sex === validation.data!.sex &&
+            r.dob === validation.data!.dob &&
+            normDupText(r.name) === normTargetName
+        );
+        if (dupAnimal) {
+          const msg = `An identical ${validation.data.species} named "${validation.data.name}" born on ${validation.data.dob} already exists (Tag ${dupAnimal.tagNumber}).`;
+          throw new LivestockValidationError({ name: msg }, msg);
+        }
+      }
+
       const now = Date.now();
       const created: Livestock = {
         id: generateId(),
@@ -880,6 +1065,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         currentTag: existing.tagNumber,
         currentId: id,
         currentSpecies: existing.species,
+        currentBreed: existing.breed,
         currentDob: existing.dob,
         allLivestock: rows,
       });
@@ -887,6 +1073,28 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         const msg =
           Object.values(validation.errors).find(Boolean) ?? 'Invalid livestock update.';
         throw new LivestockValidationError(validation.errors, msg);
+      }
+
+      const nextSpecies = validation.data.species ?? existing.species;
+      const nextSex = validation.data.sex ?? existing.sex;
+      const nextName =
+        validation.data.name !== undefined ? validation.data.name : existing.name;
+      const nextDob =
+        validation.data.dob !== undefined ? validation.data.dob : existing.dob;
+      const normTargetName = normDupText(nextName);
+      if (normTargetName && nextDob) {
+        const dupAnimal = rows.find(
+          (r) =>
+            r.id !== id &&
+            r.species === nextSpecies &&
+            r.sex === nextSex &&
+            r.dob === nextDob &&
+            normDupText(r.name) === normTargetName
+        );
+        if (dupAnimal) {
+          const msg = `An identical ${nextSpecies} named "${nextName}" born on ${nextDob} already exists (Tag ${dupAnimal.tagNumber}).`;
+          throw new LivestockValidationError({ name: msg }, msg);
+        }
       }
 
       const nextSireId =
@@ -1029,9 +1237,9 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       const found = readJson<FarmWorker[]>(WORKERS_KEY, []).find((w) => w.id === id);
       return found
         ? {
-            ...found,
-            paymentNotifiedForDueDate: found.paymentNotifiedForDueDate ?? null,
-          }
+          ...found,
+          paymentNotifiedForDueDate: found.paymentNotifiedForDueDate ?? null,
+        }
         : null;
     },
     async createWorker(input: NewFarmWorkerInput): Promise<FarmWorker> {
@@ -1040,6 +1248,21 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         const msg =
           Object.values(validation.errors).find(Boolean) ?? 'Invalid worker data.';
         throw new HrValidationError(validation.errors, msg);
+      }
+      const rows = readJson<FarmWorker[]>(WORKERS_KEY, []);
+      const targetName = normDupText(validation.data.name);
+      const targetRole = normDupText(validation.data.role);
+      const targetPhone = normPhoneDigits(validation.data.phone);
+      if (
+        rows.some((w) => {
+          if (normDupText(w.name) !== targetName) return false;
+          const rowPhone = normPhoneDigits(w.phone);
+          if (targetPhone && rowPhone && targetPhone === rowPhone) return true;
+          return normDupText(w.role) === targetRole;
+        })
+      ) {
+        const msg = `A worker named "${validation.data.name}" with the same phone or role already exists.`;
+        throw new HrValidationError({ name: msg }, msg);
       }
       const now = Date.now();
       const created: FarmWorker = {
@@ -1057,7 +1280,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         createdAt: now,
         updatedAt: now,
       };
-      const rows = readJson<FarmWorker[]>(WORKERS_KEY, []);
       writeJson(WORKERS_KEY, [created, ...rows]);
       events.emit(['hr'], created.id);
       return created;
@@ -1071,6 +1293,25 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         const msg =
           Object.values(validation.errors).find(Boolean) ?? 'Invalid worker update.';
         throw new HrValidationError(validation.errors, msg);
+      }
+      const nextName = validation.data.name ?? rows[idx].name;
+      const nextRole = validation.data.role ?? rows[idx].role;
+      const nextPhone =
+        validation.data.phone !== undefined ? validation.data.phone : rows[idx].phone;
+      const targetName = normDupText(nextName);
+      const targetRole = normDupText(nextRole);
+      const targetPhone = normPhoneDigits(nextPhone);
+      if (
+        rows.some((w) => {
+          if (w.id === id) return false;
+          if (normDupText(w.name) !== targetName) return false;
+          const rowPhone = normPhoneDigits(w.phone);
+          if (targetPhone && rowPhone && targetPhone === rowPhone) return true;
+          return normDupText(w.role) === targetRole;
+        })
+      ) {
+        const msg = `A worker named "${nextName}" with the same phone or role already exists.`;
+        throw new HrValidationError({ name: msg }, msg);
       }
       const dueChanged =
         validation.data.nextPaymentDueDate !== undefined &&
@@ -1153,6 +1394,21 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           'Selected worker does not exist.'
         );
       }
+      const existingPays = readJson<WorkerPayment[]>(WORKER_PAYMENTS_KEY, []);
+      const targetPayCents = Math.round(validation.data.amount * 100);
+      const targetPeriod = normDupText(validation.data.periodLabel);
+      if (
+        existingPays.some(
+          (p) =>
+            p.workerId === validation.data!.workerId &&
+            p.dueDate === validation.data!.dueDate &&
+            Math.round(Number(p.amount) * 100) === targetPayCents &&
+            normDupText(p.periodLabel) === targetPeriod
+        )
+      ) {
+        const msg = `Duplicate payroll payment detected for this worker on ${validation.data.dueDate}.`;
+        throw new HrValidationError({ dueDate: msg }, msg);
+      }
       let generatedExpenseLog: FinancialLog | null = null;
       if (validation.data.status === 'paid' && options?.autoRecordExpense) {
         generatedExpenseLog = await financial.create({
@@ -1160,11 +1416,10 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           category: 'payroll',
           amount: validation.data.amount,
           date: validation.data.paidDate ?? getTodayIsoDate(),
-          notes: `Payroll (${worker.name} · ${worker.role})${
-            validation.data.periodLabel
-              ? ` — ${validation.data.periodLabel}`
-              : ''
-          }`,
+          notes: `Payroll (${worker.name} · ${worker.role})${validation.data.periodLabel
+            ? ` — ${validation.data.periodLabel}`
+            : ''
+            }`,
         });
       }
       const now = Date.now();
@@ -1215,6 +1470,28 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           Object.values(validation.errors).find(Boolean) ?? 'Invalid payment update.';
         throw new HrValidationError(validation.errors, msg);
       }
+      const nextWorkerId = validation.data.workerId ?? existing.workerId;
+      const nextDueDate = validation.data.dueDate ?? existing.dueDate;
+      const nextAmount = validation.data.amount ?? existing.amount;
+      const nextPeriod =
+        validation.data.periodLabel !== undefined
+          ? validation.data.periodLabel
+          : existing.periodLabel;
+      const targetPayCents = Math.round(nextAmount * 100);
+      const targetPeriod = normDupText(nextPeriod);
+      if (
+        rows.some(
+          (p) =>
+            p.id !== id &&
+            p.workerId === nextWorkerId &&
+            p.dueDate === nextDueDate &&
+            Math.round(Number(p.amount) * 100) === targetPayCents &&
+            normDupText(p.periodLabel) === targetPeriod
+        )
+      ) {
+        const msg = `Duplicate payroll payment detected for this worker on ${nextDueDate}.`;
+        throw new HrValidationError({ dueDate: msg }, msg);
+      }
       const nextStatus = validation.data.status ?? existing.status;
       let nextPaidDate =
         validation.data.paidDate !== undefined
@@ -1257,9 +1534,8 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           category: 'payroll',
           amount: existing.amount,
           date: effectivePaidDate,
-          notes: `Payroll (${worker.name} · ${worker.role})${
-            existing.periodLabel ? ` — ${existing.periodLabel}` : ''
-          }`,
+          notes: `Payroll (${worker.name} · ${worker.role})${existing.periodLabel ? ` — ${existing.periodLabel}` : ''
+            }`,
         });
         nextFinancialLogId = generatedExpenseLog.id;
       }
@@ -1325,7 +1601,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         .sort(
           (a, b) =>
             (a.status === 'completed' ? 1 : 0) -
-              (b.status === 'completed' ? 1 : 0) ||
+            (b.status === 'completed' ? 1 : 0) ||
             (a.dueDate ?? '9999-99-99').localeCompare(b.dueDate ?? '9999-99-99') ||
             b.createdAt - a.createdAt
         );
@@ -1343,6 +1619,23 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           Object.values(validation.errors).find(Boolean) ?? 'Invalid task data.';
         throw new HrValidationError(validation.errors, msg);
       }
+      const rows = readJson<WorkerTask[]>(WORKER_TASKS_KEY, []);
+      const targetTitle = normDupText(validation.data.title);
+      const targetDue = validation.data.dueDate ?? null;
+      const targetLivestock = validation.data.livestockId ?? null;
+      if (
+        rows.some(
+          (t) =>
+            t.workerId === validation.data!.workerId &&
+            normDupText(t.title) === targetTitle &&
+            (t.dueDate ?? null) === targetDue &&
+            (t.livestockId ?? null) === targetLivestock
+        )
+      ) {
+        const msg =
+          'Duplicate task detected for this worker with the same title and due date.';
+        throw new HrValidationError({ title: msg }, msg);
+      }
       const now = Date.now();
       const created: WorkerTask = {
         id: generateId(),
@@ -1357,7 +1650,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         createdAt: now,
         updatedAt: now,
       };
-      const rows = readJson<WorkerTask[]>(WORKER_TASKS_KEY, []);
       writeJson(WORKER_TASKS_KEY, [created, ...rows]);
       events.emit(['hr'], created.id);
       return created;
@@ -1372,6 +1664,30 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         const msg =
           Object.values(validation.errors).find(Boolean) ?? 'Invalid task update.';
         throw new HrValidationError(validation.errors, msg);
+      }
+      const nextWorkerId = validation.data.workerId ?? existing.workerId;
+      const nextTitle = validation.data.title ?? existing.title;
+      const nextDueDate =
+        validation.data.dueDate !== undefined
+          ? validation.data.dueDate
+          : existing.dueDate;
+      const nextLivestockId =
+        validation.data.livestockId !== undefined
+          ? validation.data.livestockId
+          : existing.livestockId;
+      if (
+        rows.some(
+          (t) =>
+            t.id !== id &&
+            t.workerId === nextWorkerId &&
+            normDupText(t.title) === normDupText(nextTitle) &&
+            (t.dueDate ?? null) === (nextDueDate ?? null) &&
+            (t.livestockId ?? null) === (nextLivestockId ?? null)
+        )
+      ) {
+        const msg =
+          'Duplicate task detected for this worker with the same title and due date.';
+        throw new HrValidationError({ title: msg }, msg);
       }
       const now = Date.now();
       const nextStatus = validation.data.status ?? existing.status;
@@ -1510,6 +1826,20 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           'Invalid ownership data.';
         throw new OwnershipValidationError(validation.errors, msg);
       }
+      const rows = readJson<AnimalOwnership[]>(OWNERSHIPS_KEY, []);
+      const targetOwner = normDupText(validation.data.ownerName);
+      if (
+        rows.some(
+          (r) =>
+            r.livestockId === validation.data!.livestockId &&
+            r.ownershipCategory === validation.data!.ownershipCategory &&
+            r.startDate === validation.data!.startDate &&
+            normDupText(r.ownerName) === targetOwner
+        )
+      ) {
+        const msg = `Duplicate ownership record detected for this animal and owner (${validation.data.ownerName}) starting ${validation.data.startDate}.`;
+        throw new OwnershipValidationError({ ownerName: msg }, msg);
+      }
       const now = Date.now();
       const created: AnimalOwnership = {
         id: generateId(),
@@ -1528,7 +1858,6 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         createdAt: now,
         updatedAt: now,
       };
-      const rows = readJson<AnimalOwnership[]>(OWNERSHIPS_KEY, []);
       writeJson(OWNERSHIPS_KEY, [created, ...rows]);
       events.emit(['ownerships'], created.id);
       return created;
@@ -1546,6 +1875,24 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           Object.values(validation.errors).find(Boolean) ??
           'Invalid ownership update.';
         throw new OwnershipValidationError(validation.errors, msg);
+      }
+      const nextLivestockId = validation.data.livestockId ?? rows[idx].livestockId;
+      const nextCategory =
+        validation.data.ownershipCategory ?? rows[idx].ownershipCategory;
+      const nextStartDate = validation.data.startDate ?? rows[idx].startDate;
+      const nextOwnerName = validation.data.ownerName ?? rows[idx].ownerName;
+      if (
+        rows.some(
+          (r) =>
+            r.id !== id &&
+            r.livestockId === nextLivestockId &&
+            r.ownershipCategory === nextCategory &&
+            r.startDate === nextStartDate &&
+            normDupText(r.ownerName) === normDupText(nextOwnerName)
+        )
+      ) {
+        const msg = `Duplicate ownership record detected for this animal and owner (${nextOwnerName}) starting ${nextStartDate}.`;
+        throw new OwnershipValidationError({ ownerName: msg }, msg);
       }
       const updated: AnimalOwnership = {
         ...rows[idx],
@@ -1848,6 +2195,28 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           'Invalid account data.';
         throw new NetworkValidationError(validation.errors, msg);
       }
+      const existingRows = readJson<FarmAccount[]>(ACCOUNTS_KEY, []);
+      const targetName = normDupText(validation.data.displayName);
+      const targetEmail = normDupText(validation.data.email);
+      if (
+        existingRows.some(
+          (a) =>
+            normDupText(a.displayName) === targetName &&
+            a.role === validation.data!.role
+        )
+      ) {
+        const msg = `An account for "${validation.data.displayName}" with the same role already exists.`;
+        throw new NetworkValidationError({ displayName: msg }, msg);
+      }
+      if (targetEmail) {
+        const emailMatch = existingRows.find(
+          (a) => normDupText(a.email) === targetEmail
+        );
+        if (emailMatch) {
+          const msg = `Email "${validation.data.email}" is already assigned to another account (${emailMatch.displayName}).`;
+          throw new NetworkValidationError({ email: msg }, msg);
+        }
+      }
       const now = Date.now();
       const isAdminRole =
         validation.data.isPrimaryAdmin || validation.data.role === 'admin';
@@ -1912,6 +2281,33 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       const nextRole: FarmAccountRole = existing.isPrimaryAdmin
         ? 'admin'
         : validation.data.role ?? existing.role;
+      const nextName = validation.data.displayName ?? existing.displayName;
+      const nextEmail =
+        validation.data.email !== undefined
+          ? validation.data.email
+          : existing.email;
+      const targetName = normDupText(nextName);
+      const targetEmail = normDupText(nextEmail);
+      if (
+        rows.some(
+          (a) =>
+            a.id !== id &&
+            normDupText(a.displayName) === targetName &&
+            a.role === nextRole
+        )
+      ) {
+        const msg = `An account for "${nextName}" with the same role already exists.`;
+        throw new NetworkValidationError({ displayName: msg }, msg);
+      }
+      if (targetEmail) {
+        const emailMatch = rows.find(
+          (a) => a.id !== id && normDupText(a.email) === targetEmail
+        );
+        if (emailMatch) {
+          const msg = `Email "${nextEmail}" is already assigned to another account (${emailMatch.displayName}).`;
+          throw new NetworkValidationError({ email: msg }, msg);
+        }
+      }
       const updated: FarmAccount = {
         ...existing,
         ...validation.data,
@@ -1982,12 +2378,12 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           nextRows = nextRows.map((a) =>
             a.id === nextPrimary.id
               ? {
-                  ...a,
-                  isPrimaryAdmin: true,
-                  canManageNetwork: true,
-                  canSyncCloud: true,
-                  updatedAt: Date.now(),
-                }
+                ...a,
+                isPrimaryAdmin: true,
+                canManageNetwork: true,
+                canSyncCloud: true,
+                updatedAt: Date.now(),
+              }
               : a
           );
         }
@@ -2083,7 +2479,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         if (
           pullRes.recordsPulled > 0 &&
           postPull.networkJoinKey.trim().toUpperCase() !==
-            decoded.joinCode.toUpperCase()
+          decoded.joinCode.toUpperCase()
         ) {
           throw new NetworkValidationError(
             { joinKey: 'This Farm Network Join Key was rotated or revoked by the Admin.' },
@@ -2237,14 +2633,14 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
           .map((a) =>
             a.id === existing.id
               ? {
-                  ...a,
-                  status: 'active' as const,
-                  canManageNetwork: false,
-                  canSyncCloud: false,
-                  permissions: buildStandardUserPermissions(),
-                  lastSyncedAt: null,
-                  updatedAt: Date.now(),
-                }
+                ...a,
+                status: 'active' as const,
+                canManageNetwork: false,
+                canSyncCloud: false,
+                permissions: buildStandardUserPermissions(),
+                lastSyncedAt: null,
+                updatedAt: Date.now(),
+              }
               : a
           );
         writeJson(ACCOUNTS_KEY, localRemainingAccounts);
@@ -2354,8 +2750,8 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       const emailFilter = input.email?.trim().toLowerCase();
       let targetAdmin = emailFilter
         ? remoteAdmins.find(
-            (acc) => (acc.email ?? '').trim().toLowerCase() === emailFilter
-          )
+          (acc) => (acc.email ?? '').trim().toLowerCase() === emailFilter
+        )
         : undefined;
       if (emailFilter && !targetAdmin) {
         throw new NetworkValidationError(
@@ -2400,13 +2796,13 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       const updatedRows = existingRows.map((acc) =>
         acc.id === targetAdminId
           ? {
-              ...acc,
-              supabaseUrl: baseUrl,
-              supabaseAnonKey: anonKey,
-              cloudWorkspaceId: workspaceId,
-              lastSyncedAt: now,
-              updatedAt: now,
-            }
+            ...acc,
+            supabaseUrl: baseUrl,
+            supabaseAnonKey: anonKey,
+            cloudWorkspaceId: workspaceId,
+            lastSyncedAt: now,
+            updatedAt: now,
+          }
           : acc
       );
       writeJson(ACCOUNTS_KEY, updatedRows);
@@ -2805,7 +3201,7 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
       const incomingAccounts = snapshot.farmAccounts ?? [];
       const hasValidLocalAccount = Boolean(
         localBefore?.activeAccountId &&
-          incomingAccounts.some((acc) => acc.id === localBefore.activeAccountId)
+        incomingAccounts.some((acc) => acc.id === localBefore.activeAccountId)
       );
       const nextSettings: FarmSettings = {
         ...DEFAULT_FARM_SETTINGS,
@@ -2825,8 +3221,8 @@ export function createBrowserPreviewSession(): FarmDbContextValue {
         nextSettings.activeAccountId = hasValidLocalAccount
           ? localBefore.activeAccountId
           : incomingAccounts.find(
-              (acc) => localIdsBefore.has(acc.id) && acc.status !== 'suspended'
-            )?.id ?? '';
+            (acc) => localIdsBefore.has(acc.id) && acc.status !== 'suspended'
+          )?.id ?? '';
       }
       await settings.restoreSettings(nextSettings, snapshot.settingsUpdatedAt);
       writeJson(

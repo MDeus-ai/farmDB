@@ -25,9 +25,13 @@ import {
   getPaymentDueUrgency,
   getTodayIsoDate,
   WORKER_PAY_FREQUENCIES,
+  WORKER_PAY_FREQUENCY_HINTS,
   WORKER_PAYMENT_STATUSES,
+  WORKER_STATUS_HINTS,
   WORKER_STATUSES,
   WORKER_TASK_PRIORITIES,
+  WORKER_TASK_PRIORITY_HINTS,
+  WORKER_TASK_STATUS_HINTS,
   WORKER_TASK_STATUSES,
   type FarmWorker,
   type Livestock,
@@ -1170,11 +1174,13 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
               />
               <Text style={[styles.fieldLabel, { fontSize: ui.font(12) }]}>Pay Frequency</Text>
               <ModernDropdown
+                showSelectedHint
                 value={wFrequency}
                 options={WORKER_PAY_FREQUENCIES.map((f) => ({
                   value: f,
                   label: formatPayFrequencyLabel(f),
                   iconSource: MOBILE_APP_ICONS.calendar,
+                  hint: WORKER_PAY_FREQUENCY_HINTS[f],
                 }))}
                 title="Pay Frequency"
                 onChange={setWFrequency}
@@ -1185,11 +1191,13 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
               <ModernDatePicker value={wNextDue} onChange={setWNextDue} />
               <Text style={[styles.fieldLabel, { fontSize: ui.font(12) }]}>Status</Text>
               <ModernDropdown
+                showSelectedHint
                 value={wStatus}
                 options={WORKER_STATUSES.map((s) => ({
                   value: s,
                   label: formatWorkerStatusLabel(s),
                   iconSource: MOBILE_APP_ICONS.farmer,
+                  hint: WORKER_STATUS_HINTS[s],
                 }))}
                 title="Worker Status"
                 onChange={setWStatus}
@@ -1269,11 +1277,16 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
               />
               <Text style={[styles.fieldLabel, { fontSize: ui.font(12) }]}>Status</Text>
               <ModernDropdown
+                showSelectedHint
                 value={pStatus}
                 options={WORKER_PAYMENT_STATUSES.map((s) => ({
                   value: s,
                   label: formatPaymentStatusLabel(s),
                   iconSource: s === 'paid' ? MOBILE_APP_ICONS.checkmark : MOBILE_APP_ICONS.hourglass,
+                  hint:
+                    s === 'paid'
+                      ? 'Marked settled and completed'
+                      : 'Scheduled or awaiting salary payout',
                 }))}
                 title="Payment Status"
                 onChange={setPStatus}
@@ -1369,22 +1382,26 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
               />
               <Text style={[styles.fieldLabel, { fontSize: ui.font(12) }]}>Priority</Text>
               <ModernDropdown
+                showSelectedHint
                 value={tPriority}
                 options={WORKER_TASK_PRIORITIES.map((p) => ({
                   value: p,
                   label: formatTaskPriorityLabel(p),
                   iconSource: MOBILE_APP_ICONS.pin,
+                  hint: WORKER_TASK_PRIORITY_HINTS[p],
                 }))}
                 title="Task Priority"
                 onChange={setTPriority}
               />
               <Text style={[styles.fieldLabel, { fontSize: ui.font(12) }]}>Status</Text>
               <ModernDropdown
+                showSelectedHint
                 value={tStatus}
                 options={WORKER_TASK_STATUSES.map((s) => ({
                   value: s,
                   label: formatTaskStatusLabel(s),
                   iconSource: MOBILE_APP_ICONS.checkmark,
+                  hint: WORKER_TASK_STATUS_HINTS[s],
                 }))}
                 title="Task Status"
                 onChange={setTStatus}

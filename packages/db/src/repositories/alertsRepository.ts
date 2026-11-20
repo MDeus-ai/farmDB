@@ -67,6 +67,10 @@ function escapeLikePattern(raw: string): string {
   return raw.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+function normDupText(raw?: string | null): string {
+  return (raw ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export interface AlertsRepository {
   list(filter?: AlertFilter): Promise<AlertItem[]>;
   getById(id: string): Promise<AlertItem | null>;
@@ -154,6 +158,31 @@ export function createAlertsRepository(
         throw new AlertValidationError(validation.errors, msg);
       }
 
+      const matchingRows = await db
+        .select()
+        .from(alerts)
+        .where(
+          and(
+            eq(alerts.entryKind, validation.data.entryKind),
+            eq(alerts.triggerDate, validation.data.triggerDate)
+          )
+        );
+      const targetTitle = normDupText(validation.data.title);
+      const targetLivestock = validation.data.livestockId ?? null;
+      const targetResolved = Boolean(validation.data.isResolved);
+      const duplicate = matchingRows.find(
+        (r) =>
+          Boolean(r.isResolved) === targetResolved &&
+          (r.livestockId ?? null) === targetLivestock &&
+          normDupText(r.title) === targetTitle
+      );
+      if (duplicate) {
+        const kindWord =
+          validation.data.entryKind === 'note' ? 'farm note' : 'alert';
+        const msg = `Duplicate ${kindWord} detected with the same title and date.`;
+        throw new AlertValidationError({ title: msg }, msg);
+      }
+
       const now = Date.now();
       const row: typeof alerts.$inferInsert = {
         id: generateId(),
@@ -185,6 +214,40 @@ export function createAlertsRepository(
           Object.values(validation.errors).find(Boolean) ??
           'Invalid alert update.';
         throw new AlertValidationError(validation.errors, msg);
+      }
+
+      const nextKind = validation.data.entryKind ?? existing.entryKind;
+      const nextDate = validation.data.triggerDate ?? existing.triggerDate;
+      const nextTitle = validation.data.title ?? existing.title;
+      const nextLivestock =
+        validation.data.livestockId !== undefined
+          ? validation.data.livestockId
+          : existing.livestockId;
+      const nextResolved =
+        validation.data.isResolved !== undefined
+          ? Boolean(validation.data.isResolved)
+          : Boolean(existing.isResolved);
+      const matchingRows = await db
+        .select()
+        .from(alerts)
+        .where(
+          and(
+            eq(alerts.entryKind, nextKind),
+            eq(alerts.triggerDate, nextDate)
+          )
+        );
+      const targetTitle = normDupText(nextTitle);
+      const duplicate = matchingRows.find(
+        (r) =>
+          r.id !== id &&
+          Boolean(r.isResolved) === nextResolved &&
+          (r.livestockId ?? null) === (nextLivestock ?? null) &&
+          normDupText(r.title) === targetTitle
+      );
+      if (duplicate) {
+        const kindWord = nextKind === 'note' ? 'farm note' : 'alert';
+        const msg = `Duplicate ${kindWord} detected with the same title and date.`;
+        throw new AlertValidationError({ title: msg }, msg);
       }
 
       const now = Date.now();

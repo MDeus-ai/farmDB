@@ -12,9 +12,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   EXPENSE_CATEGORIES,
+  FINANCIAL_CATEGORY_HINTS,
   formatCategoryLabel,
   getTodayIsoDate,
   INCOME_CATEGORIES,
+  TRANSACTION_TYPE_HINTS,
   TRANSACTION_TYPES,
   validateNewFinancialLog,
   validateUpdateFinancialLog,
@@ -111,6 +113,7 @@ export function FinancialFormModal({
           transactionType === 'income'
             ? MOBILE_APP_ICONS.money
             : MOBILE_APP_ICONS.budget,
+        hint: FINANCIAL_CATEGORY_HINTS[cat],
       })),
     [availableCategories, transactionType]
   );
@@ -273,11 +276,15 @@ export function FinancialFormModal({
                 );
               })}
             </View>
+            <Text style={{ fontSize: ui.font(10.5), color: FARMDB_COLORS.textMuted, marginTop: 2, marginBottom: 4 }}>
+              {TRANSACTION_TYPE_HINTS[transactionType]}
+            </Text>
 
             <Text style={[styles.label, { fontSize: ui.font(13) }]}>
               Category
             </Text>
             <ModernDropdown
+              showSelectedHint
               value={category}
               options={categoryOptions}
               title="Select Category"

@@ -12,12 +12,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  findCanonicalBreed,
+  formatBreedHint,
   formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
+  getBreedsForSpecies,
   getEligibleParentCandidates,
   inferDefaultLivestockSex,
   LIVESTOCK_SEXES,
+  LIVESTOCK_STATUS_HINTS,
   LIVESTOCK_STATUSES,
   SPECIES_LIST,
   validateNewLivestock,
@@ -37,6 +41,7 @@ import {
   useUpdateLivestock,
 } from '@farmdb/db';
 import {
+  getSpeciesPngSource,
   getStatusPngSource,
   MOBILE_APP_ICONS,
 } from '../assets/icons';
@@ -174,9 +179,42 @@ export function LivestockFormModal({
         value: st,
         label: formatStatusLabel(st),
         iconSource: getStatusPngSource(st),
+        hint: LIVESTOCK_STATUS_HINTS[st],
       })),
     []
   );
+
+  const breedOptions = useMemo<ModernDropdownOption<string>[]>(() => {
+    const defs = getBreedsForSpecies(species);
+    const spIcon = getSpeciesPngSource(species, sex);
+    const list: ModernDropdownOption<string>[] = [
+      {
+        value: '',
+        label: 'Not Specified / Unknown',
+        iconSource: spIcon,
+        hint: 'Leave breed blank if unknown or mixed.',
+      },
+      ...defs.map((def) => ({
+        value: def.name,
+        label: def.name,
+        iconSource: spIcon,
+        hint: formatBreedHint(def),
+      })),
+    ];
+    const trimmedCurrent = breed.trim();
+    if (
+      trimmedCurrent &&
+      !defs.some((d) => d.name.toLowerCase() === trimmedCurrent.toLowerCase())
+    ) {
+      list.splice(1, 0, {
+        value: trimmedCurrent,
+        label: `${trimmedCurrent} (Legacy Record)`,
+        iconSource: spIcon,
+        hint: 'Existing breed recorded before dictionary standardization.',
+      });
+    }
+    return list;
+  }, [species, sex, breed]);
 
   async function handleAcquirePhoto(source: 'camera' | 'library') {
     setSubmitError(null);
@@ -241,6 +279,7 @@ export function LivestockFormModal({
           currentTag: editing.tagNumber,
           currentId: editing.id,
           currentSpecies: editing.species,
+          currentBreed: editing.breed,
           currentDob: editing.dob,
           allLivestock,
         }
@@ -541,6 +580,9 @@ export function LivestockFormModal({
                       if (opt.speciesVal !== species) {
                         setSireId('');
                         setDamId('');
+                        if (breed.trim() && !findCanonicalBreed(opt.speciesVal, breed)) {
+                          setBreed('');
+                        }
                       }
                       setSpecies(opt.speciesVal);
                       if (opt.sexVal) {
@@ -624,13 +666,24 @@ export function LivestockFormModal({
               onChangeText={setName}
             />
 
-            <Text style={[styles.label, { fontSize: ui.font(13) }]}>Breed</Text>
-            <TextInput
-              style={[styles.input, { minHeight: ui.controlHeight, fontSize: ui.font(15) }]}
-              placeholder="e.g. Holstein"
+            <Text style={[styles.label, { fontSize: ui.font(13) }]}>
+              Breed (Validated Dictionary)
+            </Text>
+            <ModernDropdown
+              searchable
+              showSelectedHint
               value={breed}
-              onChangeText={setBreed}
+              options={breedOptions}
+              title={`Select ${formatSpeciesLabel(species, sex)} Breed`}
+              placeholder="Not Specified / Unknown"
+              accessibilityLabel="Breed"
+              onChange={setBreed}
             />
+            {errors.breed ? (
+              <Text style={[styles.errorText, { fontSize: ui.font(12) }]}>
+                {errors.breed}
+              </Text>
+            ) : null}
 
             <Text style={[styles.label, { fontSize: ui.font(13) }]}>
               Date of Birth
@@ -651,6 +704,7 @@ export function LivestockFormModal({
 
             <Text style={[styles.label, { fontSize: ui.font(13) }]}>Status</Text>
             <ModernDropdown
+              showSelectedHint
               value={status}
               options={statusOptions}
               title="Select Status"

@@ -6,6 +6,17 @@
 
 # farmDB Changelog
 
+## [1.5.5] - 2026-11-20
+
+Added species-validated livestock breeds (including African breeds), duplicate-entry detection across all farm modules, dynamic `assets/avators` loading, head-portrait species icons, hover/mobile option explanations, larger Desktop Add Livestock modal sizing, Herd Registry cleanup, and exit/write-triggered cloud sync flushing so PC edits reach Mobile even if closed quickly.
+
+### Fixes & Improvements
+- **Real-Time & Close-Flush Cloud Sync**: Added 2.5s write-debounced Supabase sync plus graceful Desktop window-close flush (`onCloseRequested`), window focus/visibility pulls, and Mobile `AppState` background flush & active resume pulls so closing PC immediately after adding records pushes data reliably.
+- **Validated Breed Dictionary & African Breeds**: Added a curated, species-specific breed dictionary covering African and international `cow`, `goat`, `sheep`, `duck`, and `other` poultry/farm breeds with alias canonicalization and searchable Desktop/Mobile dropdowns.
+- **Duplicate Entry Prevention**: Added duplicate guards across Livestock (species, sex, name & DOB), Milk Production, Medical History, Financial Ledger, Alerts & Notes, HR Workers/Payments/Tasks, Animal Ownerships, and Farm Accounts.
+- **Dynamic Avatars, Head Icons & Unused Asset Cleanup**: Added `scripts/sync-avators.mjs` to load every file in `assets/avators/` into Desktop & Mobile avatar pickers, replaced goat/sheep/duck/chicken icons with head portraits, and removed unused icon files.
+- **UI Polish, Option Explanations & Herd Registry Cleanup**: Widened Desktop Add Livestock modal for Large/X-Large font sizes, removed summary stats cards/bar from Herd Registry, and added hover hints (Desktop) and compact option explanations (Mobile) across Settings and core forms.
+
 ## [1.5.4] - 2026-11-19
 
 Fixed Desktop SQLite read-only write errors, enforced strict device-local account isolation on Farm Network join, added member Leave Network, added a full-app Refresh button, and allowed custom Admin Display Name renaming with an `Admin` badge.

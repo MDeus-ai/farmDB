@@ -956,8 +956,14 @@ export function useCloudAutoSyncWorker(
     onSynced?: (result: CloudSyncResult) => void;
   }
 ) {
-  const { network } = useFarmDb();
+  const { network, events } = useFarmDb();
   const inFlightRef = useRef(false);
+  const inFlightPromiseRef = useRef<Promise<CloudSyncResult | null> | null>(null);
+  const hasUnsyncedChangesRef = useRef(false);
+  const writeVersionRef = useRef(0);
+  const isSyncOriginRef = useRef(false);
+  const lastSyncCompletedAtRef = useRef(0);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSyncedRef = useRef(options?.onSynced);
   onSyncedRef.current = options?.onSynced;
 
@@ -970,8 +976,11 @@ export function useCloudAutoSyncWorker(
   );
 
   const syncNow = useCallback(async (): Promise<CloudSyncResult | null> => {
-    if (!canAutoSync || inFlightRef.current) {
+    if (!canAutoSync) {
       return null;
+    }
+    if (inFlightRef.current && inFlightPromiseRef.current) {
+      return inFlightPromiseRef.current;
     }
     if (
       typeof navigator !== 'undefined' &&
@@ -979,18 +988,80 @@ export function useCloudAutoSyncWorker(
     ) {
       return null;
     }
-    inFlightRef.current = true;
-    try {
-      const result = await network.syncWithSupabase('bidirectional');
-      onSyncedRef.current?.(result);
-      return result;
-    } finally {
-      inFlightRef.current = false;
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
     }
+    inFlightRef.current = true;
+    const versionAtStart = writeVersionRef.current;
+    const promise = (async (): Promise<CloudSyncResult | null> => {
+      isSyncOriginRef.current = true;
+      try {
+        const result = await network.syncWithSupabase('bidirectional');
+        if (result.ok) {
+          if (writeVersionRef.current === versionAtStart) {
+            hasUnsyncedChangesRef.current = false;
+          }
+          lastSyncCompletedAtRef.current = Date.now();
+        }
+        onSyncedRef.current?.(result);
+        return result;
+      } finally {
+        isSyncOriginRef.current = false;
+        inFlightRef.current = false;
+        inFlightPromiseRef.current = null;
+        if (
+          hasUnsyncedChangesRef.current &&
+          writeVersionRef.current > versionAtStart &&
+          canAutoSync &&
+          !debounceTimerRef.current
+        ) {
+          debounceTimerRef.current = setTimeout(() => {
+            debounceTimerRef.current = null;
+            void syncNow().catch(() => {});
+          }, 2500);
+        }
+      }
+    })();
+    inFlightPromiseRef.current = promise;
+    return promise;
   }, [canAutoSync, network]);
+
+  const flushPendingSync = useCallback(
+    async (timeoutMs = 6000): Promise<void> => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      if (!canAutoSync) {
+        return;
+      }
+      const deadline = Date.now() + timeoutMs;
+      const raceTimeout = async <T,>(promise: Promise<T>): Promise<void> => {
+        const remaining = Math.max(50, deadline - Date.now());
+        await Promise.race([
+          promise.then(() => undefined).catch(() => undefined),
+          new Promise<void>((resolve) => setTimeout(resolve, remaining)),
+        ]);
+      };
+
+      if (inFlightPromiseRef.current) {
+        await raceTimeout(inFlightPromiseRef.current);
+      }
+      if (hasUnsyncedChangesRef.current && Date.now() < deadline) {
+        await raceTimeout(syncNow());
+      }
+    },
+    [canAutoSync, syncNow]
+  );
 
   useEffect(() => {
     if (!canAutoSync) {
+      hasUnsyncedChangesRef.current = false;
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
       return;
     }
 
@@ -1009,6 +1080,37 @@ export function useCloudAutoSyncWorker(
     };
     g.addEventListener?.('online', handleOnline);
 
+    const unsubscribeEvents = events.subscribe((event) => {
+      if (event.scopes.includes('*')) {
+        return;
+      }
+      const hasDataWriteScope = event.scopes.some(
+        (s) =>
+          s === 'livestock' ||
+          s === 'production' ||
+          s === 'medical' ||
+          s === 'financial' ||
+          s === 'alerts' ||
+          s === 'hr' ||
+          s === 'ownerships'
+      );
+      const hasMetaWriteScope =
+        !isSyncOriginRef.current &&
+        event.scopes.some((s) => s === 'settings' || s === 'network');
+      if (!hasDataWriteScope && !hasMetaWriteScope) {
+        return;
+      }
+      writeVersionRef.current += 1;
+      hasUnsyncedChangesRef.current = true;
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      debounceTimerRef.current = setTimeout(() => {
+        debounceTimerRef.current = null;
+        void syncNow().catch(() => {});
+      }, 2500);
+    });
+
     const initialTimer = setTimeout(() => {
       void syncNow().catch(() => {});
     }, 2500);
@@ -1020,10 +1122,20 @@ export function useCloudAutoSyncWorker(
     return () => {
       clearTimeout(initialTimer);
       clearInterval(timer);
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      unsubscribeEvents();
       g.removeEventListener?.('online', handleOnline);
     };
-  }, [canAutoSync, settings.cloudSyncIntervalSeconds, syncNow]);
+  }, [canAutoSync, settings.cloudSyncIntervalSeconds, syncNow, events]);
 
-  return { syncNow };
+  return {
+    syncNow,
+    flushPendingSync,
+    hasUnsyncedChangesRef,
+    lastSyncCompletedAtRef,
+  };
 }
 

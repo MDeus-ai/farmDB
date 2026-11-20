@@ -1,4 +1,13 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronDown,
   ChevronLeft,
@@ -40,6 +49,7 @@ export function ModernDatePicker({
 }: ModernDatePickerProps) {
   const autoId = useId();
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
   const settingsQuery = useFarmSettings();
   const dateFormat =
     settingsQuery.data?.dateFormat ?? DEFAULT_FARM_SETTINGS.dateFormat;
@@ -49,8 +59,59 @@ export function ModernDatePicker({
     parseIsoCalendarParts(value) ?? parseIsoCalendarParts(todayIso)!;
 
   const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
   const [viewYear, setViewYear] = useState(initialParts.year);
   const [viewMonth, setViewMonth] = useState(initialParts.monthIndex);
+
+  const updatePopoverPosition = useCallback(() => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const maxAllowedWidth = Math.min(480, window.innerWidth - 24);
+    const width = Math.min(maxAllowedWidth, Math.max(rect.width, 304));
+    const left = Math.min(
+      Math.max(12, rect.left),
+      Math.max(12, window.innerWidth - width - 12)
+    );
+    const top = rect.bottom + 6;
+    const maxHeight = Math.max(220, window.innerHeight - top - 12);
+    setPopoverStyle({ top, left, width, maxHeight });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPopoverStyle(null);
+      return;
+    }
+
+    updatePopoverPosition();
+
+    function handleResize() {
+      updatePopoverPosition();
+    }
+
+    function handleScroll(event: Event) {
+      if (
+        popoverRef.current &&
+        event.target instanceof Node &&
+        popoverRef.current.contains(event.target)
+      ) {
+        return;
+      }
+      updatePopoverPosition();
+    }
+
+    window.addEventListener('resize', handleResize);
+    document.addEventListener('scroll', handleScroll, true);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      document.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [open, updatePopoverPosition]);
 
   useEffect(() => {
     if (!open) return;
@@ -64,9 +125,14 @@ export function ModernDatePicker({
     if (!open) return;
 
     function handleOutside(event: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
+      const target = event.target as Node | null;
+      if (
+        (rootRef.current && rootRef.current.contains(target)) ||
+        (popoverRef.current && popoverRef.current.contains(target))
+      ) {
+        return;
       }
+      setOpen(false);
     }
 
     function handleKey(event: KeyboardEvent) {
@@ -134,123 +200,134 @@ export function ModernDatePicker({
         />
       </button>
 
-      {open && (
-        <div
-          className="modern-date-popover"
-          role="dialog"
-          aria-label={ariaLabel ?? 'Calendar picker'}
-        >
-          <div className="modern-date-header">
-            <div className="modern-date-nav-group">
-              <button
-                type="button"
-                className="modern-date-nav-btn"
-                aria-label="Previous year"
-                onClick={() => stepMonth(-12)}
-              >
-                <ChevronsLeft size={15} />
-              </button>
-              <button
-                type="button"
-                className="modern-date-nav-btn"
-                aria-label="Previous month"
-                onClick={() => stepMonth(-1)}
-              >
-                <ChevronLeft size={15} />
-              </button>
-            </div>
-
-            <span className="modern-date-month-title">
-              {CALENDAR_MONTH_NAMES[viewMonth]} {viewYear}
-            </span>
-
-            <div className="modern-date-nav-group">
-              <button
-                type="button"
-                className="modern-date-nav-btn"
-                aria-label="Next month"
-                onClick={() => stepMonth(1)}
-              >
-                <ChevronRight size={15} />
-              </button>
-              <button
-                type="button"
-                className="modern-date-nav-btn"
-                aria-label="Next year"
-                onClick={() => stepMonth(12)}
-              >
-                <ChevronsRight size={15} />
-              </button>
-            </div>
-          </div>
-
-          <div className="modern-date-weekdays">
-            {CALENDAR_WEEKDAY_LABELS.map((day) => (
-              <span key={day} className="modern-date-weekday">
-                {day}
-              </span>
-            ))}
-          </div>
-
-          <div className="modern-date-grid">
-            {cells.map((cell) => {
-              const isSelected = cell.iso === value;
-              const isToday = cell.iso === todayIso;
-              return (
+      {open &&
+        popoverStyle &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            className="modern-date-popover"
+            role="dialog"
+            aria-label={ariaLabel ?? 'Calendar picker'}
+            style={{
+              top: `${popoverStyle.top}px`,
+              left: `${popoverStyle.left}px`,
+              width: `${popoverStyle.width}px`,
+              maxHeight: `${popoverStyle.maxHeight}px`,
+            }}
+          >
+            <div className="modern-date-header">
+              <div className="modern-date-nav-group">
                 <button
-                  key={cell.iso}
                   type="button"
-                  aria-label={cell.iso}
-                  aria-pressed={isSelected}
-                  className={[
-                    'modern-date-day',
-                    !cell.inCurrentMonth ? 'is-outside' : '',
-                    isToday ? 'is-today' : '',
-                    isSelected ? 'is-selected' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  onClick={() => {
-                    onChange(cell.iso);
-                    setOpen(false);
-                  }}
+                  className="modern-date-nav-btn"
+                  aria-label="Previous year"
+                  onClick={() => stepMonth(-12)}
                 >
-                  {cell.dayNumber}
+                  <ChevronsLeft size={15} />
                 </button>
-              );
-            })}
-          </div>
+                <button
+                  type="button"
+                  className="modern-date-nav-btn"
+                  aria-label="Previous month"
+                  onClick={() => stepMonth(-1)}
+                >
+                  <ChevronLeft size={15} />
+                </button>
+              </div>
 
-          <div className="modern-date-footer">
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => {
-                const nowIso = getTodayIsoDate();
-                const parts = parseIsoCalendarParts(nowIso)!;
-                setViewYear(parts.year);
-                setViewMonth(parts.monthIndex);
-                onChange(nowIso);
-                setOpen(false);
-              }}
-            >
-              Today
-            </button>
-            {allowClear && hasValidDate && (
+              <span className="modern-date-month-title">
+                {CALENDAR_MONTH_NAMES[viewMonth]} {viewYear}
+              </span>
+
+              <div className="modern-date-nav-group">
+                <button
+                  type="button"
+                  className="modern-date-nav-btn"
+                  aria-label="Next month"
+                  onClick={() => stepMonth(1)}
+                >
+                  <ChevronRight size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="modern-date-nav-btn"
+                  aria-label="Next year"
+                  onClick={() => stepMonth(12)}
+                >
+                  <ChevronsRight size={15} />
+                </button>
+              </div>
+            </div>
+
+            <div className="modern-date-weekdays">
+              {CALENDAR_WEEKDAY_LABELS.map((day) => (
+                <span key={day} className="modern-date-weekday">
+                  {day}
+                </span>
+              ))}
+            </div>
+
+            <div className="modern-date-grid">
+              {cells.map((cell) => {
+                const isSelected = cell.iso === value;
+                const isToday = cell.iso === todayIso;
+                return (
+                  <button
+                    key={cell.iso}
+                    type="button"
+                    aria-label={cell.iso}
+                    aria-pressed={isSelected}
+                    className={[
+                      'modern-date-day',
+                      !cell.inCurrentMonth ? 'is-outside' : '',
+                      isToday ? 'is-today' : '',
+                      isSelected ? 'is-selected' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    onClick={() => {
+                      onChange(cell.iso);
+                      setOpen(false);
+                    }}
+                  >
+                    {cell.dayNumber}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="modern-date-footer">
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={() => {
-                  onChange('');
+                  const nowIso = getTodayIsoDate();
+                  const parts = parseIsoCalendarParts(nowIso)!;
+                  setViewYear(parts.year);
+                  setViewMonth(parts.monthIndex);
+                  onChange(nowIso);
                   setOpen(false);
                 }}
               >
-                Clear
+                Today
               </button>
-            )}
-          </div>
-        </div>
-      )}
+              {allowClear && hasValidDate && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    onChange('');
+                    setOpen(false);
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

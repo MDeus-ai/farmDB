@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   EXPENSE_CATEGORIES,
+  FINANCIAL_CATEGORY_HINTS,
   formatCategoryLabel,
   getTodayIsoDate,
   INCOME_CATEGORIES,
+  TRANSACTION_TYPE_HINTS,
   TRANSACTION_TYPES,
   validateNewFinancialLog,
   validateUpdateFinancialLog,
@@ -90,6 +92,7 @@ export function FinancialFormModal({
         value: t,
         label: t === 'income' ? 'Income' : 'Expense',
         iconSrc: t === 'income' ? APP_ICONS.money : APP_ICONS.budget,
+        hint: TRANSACTION_TYPE_HINTS[t],
       })),
     []
   );
@@ -107,6 +110,7 @@ export function FinancialFormModal({
               : cat === 'livestock_sale'
                 ? APP_ICONS.cow
                 : APP_ICONS.budget,
+        hint: FINANCIAL_CATEGORY_HINTS[cat],
       })),
     [availableCategories]
   );
@@ -220,6 +224,7 @@ export function FinancialFormModal({
               <ModernSelect
                 id="fin-type"
                 fullWidth
+                showSelectedHint
                 ariaLabel="Transaction type"
                 value={transactionType}
                 options={typeOptions}
@@ -234,6 +239,7 @@ export function FinancialFormModal({
               <ModernSelect
                 id="fin-category"
                 fullWidth
+                showSelectedHint
                 ariaLabel="Category"
                 value={category}
                 options={categoryOptions}

@@ -88,6 +88,34 @@ function escapeLikePattern(raw: string): string {
   return raw.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+function normDupText(raw?: string | null): string {
+  return (raw ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function findDuplicateAnimalMatch(
+  allLivestock: readonly Livestock[],
+  candidate: {
+    species: Species;
+    sex: LivestockSex;
+    name: string | null;
+    dob: string | null;
+  },
+  excludeId?: string
+): Livestock | undefined {
+  const normName = normDupText(candidate.name);
+  if (!normName || !candidate.dob) {
+    return undefined;
+  }
+  return allLivestock.find(
+    (item) =>
+      item.id !== excludeId &&
+      item.species === candidate.species &&
+      item.sex === candidate.sex &&
+      item.dob === candidate.dob &&
+      normDupText(item.name) === normName
+  );
+}
+
 export interface LivestockRepository {
   list(filter?: LivestockFilter): Promise<Livestock[]>;
   getById(id: string): Promise<Livestock | null>;
@@ -176,6 +204,17 @@ export function createLivestockRepository(
         throw new LivestockValidationError(validation.errors, firstError);
       }
 
+      const duplicate = findDuplicateAnimalMatch(allLivestock, {
+        species: validation.data.species,
+        sex: validation.data.sex,
+        name: validation.data.name,
+        dob: validation.data.dob,
+      });
+      if (duplicate) {
+        const msg = `An identical ${validation.data.species} named "${validation.data.name}" born on ${validation.data.dob} already exists (Tag ${duplicate.tagNumber}).`;
+        throw new LivestockValidationError({ name: msg }, msg);
+      }
+
       const now = Date.now();
       const record: typeof livestock.$inferInsert = {
         id: generateId(),
@@ -238,6 +277,7 @@ export function createLivestockRepository(
         currentTag: existing.tagNumber,
         currentId: id,
         currentSpecies: existing.species,
+        currentBreed: existing.breed,
         currentDob: existing.dob,
         allLivestock,
       });
@@ -247,6 +287,27 @@ export function createLivestockRepository(
           Object.values(validation.errors).find(Boolean) ??
           'Invalid livestock update.';
         throw new LivestockValidationError(validation.errors, firstError);
+      }
+
+      const nextSpecies = validation.data.species ?? existing.species;
+      const nextSex = validation.data.sex ?? existing.sex;
+      const nextName =
+        validation.data.name !== undefined ? validation.data.name : existing.name;
+      const nextDob =
+        validation.data.dob !== undefined ? validation.data.dob : existing.dob;
+      const duplicate = findDuplicateAnimalMatch(
+        allLivestock,
+        {
+          species: nextSpecies,
+          sex: nextSex,
+          name: nextName,
+          dob: nextDob,
+        },
+        id
+      );
+      if (duplicate) {
+        const msg = `An identical ${nextSpecies} named "${nextName}" born on ${nextDob} already exists (Tag ${duplicate.tagNumber}).`;
+        throw new LivestockValidationError({ name: msg }, msg);
       }
 
       const nextSireId =

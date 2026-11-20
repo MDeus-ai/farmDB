@@ -61,6 +61,10 @@ function escapeLikePattern(raw: string): string {
   return raw.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+function normDupText(raw?: string | null): string {
+  return (raw ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export interface OwnershipRepository {
   list(filter?: AnimalOwnershipFilter): Promise<AnimalOwnership[]>;
   getById(id: string): Promise<AnimalOwnership | null>;
@@ -163,6 +167,25 @@ export function createOwnershipRepository(
         );
       }
 
+      const matchingRows = await db
+        .select()
+        .from(animalOwnerships)
+        .where(
+          and(
+            eq(animalOwnerships.livestockId, validation.data.livestockId),
+            eq(
+              animalOwnerships.ownershipCategory,
+              validation.data.ownershipCategory
+            ),
+            eq(animalOwnerships.startDate, validation.data.startDate)
+          )
+        );
+      const targetOwner = normDupText(validation.data.ownerName);
+      if (matchingRows.some((r) => normDupText(r.ownerName) === targetOwner)) {
+        const msg = `Duplicate ownership record detected for this animal and owner (${validation.data.ownerName}) starting ${validation.data.startDate}.`;
+        throw new OwnershipValidationError({ ownerName: msg }, msg);
+      }
+
       const now = Date.now();
       const record: typeof animalOwnerships.$inferInsert = {
         id: generateId(),
@@ -219,6 +242,31 @@ export function createOwnershipRepository(
             'Selected animal does not exist.'
           );
         }
+      }
+
+      const nextLivestockId = validation.data.livestockId ?? existing.livestockId;
+      const nextCategory =
+        validation.data.ownershipCategory ?? existing.ownershipCategory;
+      const nextStartDate = validation.data.startDate ?? existing.startDate;
+      const nextOwnerName = validation.data.ownerName ?? existing.ownerName;
+      const matchingRows = await db
+        .select()
+        .from(animalOwnerships)
+        .where(
+          and(
+            eq(animalOwnerships.livestockId, nextLivestockId),
+            eq(animalOwnerships.ownershipCategory, nextCategory),
+            eq(animalOwnerships.startDate, nextStartDate)
+          )
+        );
+      const targetOwner = normDupText(nextOwnerName);
+      if (
+        matchingRows.some(
+          (r) => r.id !== id && normDupText(r.ownerName) === targetOwner
+        )
+      ) {
+        const msg = `Duplicate ownership record detected for this animal and owner (${nextOwnerName}) starting ${nextStartDate}.`;
+        throw new OwnershipValidationError({ ownerName: msg }, msg);
       }
 
       const now = Date.now();

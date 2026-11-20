@@ -20,6 +20,8 @@ import {
   formatOwnershipStatusLabel,
   getTodayIsoDate,
   OWNERSHIP_CATEGORIES,
+  OWNERSHIP_CATEGORY_HINTS,
+  OWNERSHIP_STATUS_HINTS,
   OWNERSHIP_STATUSES,
   type AnimalOwnership,
   type FarmAccount,
@@ -669,11 +671,13 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
                   Ownership Category *
                 </Text>
                 <ModernDropdown
+                  showSelectedHint
                   value={fCategory}
                   options={OWNERSHIP_CATEGORIES.map((c) => ({
                     value: c,
                     label: formatOwnershipCategoryLabel(c),
                     iconSource: MOBILE_APP_ICONS.peasant,
+                    hint: OWNERSHIP_CATEGORY_HINTS[c],
                   }))}
                   title="Ownership Type"
                   onChange={setFCategory}
@@ -685,11 +689,13 @@ export function OwnershipsView({ onOpenNetwork }: OwnershipsViewProps) {
                   Custody Status
                 </Text>
                 <ModernDropdown
+                  showSelectedHint
                   value={fStatus}
                   options={OWNERSHIP_STATUSES.map((s) => ({
                     value: s,
                     label: formatOwnershipStatusLabel(s),
                     iconSource: MOBILE_APP_ICONS.checkmark,
+                    hint: OWNERSHIP_STATUS_HINTS[s],
                   }))}
                   title="Status"
                   onChange={setFStatus}

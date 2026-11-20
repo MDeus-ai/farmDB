@@ -13,6 +13,7 @@ import {
   getStatusPngSource,
   MOBILE_APP_ICONS,
 } from '../assets/icons';
+import { resolveMobileAvatarSource } from '../assets/avatars';
 import { FARMDB_COLORS } from '../theme/uiScale';
 
 export type AppIconName =
@@ -380,4 +381,20 @@ export function getAvatarIconName(av?: FarmAccountAvatar | null): AppIconName {
     default:
       return 'farmer';
   }
+}
+
+export function AccountAvatarIcon({
+  avatarKey,
+  size = 24,
+}: {
+  avatarKey?: FarmAccountAvatar | null;
+  size?: number;
+}) {
+  return (
+    <Image
+      source={resolveMobileAvatarSource(avatarKey)}
+      style={{ width: size, height: size, borderRadius: Math.round(size * 0.25) }}
+      resizeMode="contain"
+    />
+  );
 }

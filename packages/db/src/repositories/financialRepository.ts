@@ -56,6 +56,10 @@ function escapeLikePattern(raw: string): string {
   return raw.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+function normDupText(raw?: string | null): string {
+  return (raw ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export interface FinancialRepository {
   list(filter?: FinancialLogFilter): Promise<FinancialLog[]>;
   getById(id: string): Promise<FinancialLog | null>;
@@ -134,6 +138,32 @@ export function createFinancialRepository(
         throw new FinancialValidationError(validation.errors, msg);
       }
 
+      const matchingRows = await db
+        .select()
+        .from(financialLogs)
+        .where(
+          and(
+            eq(financialLogs.date, validation.data.date),
+            eq(financialLogs.transactionType, validation.data.transactionType),
+            eq(financialLogs.category, validation.data.category)
+          )
+        );
+      const targetCents = Math.round(validation.data.amount * 100);
+      const targetLivestock = validation.data.livestockId ?? null;
+      const targetNotes = normDupText(validation.data.notes);
+      const targetProdId = validation.data.productRecordId ?? null;
+      const duplicate = matchingRows.find(
+        (r) =>
+          (targetProdId !== null && r.productRecordId === targetProdId) ||
+          (Math.round(Number(r.amount) * 100) === targetCents &&
+            (r.livestockId ?? null) === targetLivestock &&
+            normDupText(r.notes) === targetNotes)
+      );
+      if (duplicate) {
+        const msg = `Duplicate financial entry detected: an identical ${validation.data.transactionType} record on ${validation.data.date} already exists.`;
+        throw new FinancialValidationError({ amount: msg }, msg);
+      }
+
       const now = Date.now();
       const record: typeof financialLogs.$inferInsert = {
         id: generateId(),
@@ -170,6 +200,43 @@ export function createFinancialRepository(
           Object.values(validation.errors).find(Boolean) ??
           'Invalid financial entry update.';
         throw new FinancialValidationError(validation.errors, msg);
+      }
+
+      const nextDate = validation.data.date ?? existing.date;
+      const nextType =
+        validation.data.transactionType ?? existing.transactionType;
+      const nextCategory = validation.data.category ?? existing.category;
+      const nextAmount = validation.data.amount ?? existing.amount;
+      const nextLivestock =
+        validation.data.livestockId !== undefined
+          ? validation.data.livestockId
+          : existing.livestockId;
+      const nextNotes =
+        validation.data.notes !== undefined
+          ? validation.data.notes
+          : existing.notes;
+      const matchingRows = await db
+        .select()
+        .from(financialLogs)
+        .where(
+          and(
+            eq(financialLogs.date, nextDate),
+            eq(financialLogs.transactionType, nextType),
+            eq(financialLogs.category, nextCategory)
+          )
+        );
+      const targetCents = Math.round(nextAmount * 100);
+      const targetNotes = normDupText(nextNotes);
+      const duplicate = matchingRows.find(
+        (r) =>
+          r.id !== id &&
+          Math.round(Number(r.amount) * 100) === targetCents &&
+          (r.livestockId ?? null) === (nextLivestock ?? null) &&
+          normDupText(r.notes) === targetNotes
+      );
+      if (duplicate) {
+        const msg = `Duplicate financial entry detected: an identical ${nextType} record on ${nextDate} already exists.`;
+        throw new FinancialValidationError({ amount: msg }, msg);
       }
 
       const now = Date.now();

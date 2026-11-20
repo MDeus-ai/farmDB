@@ -50,6 +50,7 @@ interface ModernDropdownProps<T extends string = string> {
   compact?: boolean;
   disabled?: boolean;
   accessibilityLabel?: string;
+  showSelectedHint?: boolean;
 }
 
 function QuickPreviewBanner<T extends string>({
@@ -191,6 +192,7 @@ export function ModernDropdown<T extends string = string>({
   compact = false,
   disabled = false,
   accessibilityLabel,
+  showSelectedHint = false,
 }: ModernDropdownProps<T>) {
   const ui = useUiScale();
   const [open, setOpen] = useState(false);
@@ -291,6 +293,20 @@ export function ModernDropdown<T extends string = string>({
           color={FARMDB_COLORS.textMuted}
         />
       </Pressable>
+
+      {showSelectedHint && selected?.hint ? (
+        <Text
+          style={{
+            marginTop: 4,
+            fontSize: ui.font(10.5),
+            lineHeight: ui.font(14),
+            color: FARMDB_COLORS.textMuted,
+            fontFamily: FARMDB_FONTS.regular,
+          }}
+        >
+          {selected.hint}
+        </Text>
+      ) : null}
 
       <Modal
         visible={open}

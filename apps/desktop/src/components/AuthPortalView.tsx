@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ACCOUNT_ROLE_HINTS,
   buildStandardUserPermissions,
   DEFAULT_FARM_SETTINGS,
   FARM_ACCOUNT_ROLES,
@@ -24,6 +25,10 @@ import {
   useTriggerCloudSync,
   useUpdateFarmSettings,
 } from '@farmdb/db';
+import {
+  DESKTOP_AVATAR_OPTIONS,
+  resolveDesktopAvatarSrc,
+} from '../assets/avatars';
 import { APP_ICONS } from '../assets/icons';
 import { FileTabs } from './FileTabs';
 import { ModernSelect } from './ModernSelect';
@@ -35,20 +40,6 @@ interface AuthPortalViewProps {
   onSuccessEnterApp?: () => void;
   onCancelToApp?: () => void;
   canCancel?: boolean;
-}
-
-function getAvatarIcon(avatar: FarmAccountAvatar): string {
-  switch (avatar) {
-    case 'farmerFemale':
-      return APP_ICONS.farmerFemale;
-    case 'peasant':
-      return APP_ICONS.peasant;
-    case 'staff':
-      return APP_ICONS.staff;
-    case 'farmer':
-    default:
-      return APP_ICONS.farmer;
-  }
 }
 
 export function AuthPortalView({
@@ -111,6 +102,7 @@ export function AuthPortalView({
   const [sPhone, setSPhone] = useState('');
   const [sPin, setSPin] = useState('');
   const [sRole, setSRole] = useState<FarmAccountRole>('family_member');
+  const [sAvatar, setSAvatar] = useState<FarmAccountAvatar>('farmer');
   const [sFarmName, setSFarmName] = useState(settings.farmName);
   const [showAdminCloudSetup, setShowAdminCloudSetup] = useState(false);
   const [sSupabaseUrl, setSSupabaseUrl] = useState(settings.supabaseUrl);
@@ -189,20 +181,13 @@ export function AuthPortalView({
           );
           return;
         }
-        const avatarKey: FarmAccountAvatar =
-          sRole === 'external_owner'
-            ? 'peasant'
-            : sRole === 'family_member'
-              ? 'farmerFemale'
-              : 'farmer';
-
         const created = await signUpAccountMut.mutateAsync({
           displayName: sName.trim(),
           email: sEmail || null,
           phone: sPhone || null,
           role: sRole,
           accessCode: sPin || null,
-          avatarKey,
+          avatarKey: sAvatar || 'farmer',
           isPrimaryAdmin: false,
           canManageNetwork: false,
           canSyncCloud: false,
@@ -237,7 +222,7 @@ export function AuthPortalView({
           phone: sPhone || null,
           role: 'admin',
           relationship: 'Admin',
-          avatarKey: 'farmer',
+          avatarKey: sAvatar || 'farmer',
           accessCode: sPin || null,
           supabaseUrl: hasCloudSetup ? sSupabaseUrl.trim() : null,
           supabaseAnonKey: hasCloudSetup ? sSupabaseAnonKey.trim() : null,
@@ -648,9 +633,10 @@ export function AuthPortalView({
                         }}
                       >
                         <img
-                          src={getAvatarIcon(acc.avatarKey)}
+                          src={resolveDesktopAvatarSrc(acc.avatarKey)}
                           alt=""
                           className="app-icon-md"
+                          style={{ borderRadius: 6 }}
                         />
                         <div style={{ textAlign: 'left', minWidth: 0, flex: 1 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -942,12 +928,14 @@ export function AuthPortalView({
                     <label className="form-label">Account Role</label>
                     <ModernSelect
                       fullWidth
+                      showSelectedHint
                       value={sRole}
                       options={FARM_ACCOUNT_ROLES.filter((r) => r !== 'admin').map(
                         (r) => ({
                           value: r,
                           label: formatAccountRoleLabel(r),
                           iconSrc: APP_ICONS.networking,
+                          hint: ACCOUNT_ROLE_HINTS[r],
                         })
                       )}
                       onChange={setSRole}
@@ -955,6 +943,21 @@ export function AuthPortalView({
                   </div>
                 </>
               )}
+              <div className="form-field">
+                <label className="form-label">Avatar Icon</label>
+                <ModernSelect
+                  fullWidth
+                  searchable
+                  value={sAvatar}
+                  options={DESKTOP_AVATAR_OPTIONS.map((av) => ({
+                    value: av.value,
+                    label: av.label,
+                    iconSrc: av.iconSrc,
+                    hint: av.isFolderAvator ? 'Farm Avatar Library' : 'Built-in Avatar',
+                  }))}
+                  onChange={setSAvatar}
+                />
+              </div>
               <div className="form-field">
                 <label className="form-label">Email</label>
                 <input

@@ -15,11 +15,15 @@ import {
   CURRENCY_OPTIONS,
   DEFAULT_FARM_SETTINGS,
   encodeFarmNetworkJoinKey,
+  FONT_SCALE_HINTS,
   FONT_SCALES,
   formatCurrency,
   generateSupabaseSetupSql,
   isAdminAccount,
+  MOBILE_ICON_MODE_HINT,
   UI_DENSITIES,
+  UI_DENSITY_HINTS,
+  VOLUME_UNIT_HINTS,
   VOLUME_UNITS,
   type FarmAccount,
   type FarmSettings,
@@ -577,6 +581,9 @@ export function FirstTimeSetupView({
                 );
               })}
             </View>
+            <Text style={[styles.hintText, { fontSize: ui.font(10.5), marginTop: 2 }]}>
+              {FONT_SCALE_HINTS[fontScale]}
+            </Text>
           </View>
 
           <View style={styles.previewBox}>
@@ -636,6 +643,9 @@ export function FirstTimeSetupView({
                 );
               })}
             </View>
+            <Text style={[styles.hintText, { fontSize: ui.font(10.5), marginTop: 2 }]}>
+              {UI_DENSITY_HINTS[uiDensity]}
+            </Text>
           </View>
 
           <View style={styles.previewBox}>
@@ -728,6 +738,9 @@ export function FirstTimeSetupView({
               </Text>
             </Pressable>
           </View>
+          <Text style={[styles.hintText, { fontSize: ui.font(10.5), marginTop: 2 }]}>
+            {MOBILE_ICON_MODE_HINT}
+          </Text>
 
           <View style={styles.previewBox}>
             <Text style={[styles.hintText, { fontSize: ui.font(10) }]}>
@@ -818,6 +831,9 @@ export function FirstTimeSetupView({
                 );
               })}
             </View>
+            <Text style={[styles.hintText, { fontSize: ui.font(10.5), marginTop: 2 }]}>
+              {VOLUME_UNIT_HINTS[volumeUnit]}
+            </Text>
           </View>
 
           <View style={styles.previewBox}>
@@ -850,6 +866,7 @@ export function FirstTimeSetupView({
               Preferred Currency
             </Text>
             <ModernDropdown
+              showSelectedHint
               value={selectedCurrencyValue}
               options={currencyOptions}
               disabled={!canEditSettings}

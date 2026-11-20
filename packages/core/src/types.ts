@@ -577,13 +577,55 @@ export const FARM_ACCOUNT_STATUSES = [
 ] as const;
 export type FarmAccountStatus = (typeof FARM_ACCOUNT_STATUSES)[number];
 
-export const FARM_ACCOUNT_AVATARS = [
+export const BUILTIN_FARM_ACCOUNT_AVATARS = [
   'farmer',
   'farmerFemale',
   'peasant',
   'staff',
 ] as const;
-export type FarmAccountAvatar = (typeof FARM_ACCOUNT_AVATARS)[number];
+
+export const FARM_ACCOUNT_AVATARS = [...BUILTIN_FARM_ACCOUNT_AVATARS] as const;
+export type BuiltinFarmAccountAvatar = (typeof BUILTIN_FARM_ACCOUNT_AVATARS)[number];
+export type FarmAccountAvatar = string;
+
+const CUSTOM_AVATAR_SLUG_RE = /^avator_[a-z0-9_]{1,56}$/;
+
+export function formatAvatarSlugFromFilename(filename: string): string {
+  const stem = filename.replace(/\.[^.]+$/, '');
+  const normalized = stem
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return `avator_${normalized || 'custom'}`;
+}
+
+export function formatAvatarLabel(avatarKey: string): string {
+  switch (avatarKey) {
+    case 'farmer':
+      return 'Farmer Classic';
+    case 'farmerFemale':
+      return 'Farmer Female';
+    case 'peasant':
+      return 'Partner / Owner';
+    case 'staff':
+      return 'Team Icon';
+    default: {
+      const cleaned = avatarKey.replace(/^avator_/, '');
+      return cleaned
+        .split('_')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+    }
+  }
+}
+
+export function isValidFarmAccountAvatar(value: string): boolean {
+  return (
+    (BUILTIN_FARM_ACCOUNT_AVATARS as readonly string[]).includes(value) ||
+    CUSTOM_AVATAR_SLUG_RE.test(value)
+  );
+}
 
 export const FARM_MODULE_ACCESS_LEVELS = [
   'none',

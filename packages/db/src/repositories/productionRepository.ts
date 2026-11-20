@@ -70,6 +70,10 @@ function escapeLikePattern(raw: string): string {
   return raw.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+function normDupText(raw?: string | null): string {
+  return (raw ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export interface ProductionRepository {
   list(filter?: ProductRecordFilter): Promise<ProductRecord[]>;
   getById(id: string): Promise<ProductRecord | null>;
@@ -188,6 +192,27 @@ export function createProductionRepository(
         );
       }
 
+      const sameDayRows = await db
+        .select()
+        .from(productRecords)
+        .where(
+          and(
+            eq(productRecords.livestockId, validation.data.livestockId),
+            eq(productRecords.date, validation.data.date)
+          )
+        );
+      const targetYieldCenti = Math.round(validation.data.yieldAmount * 100);
+      const targetNotes = normDupText(validation.data.qualityNotes);
+      const duplicate = sameDayRows.find(
+        (r) =>
+          Math.round(Number(r.yieldAmount) * 100) === targetYieldCenti &&
+          normDupText(r.qualityNotes) === targetNotes
+      );
+      if (duplicate) {
+        const msg = `Duplicate milk yield entry detected for this animal on ${validation.data.date} (${validation.data.yieldAmount} L).`;
+        throw new ProductionValidationError({ yieldAmount: msg }, msg);
+      }
+
       const now = Date.now();
       const row: typeof productRecords.$inferInsert = {
         id: generateId(),
@@ -291,6 +316,35 @@ export function createProductionRepository(
         const msg =
           'Production date cannot be earlier than the animal’s date of birth.';
         throw new ProductionValidationError({ date: msg }, msg);
+      }
+
+      const nextLivestockId = validation.data.livestockId ?? existing.livestockId;
+      const nextDate = validation.data.date ?? existing.date;
+      const nextYield = validation.data.yieldAmount ?? existing.yieldAmount;
+      const nextNotes =
+        validation.data.qualityNotes !== undefined
+          ? validation.data.qualityNotes
+          : existing.qualityNotes;
+      const sameDayRows = await db
+        .select()
+        .from(productRecords)
+        .where(
+          and(
+            eq(productRecords.livestockId, nextLivestockId),
+            eq(productRecords.date, nextDate)
+          )
+        );
+      const targetYieldCenti = Math.round(nextYield * 100);
+      const targetNotes = normDupText(nextNotes);
+      const duplicate = sameDayRows.find(
+        (r) =>
+          r.id !== id &&
+          Math.round(Number(r.yieldAmount) * 100) === targetYieldCenti &&
+          normDupText(r.qualityNotes) === targetNotes
+      );
+      if (duplicate) {
+        const msg = `Duplicate milk yield entry detected for this animal on ${nextDate} (${nextYield} L).`;
+        throw new ProductionValidationError({ yieldAmount: msg }, msg);
       }
 
       const now = Date.now();

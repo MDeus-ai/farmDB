@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  ACCOUNT_ROLE_HINTS,
   buildStandardUserPermissions,
   DEFAULT_FARM_SETTINGS,
   FARM_ACCOUNT_ROLES,
@@ -34,9 +35,10 @@ import {
   useTriggerCloudSync,
   useUpdateFarmSettings,
 } from '@farmdb/db';
+import { MOBILE_AVATAR_OPTIONS } from '../assets/avatars';
 import { MOBILE_APP_ICONS } from '../assets/icons';
 import { FARMDB_COLORS, FARMDB_FONTS, useUiScale } from '../theme/uiScale';
-import { AppIcon, getAvatarIconName } from './FarmIcons';
+import { AccountAvatarIcon, AppIcon } from './FarmIcons';
 import { FarmScrollView } from './FarmScrollView';
 import { MobileFileTabs } from './MobileFileTabs';
 import { ModernDropdown } from './ModernDropdown';
@@ -111,6 +113,7 @@ export function AuthPortalView({
   const [sPhone, setSPhone] = useState('');
   const [sPin, setSPin] = useState('');
   const [sRole, setSRole] = useState<FarmAccountRole>('family_member');
+  const [sAvatar, setSAvatar] = useState<FarmAccountAvatar>('farmer');
   const [sFarmName, setSFarmName] = useState(settings.farmName);
   const [showAdminCloudSetup, setShowAdminCloudSetup] = useState(false);
   const [sSupabaseUrl, setSSupabaseUrl] = useState(settings.supabaseUrl);
@@ -187,20 +190,13 @@ export function AuthPortalView({
           );
           return;
         }
-        const avatarKey: FarmAccountAvatar =
-          sRole === 'external_owner'
-            ? 'peasant'
-            : sRole === 'family_member'
-              ? 'farmerFemale'
-              : 'farmer';
-
         const created = await signUpAccountMut.mutateAsync({
           displayName: sName.trim(),
           email: sEmail || null,
           phone: sPhone || null,
           role: sRole,
           accessCode: sPin || null,
-          avatarKey,
+          avatarKey: sAvatar || 'farmer',
           isPrimaryAdmin: false,
           canManageNetwork: false,
           canSyncCloud: false,
@@ -235,7 +231,7 @@ export function AuthPortalView({
           phone: sPhone || null,
           role: 'admin',
           relationship: 'Admin',
-          avatarKey: 'farmer',
+          avatarKey: sAvatar || 'farmer',
           accessCode: sPin || null,
           supabaseUrl: hasCloudSetup ? sSupabaseUrl.trim() : null,
           supabaseAnonKey: hasCloudSetup ? sSupabaseAnonKey.trim() : null,
@@ -724,8 +720,8 @@ export function AuthPortalView({
                             setErrorMsg(null);
                           }}
                         >
-                          <AppIcon
-                            name={getAvatarIconName(acc.avatarKey)}
+                          <AccountAvatarIcon
+                            avatarKey={acc.avatarKey}
                             size={ui.font(24)}
                           />
                           <View style={{ flex: 1, minWidth: 0 }}>
@@ -1098,12 +1094,14 @@ export function AuthPortalView({
                       Account Role
                     </Text>
                     <ModernDropdown
+                      showSelectedHint
                       value={sRole}
                       options={FARM_ACCOUNT_ROLES.filter((r) => r !== 'admin').map(
                         (r) => ({
                           value: r,
                           label: formatAccountRoleLabel(r),
                           iconSource: MOBILE_APP_ICONS.networking,
+                          hint: ACCOUNT_ROLE_HINTS[r],
                         })
                       )}
                       title="Account Role"
@@ -1112,6 +1110,24 @@ export function AuthPortalView({
                   </View>
                 </>
               )}
+
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { fontSize: ui.font(12) }]}>
+                  Avatar Icon
+                </Text>
+                <ModernDropdown
+                  searchable
+                  value={sAvatar}
+                  options={MOBILE_AVATAR_OPTIONS.map((av) => ({
+                    value: av.value,
+                    label: av.label,
+                    iconSource: av.source,
+                    hint: av.isFolderAvator ? 'Farm Avatar Library' : 'Built-in Avatar',
+                  }))}
+                  title="Select Avatar Icon"
+                  onChange={setSAvatar}
+                />
+              </View>
 
               <View style={styles.fieldGroup}>
                 <Text style={[styles.label, { fontSize: ui.font(12) }]}>

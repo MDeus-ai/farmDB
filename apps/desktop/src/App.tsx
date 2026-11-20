@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { AlertTriangle, BookOpen } from 'lucide-react';
 import {
   APP_SECTIONS,
@@ -30,6 +31,7 @@ import {
   type FarmDbContextValue,
   type SqlDriver,
 } from '@farmdb/db';
+import { resolveDesktopAvatarSrc } from './assets/avatars';
 import { APP_ICONS } from './assets/icons';
 import { createBrowserPreviewSession } from './db/browserPreviewSession';
 import {
@@ -346,7 +348,12 @@ function DesktopShell({
     },
   });
 
-  useCloudAutoSyncWorker(settings, {
+  const {
+    syncNow: autoSyncNow,
+    flushPendingSync,
+    hasUnsyncedChangesRef,
+    lastSyncCompletedAtRef,
+  } = useCloudAutoSyncWorker(settings, {
     canSyncAccount:
       !isSignedOut &&
       !showAuthPortal &&
@@ -359,6 +366,58 @@ function DesktopShell({
       }
     },
   });
+
+  const closingWindowRef = useRef(false);
+  useEffect(() => {
+    if (!isRunningInsideTauri()) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+
+    void getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (closingWindowRef.current) return;
+        const needsFlush =
+          hasUnsyncedChangesRef.current || cloudSyncMut.isPending;
+        if (!needsFlush) return;
+        event.preventDefault();
+        closingWindowRef.current = true;
+        setSyncFeedback('Syncing before close...');
+        try {
+          await flushPendingSync(6000);
+        } catch {
+          // Proceed closing safely even if offline or network times out.
+        } finally {
+          void getCurrentWindow().destroy().catch(() => {});
+        }
+      })
+      .then((fn) => {
+        if (active) {
+          unlisten = fn;
+        } else {
+          fn();
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [flushPendingSync, hasUnsyncedChangesRef, cloudSyncMut.isPending]);
+
+  useEffect(() => {
+    const syncIfStale = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (Date.now() - lastSyncCompletedAtRef.current < 10_000) return;
+      void autoSyncNow().catch(() => {});
+    };
+    window.addEventListener('focus', syncIfStale);
+    document.addEventListener('visibilitychange', syncIfStale);
+    return () => {
+      window.removeEventListener('focus', syncIfStale);
+      document.removeEventListener('visibilitychange', syncIfStale);
+    };
+  }, [autoSyncNow, lastSyncCompletedAtRef]);
 
   const visibleSections = useMemo(
     () =>
@@ -684,13 +743,10 @@ function DesktopShell({
               title="Open Farm Network, Join Keys & Password settings"
             >
               <img
-                src={
-                  isAdminAccount(activeAccount)
-                    ? APP_ICONS.networking
-                    : APP_ICONS.farmer
-                }
+                src={resolveDesktopAvatarSrc(activeAccount?.avatarKey)}
                 alt=""
                 className="app-icon-md"
+                style={{ borderRadius: 6 }}
               />
               <span style={{ minWidth: 0, flex: 1 }}>
                 <span

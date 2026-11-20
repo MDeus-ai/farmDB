@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import {
+  ALERT_KIND_HINTS,
   formatDisplayDate,
   getAlertUrgency,
   getTodayIsoDate,
@@ -398,6 +399,9 @@ export function AlertsView({ onCheckDueNow }: AlertsViewProps) {
                 );
               })}
             </View>
+            <Text style={{ fontSize: ui.font(10.5), color: FARMDB_COLORS.textMuted, marginTop: 2, marginBottom: 6 }}>
+              {ALERT_KIND_HINTS[entryKind]}
+            </Text>
 
             <Text style={[styles.label, { fontSize: ui.font(12) }]}>Title *</Text>
             <TextInput

@@ -4,11 +4,14 @@ import {
   CURRENCY_OPTIONS,
   DEFAULT_FARM_SETTINGS,
   encodeFarmNetworkJoinKey,
+  FONT_SCALE_HINTS,
   FONT_SCALES,
   formatCurrency,
   generateSupabaseSetupSql,
   isAdminAccount,
   UI_DENSITIES,
+  UI_DENSITY_HINTS,
+  VOLUME_UNIT_HINTS,
   VOLUME_UNITS,
   type FarmAccount,
   type FarmSettings,
@@ -698,6 +701,7 @@ export function FirstTimeSetupView({
                         key={scale}
                         type="button"
                         disabled={!canEditSettings}
+                        title={FONT_SCALE_HINTS[scale]}
                         className={`segmented-btn ${fontScale === scale ? 'active' : ''}`}
                         onClick={() => setFontScale(scale)}
                       >
@@ -750,6 +754,7 @@ export function FirstTimeSetupView({
                         key={density}
                         type="button"
                         disabled={!canEditSettings}
+                        title={UI_DENSITY_HINTS[density]}
                         className={`segmented-btn ${uiDensity === density ? 'active' : ''}`}
                         onClick={() => setUiDensity(density)}
                       >
@@ -806,6 +811,7 @@ export function FirstTimeSetupView({
                         key={unit}
                         type="button"
                         disabled={!canEditSettings}
+                        title={VOLUME_UNIT_HINTS[unit]}
                         className={`segmented-btn ${volumeUnit === unit ? 'active' : ''}`}
                         onClick={() => setVolumeUnit(unit)}
                       >
@@ -849,6 +855,7 @@ export function FirstTimeSetupView({
                   <label className="form-label">Currency</label>
                   <ModernSelect
                     fullWidth
+                    showSelectedHint
                     disabled={!canEditSettings}
                     value={isPresetCurrency ? currencySymbol : '__custom__'}
                     options={currencyOptions}

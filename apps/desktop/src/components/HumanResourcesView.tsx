@@ -15,9 +15,13 @@ import {
   getPaymentDueUrgency,
   getTodayIsoDate,
   WORKER_PAY_FREQUENCIES,
+  WORKER_PAY_FREQUENCY_HINTS,
   WORKER_PAYMENT_STATUSES,
+  WORKER_STATUS_HINTS,
   WORKER_STATUSES,
   WORKER_TASK_PRIORITIES,
+  WORKER_TASK_PRIORITY_HINTS,
+  WORKER_TASK_STATUS_HINTS,
   WORKER_TASK_STATUSES,
   type FarmWorker,
   type Livestock,
@@ -1294,11 +1298,13 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                   <label className="form-label">Status</label>
                   <ModernSelect
                     fullWidth
+                    showSelectedHint
                     value={wStatus}
                     options={WORKER_STATUSES.map((st) => ({
                       value: st,
                       label: formatWorkerStatusLabel(st),
                       iconSrc: APP_ICONS.farmer,
+                      hint: WORKER_STATUS_HINTS[st],
                     }))}
                     onChange={setWStatus}
                   />
@@ -1319,11 +1325,13 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                   <label className="form-label">Pay Frequency</label>
                   <ModernSelect
                     fullWidth
+                    showSelectedHint
                     value={wFrequency}
                     options={WORKER_PAY_FREQUENCIES.map((freq) => ({
                       value: freq,
                       label: formatPayFrequencyLabel(freq),
                       iconSrc: APP_ICONS.calendar,
+                      hint: WORKER_PAY_FREQUENCY_HINTS[freq],
                     }))}
                     onChange={setWFrequency}
                   />
@@ -1435,11 +1443,16 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                   <label className="form-label">Status</label>
                   <ModernSelect
                     fullWidth
+                    showSelectedHint
                     value={pStatus}
                     options={WORKER_PAYMENT_STATUSES.map((st) => ({
                       value: st,
                       label: formatPaymentStatusLabel(st),
                       iconSrc: st === 'paid' ? APP_ICONS.checkmark : APP_ICONS.hourglass,
+                      hint:
+                        st === 'paid'
+                          ? 'Marked settled and completed'
+                          : 'Scheduled or awaiting salary payout',
                     }))}
                     onChange={setPStatus}
                   />
@@ -1564,11 +1577,13 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                   <label className="form-label">Priority</label>
                   <ModernSelect
                     fullWidth
+                    showSelectedHint
                     value={tPriority}
                     options={WORKER_TASK_PRIORITIES.map((pr) => ({
                       value: pr,
                       label: formatTaskPriorityLabel(pr),
                       iconSrc: APP_ICONS.pin,
+                      hint: WORKER_TASK_PRIORITY_HINTS[pr],
                     }))}
                     onChange={setTPriority}
                   />
@@ -1577,11 +1592,13 @@ export function HumanResourcesView({ onOpenSettings }: HumanResourcesViewProps) 
                   <label className="form-label">Status</label>
                   <ModernSelect
                     fullWidth
+                    showSelectedHint
                     value={tStatus}
                     options={WORKER_TASK_STATUSES.map((st) => ({
                       value: st,
                       label: formatTaskStatusLabel(st),
                       iconSrc: APP_ICONS.checkmark,
+                      hint: WORKER_TASK_STATUS_HINTS[st],
                     }))}
                     onChange={setTStatus}
                   />

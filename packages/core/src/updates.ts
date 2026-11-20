@@ -1,16 +1,14 @@
-export const FARMDB_APP_VERSION = '1.5.4';
+export const FARMDB_APP_VERSION = '1.5.5';
 export const FARMDB_GITHUB_REPO = 'MDeus-ai/farmDB';
 export const FARMDB_GITHUB_LATEST_RELEASE_API = `https://api.github.com/repos/${FARMDB_GITHUB_REPO}/releases/latest`;
 export const FARMDB_GITHUB_RELEASES_PAGE = `https://github.com/${FARMDB_GITHUB_REPO}/releases`;
 
 export const CURRENT_RELEASE_HIGHLIGHTS: readonly string[] = [
-  'Fixed Desktop SQLite read-only errors when adding or saving livestock by locking on-disk files only at app close while keeping a verified read-only shadow backup.',
-  'Locked down device-local Sign-In isolation so joining a Farm Network never exposes or signs into remote Admin accounts from another phone or PC.',
-  'Added self-service Leave Network for joined or pending members, plus a top-bar Refresh button on Desktop and Mobile to reload all settings and records immediately.',
-  'Added Admin Display Name renaming with an Admin badge in both Settings and Farm Network, alongside instant Admin join alerts and 20s Pending Approval polling.',
-  'Updated the in-app App Guide, removed unused Invite to Network modals, and added full Admin/User account deletion with PIN safety.',
-  'Accurate installed version & OTA detection clears update banners immediately once updates are applied.',
-  'Android keyboards keep lower form fields visible with tappable phone/email links and refined Mobile Large & X-Large UI layouts.',
+  'Instant write-triggered Supabase cloud sync plus graceful Desktop exit & Mobile background flushes ensure records added before closing PC sync reliably to phones.',
+  'Added a validated, species-specific Breed Dictionary (including African breeds such as Ankole-Watusi, Boran, Mubende, Boer, Dorper, Red Maasai, Kuroiler, and Kienyeji) with searchable pickers.',
+  'Added duplicate-entry detection and prevention across Livestock, Milk Production, Medical History, Financial Ledger, Alerts & Notes, Human Resources, Ownerships, and Accounts.',
+  'Dynamically loads all icons placed inside assets/avators into Desktop & Mobile profile pickers, replaced goat/sheep/duck/chicken icons with head portraits, and removed unused icons.',
+  'Added concise hover explanations on Desktop and compact captions on Mobile across Settings and key form dropdowns, widened Desktop Add Livestock for Large/X-Large text, and removed Herd Registry summary stats.',
 ];
 
 export type UpdateSource = 'tauri_updater' | 'expo_ota' | 'github_release';

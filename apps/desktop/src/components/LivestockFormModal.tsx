@@ -1,12 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_FARM_SETTINGS,
+  findCanonicalBreed,
+  formatBreedHint,
   formatSexLabel,
   formatSpeciesLabel,
   formatStatusLabel,
+  getBreedsForSpecies,
   getEligibleParentCandidates,
   inferDefaultLivestockSex,
   LIVESTOCK_SEXES,
+  LIVESTOCK_STATUS_HINTS,
   LIVESTOCK_STATUSES,
   SPECIES_LIST,
   validateNewLivestock,
@@ -183,9 +187,42 @@ export function LivestockFormModal({
         value: st,
         label: formatStatusLabel(st),
         iconSrc: getStatusPngIcon(st),
+        hint: LIVESTOCK_STATUS_HINTS[st],
       })),
     []
   );
+
+  const breedOptions = useMemo<ModernSelectOption<string>[]>(() => {
+    const defs = getBreedsForSpecies(species);
+    const spIcon = getSpeciesPngIcon(species, sex);
+    const list: ModernSelectOption<string>[] = [
+      {
+        value: '',
+        label: 'Not Specified / Unknown',
+        iconSrc: spIcon,
+        hint: 'Leave breed blank if unknown or mixed.',
+      },
+      ...defs.map((def) => ({
+        value: def.name,
+        label: def.name,
+        iconSrc: spIcon,
+        hint: formatBreedHint(def),
+      })),
+    ];
+    const trimmedCurrent = breed.trim();
+    if (
+      trimmedCurrent &&
+      !defs.some((d) => d.name.toLowerCase() === trimmedCurrent.toLowerCase())
+    ) {
+      list.splice(1, 0, {
+        value: trimmedCurrent,
+        label: `${trimmedCurrent} (Legacy Record)`,
+        iconSrc: spIcon,
+        hint: 'Existing breed recorded before dictionary standardization.',
+      });
+    }
+    return list;
+  }, [species, sex, breed]);
 
   if (!open) {
     return null;
@@ -279,6 +316,7 @@ export function LivestockFormModal({
           currentTag: editing.tagNumber,
           currentId: editing.id,
           currentSpecies: editing.species,
+          currentBreed: editing.breed,
           currentDob: editing.dob,
           allLivestock,
         }
@@ -355,7 +393,7 @@ export function LivestockFormModal({
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="modal-card">
+      <div className="modal-card livestock-form-modal">
         <div className="modal-header">
           <h2 className="modal-title">
             {editing ? `Edit ${editing.tagNumber}` : 'Add Livestock'}
@@ -464,6 +502,9 @@ export function LivestockFormModal({
                   if (nextSpecies !== species) {
                     setSireId('');
                     setDamId('');
+                    if (breed.trim() && !findCanonicalBreed(nextSpecies, breed)) {
+                      setBreed('');
+                    }
                   }
                   setSpecies(nextSpecies);
                   if (nextChoice === 'bull') {
@@ -512,15 +553,22 @@ export function LivestockFormModal({
 
             <div className="form-field">
               <label className="form-label" htmlFor="breed">
-                Breed
+                Breed (Validated Dictionary)
               </label>
-              <input
+              <ModernSelect
                 id="breed"
-                className="input"
-                placeholder="e.g. Holstein"
+                fullWidth
+                searchable
+                showSelectedHint
+                ariaLabel="Breed"
+                placeholder="Select breed (e.g. Holstein, Ankole, Boer...)"
                 value={breed}
-                onChange={(e) => setBreed(e.target.value)}
+                options={breedOptions}
+                onChange={setBreed}
               />
+              {errors.breed && (
+                <span className="field-error">{errors.breed}</span>
+              )}
             </div>
 
             <div className="form-field">
@@ -545,6 +593,7 @@ export function LivestockFormModal({
               <ModernSelect
                 id="status"
                 fullWidth
+                showSelectedHint
                 ariaLabel="Status"
                 value={status}
                 options={statusOptions}

@@ -1241,4 +1241,273 @@ describe('@farmdb/db migrations and repositories', () => {
 
     raw.close();
   });
+
+  it('detects and prevents duplicate entries across all farm modules while allowing distinct records', async () => {
+    const { driver, raw } = createNodeSqliteDriver(':memory:');
+    await runMigrations(driver);
+    const session = createFarmDbSession(driver);
+
+    // 1. Livestock (same species + sex + name + dob even with a different tag number)
+    const cow = await session.livestock.create({
+      species: 'cow',
+      sex: 'female',
+      tagNumber: 'DUP-101',
+      name: 'Nairobi',
+      breed: 'Boran',
+      dob: '2024-04-12',
+    });
+    await expect(
+      session.livestock.create({
+        species: 'cow',
+        sex: 'female',
+        tagNumber: 'DUP-102',
+        name: ' nairobi ',
+        breed: 'Boran',
+        dob: '2024-04-12',
+      })
+    ).rejects.toThrow(/already exists/i);
+    await expect(
+      session.livestock.create({
+        species: 'cow',
+        sex: 'female',
+        tagNumber: 'DUP-103',
+        name: 'Kampala',
+        breed: 'Boran',
+        dob: '2024-04-12',
+      })
+    ).resolves.toMatchObject({ tagNumber: 'DUP-103' });
+
+    // 2. Milk Production
+    await session.production.create({
+      livestockId: cow.id,
+      date: '2026-11-18',
+      yieldAmount: 14.5,
+      qualityNotes: 'Morning milking',
+    });
+    await expect(
+      session.production.create({
+        livestockId: cow.id,
+        date: '2026-11-18',
+        yieldAmount: 14.5,
+        qualityNotes: ' morning   milking ',
+      })
+    ).rejects.toThrow(/duplicate/i);
+    await expect(
+      session.production.create({
+        livestockId: cow.id,
+        date: '2026-11-18',
+        yieldAmount: 11.2,
+        qualityNotes: 'Evening milking',
+      })
+    ).resolves.toMatchObject({ record: { yieldAmount: 11.2 } });
+
+    // 3. Medical History
+    await session.medical.create({
+      livestockId: cow.id,
+      date: '2026-11-18',
+      condition: 'Routine Deworming',
+      treatment: 'Albendazole 10%',
+      veterinarian: 'Dr. Okello',
+      cost: 12,
+    });
+    await expect(
+      session.medical.create({
+        livestockId: cow.id,
+        date: '2026-11-18',
+        condition: 'routine deworming',
+        treatment: 'albendazole  10%',
+        veterinarian: 'Dr. Okello',
+        cost: 12,
+      })
+    ).rejects.toThrow(/duplicate/i);
+    await expect(
+      session.medical.create({
+        livestockId: cow.id,
+        date: '2026-11-18',
+        condition: 'Foot Trimming',
+        treatment: 'Copper sulfate wash',
+        cost: 8,
+      })
+    ).resolves.toMatchObject({ record: { condition: 'Foot Trimming' } });
+
+    // 4. Financial Ledger
+    await session.financial.create({
+      transactionType: 'expense',
+      category: 'feed',
+      amount: 150,
+      date: '2026-11-18',
+      livestockId: cow.id,
+      notes: 'Dairy meal bags',
+    });
+    await expect(
+      session.financial.create({
+        transactionType: 'expense',
+        category: 'feed',
+        amount: 150,
+        date: '2026-11-18',
+        livestockId: cow.id,
+        notes: ' dairy meal   bags ',
+      })
+    ).rejects.toThrow(/duplicate/i);
+    await expect(
+      session.financial.create({
+        transactionType: 'expense',
+        category: 'feed',
+        amount: 200,
+        date: '2026-11-18',
+        livestockId: cow.id,
+        notes: 'Extra mineral lick',
+      })
+    ).resolves.toMatchObject({ amount: 200 });
+
+    // 5. Alerts & Notes
+    await session.alerts.create({
+      entryKind: 'alert',
+      title: 'Booster shot due',
+      triggerDate: '2026-11-25',
+      livestockId: cow.id,
+    });
+    await expect(
+      session.alerts.create({
+        entryKind: 'alert',
+        title: '  booster shot due ',
+        triggerDate: '2026-11-25',
+        livestockId: cow.id,
+      })
+    ).rejects.toThrow(/duplicate/i);
+    await expect(
+      session.alerts.create({
+        entryKind: 'note',
+        title: 'Booster shot due',
+        livestockId: cow.id,
+      })
+    ).resolves.toMatchObject({ entryKind: 'note' });
+
+    // 6. HR Workers, Payments, and Tasks
+    const worker = await session.hr.createWorker({
+      name: 'Samuel Kiptoo',
+      role: 'Lead Herdsman',
+      phone: '+256 700 112233',
+      salaryAmount: 350,
+      payFrequency: 'monthly',
+      nextPaymentDueDate: '2026-11-30',
+    });
+    await expect(
+      session.hr.createWorker({
+        name: ' samuel kiptoo ',
+        role: 'lead herdsman',
+        phone: '+256 700 112233',
+        salaryAmount: 350,
+        payFrequency: 'monthly',
+        nextPaymentDueDate: '2026-11-30',
+      })
+    ).rejects.toThrow(/already exists/i);
+    await expect(
+      session.hr.createWorker({
+        name: 'Miriam Nabirye',
+        role: 'Milk Collector',
+        salaryAmount: 280,
+        payFrequency: 'monthly',
+        nextPaymentDueDate: '2026-11-30',
+      })
+    ).resolves.toMatchObject({ name: 'Miriam Nabirye' });
+
+    await session.hr.createPayment({
+      workerId: worker.id,
+      dueDate: '2026-11-30',
+      amount: 350,
+      periodLabel: 'Nov 2026 Payroll',
+    });
+    await expect(
+      session.hr.createPayment({
+        workerId: worker.id,
+        dueDate: '2026-11-30',
+        amount: 350,
+        periodLabel: 'nov 2026 payroll',
+      })
+    ).rejects.toThrow(/duplicate/i);
+    await expect(
+      session.hr.createPayment({
+        workerId: worker.id,
+        dueDate: '2026-12-30',
+        amount: 350,
+        periodLabel: 'Dec 2026 Payroll',
+      })
+    ).resolves.toMatchObject({ payment: { dueDate: '2026-12-30' } });
+
+    await session.hr.createTask({
+      workerId: worker.id,
+      title: 'Inspect paddock fencing',
+      dueDate: '2026-11-22',
+      priority: 'high',
+    });
+    await expect(
+      session.hr.createTask({
+        workerId: worker.id,
+        title: ' inspect paddock  fencing ',
+        dueDate: '2026-11-22',
+        priority: 'medium',
+      })
+    ).rejects.toThrow(/duplicate/i);
+    await expect(
+      session.hr.createTask({
+        workerId: worker.id,
+        title: 'Clean calf shed',
+        dueDate: '2026-11-22',
+        priority: 'medium',
+      })
+    ).resolves.toMatchObject({ title: 'Clean calf shed' });
+
+    // 7. Animal Ownerships
+    await session.ownerships.create({
+      livestockId: cow.id,
+      ownerName: 'Martha Mukasa',
+      ownershipCategory: 'co_owned',
+      sharePercentage: 50,
+      startDate: '2026-11-01',
+    });
+    await expect(
+      session.ownerships.create({
+        livestockId: cow.id,
+        ownerName: ' martha mukasa ',
+        ownershipCategory: 'co_owned',
+        sharePercentage: 50,
+        startDate: '2026-11-01',
+      })
+    ).rejects.toThrow(/duplicate/i);
+    await expect(
+      session.ownerships.create({
+        livestockId: cow.id,
+        ownerName: 'Daniel Mukasa',
+        ownershipCategory: 'co_owned',
+        sharePercentage: 50,
+        startDate: '2026-11-01',
+      })
+    ).resolves.toMatchObject({ ownerName: 'Daniel Mukasa' });
+
+    // 8. Farm Network Accounts (same name + role and duplicate email)
+    await session.network.createAccount({
+      displayName: 'Grace Helper',
+      role: 'family_member',
+      email: 'grace@greenfields.farm',
+      accessCode: '4321',
+    });
+    await expect(
+      session.network.createAccount({
+        displayName: ' grace helper ',
+        role: 'family_member',
+        accessCode: '5678',
+      })
+    ).rejects.toThrow(/same role already exists/i);
+    await expect(
+      session.network.createAccount({
+        displayName: 'Grace Two',
+        role: 'staff_viewer',
+        email: 'GRACE@greenfields.farm',
+        accessCode: '5678',
+      })
+    ).rejects.toThrow(/already assigned/i);
+
+    raw.close();
+  });
 });

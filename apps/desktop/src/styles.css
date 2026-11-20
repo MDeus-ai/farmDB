@@ -762,7 +762,7 @@ code {
 
 .modal-card {
   width: 100%;
-  max-width: 560px;
+  max-width: min(92vw, 40rem);
   max-height: calc(100vh - var(--titlebar-h, 0px) - 40px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -774,8 +774,35 @@ code {
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);
 }
 
+.modal-card.livestock-form-modal {
+  width: min(95vw, 64rem);
+  max-width: min(95vw, 64rem);
+  min-height: min(82vh, 42rem);
+  max-height: calc(100vh - var(--titlebar-h, 0px) - 24px);
+  padding: clamp(22px, 2.4vw, 32px);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-card.livestock-form-modal form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 16px;
+}
+
+.modal-card.livestock-form-modal .form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17.5rem), 1fr));
+  gap: 18px 20px;
+}
+
+.modal-card.livestock-form-modal .modal-footer {
+  margin-top: auto;
+  padding-top: 22px;
+}
+
 .modal-card.detail-modal {
-  max-width: 640px;
+  max-width: min(94vw, 44rem);
 }
 
 .modal-header {
@@ -857,8 +884,8 @@ code {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13.5rem), 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14.5rem), 1fr));
+  gap: 14px;
 }
 
 .form-field {
@@ -1696,17 +1723,14 @@ code {
 }
 
 .modern-select-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  min-width: max(100%, 260px);
-  max-width: min(380px, calc(100vw - 32px));
-  z-index: 90;
+  position: fixed;
+  z-index: 120;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 14px 34px rgba(23, 39, 29, 0.15), 0 2px 6px rgba(23, 39, 29, 0.05);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   animation: dropdownFadeIn 0.12s ease-out;
 }
@@ -1766,6 +1790,7 @@ code {
 }
 
 .modern-select-search {
+  flex-shrink: 0;
   padding: 8px;
   border-bottom: 1px solid var(--surface-muted);
   background: #faf8f4;
@@ -1777,7 +1802,8 @@ code {
 }
 
 .modern-select-list {
-  max-height: 248px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
@@ -1828,6 +1854,15 @@ code {
 .modern-select-option-hint {
   display: block;
   font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.select-selected-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.76rem;
+  line-height: 1.38;
   color: var(--text-muted);
 }
 
@@ -2144,15 +2179,14 @@ code {
 }
 
 .modern-date-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  width: min(304px, calc(100vw - 32px));
-  z-index: 95;
+  position: fixed;
+  z-index: 120;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: 0 14px 34px rgba(23, 39, 29, 0.16), 0 2px 6px rgba(23, 39, 29, 0.05);
   animation: dropdownFadeIn 0.12s ease-out;
 }
@@ -2222,8 +2256,7 @@ code {
 }
 
 .modern-date-day {
-  aspect-ratio: 1 / 1;
-  min-height: 32px;
+  height: 36px;
   border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
@@ -3382,7 +3415,7 @@ code {
 }
 
 .modal-card-wide {
-  max-width: 720px;
+  max-width: min(94vw, 48rem);
 }
 
 .rbac-grid {

@@ -1,6 +1,6 @@
 {
   "name": "farmdb-monorepo",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "private": true,
   "description": "Offline-first farm livestock, production, medical, and financial management suite",
   "workspaces": [
@@ -14,7 +14,8 @@
     "build:desktop": "npm --workspace=@farmdb/desktop run build",
     "build:tauri": "npm --workspace=@farmdb/desktop run tauri:build",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "sync:avators": "node scripts/sync-avators.mjs"
   },
   "devDependencies": {
     "typescript": "~6.0.3",

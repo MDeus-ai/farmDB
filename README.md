@@ -1,4 +1,4 @@
-# farmDB (v1.5.4)
+# farmDB (v1.5.5)
 
 Offline-first farm livestock, genetics, milk production, veterinary, HR, ownership custody, financial ledger, and analytics suite for **Desktop (React + Vite + Tauri v2)** and **Mobile (React Native + Expo SDK 58)** — backed locally by **SQLite + Drizzle ORM**, with optional **Supabase** cloud synchronization, image replication, and role-based multi-user Farm Networks.
 
@@ -150,8 +150,8 @@ npm run typecheck
 npm run build:tauri
 ```
 Built Windows installers and signed updater artifacts are output under `apps/desktop/src-tauri/target/release/bundle/`:
-- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.4_x64-setup.exe`
-- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.4_x64_en-US.msi`
+- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.5_x64-setup.exe`
+- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.5_x64_en-US.msi`
 
 Desktop auto-updates are configured via `tauri-plugin-updater` (`apps/desktop/src-tauri/tauri.conf.json`) checking `https://github.com/MDeus-ai/farmDB/releases/latest/download/latest.json`, and can also be triggered manually from **Settings -> Advanced Settings -> Software Updates**.
 

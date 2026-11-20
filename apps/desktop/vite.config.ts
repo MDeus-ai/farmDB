@@ -12,6 +12,7 @@ export default defineConfig(() => ({
   resolve: {
     alias: {
       "@farmdb-icons": path.resolve(__dirname, "../../assets/icons"),
+      "@farmdb-avators": path.resolve(__dirname, "../../assets/avators"),
     },
   },
 

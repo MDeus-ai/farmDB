@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import {
+  ACCOUNT_ROLE_HINTS,
+  ACCOUNT_STATUS_HINTS,
   buildAllModulePermissions,
   DEFAULT_FARM_SETTINGS,
   encodeFarmNetworkJoinKey,
-  FARM_ACCOUNT_AVATARS,
   FARM_ACCOUNT_ROLES,
   FARM_ACCOUNT_STATUSES,
   FARM_MODULE_ACCESS_LEVELS,
@@ -32,25 +33,15 @@ import {
   useRotateNetworkJoinKey,
   useUpdateFarmAccount,
 } from '@farmdb/db';
+import {
+  DESKTOP_AVATAR_OPTIONS,
+  resolveDesktopAvatarSrc,
+} from '../assets/avatars';
 import { APP_ICONS } from '../assets/icons';
 import { ModernSelect } from './ModernSelect';
 
 interface FarmNetworkViewProps {
   onSignOut?: () => void;
-}
-
-function getAvatarIconSrc(avatar: FarmAccountAvatar): string {
-  switch (avatar) {
-    case 'farmerFemale':
-      return APP_ICONS.farmerFemale;
-    case 'peasant':
-      return APP_ICONS.peasant;
-    case 'staff':
-      return APP_ICONS.staff;
-    case 'farmer':
-    default:
-      return APP_ICONS.farmer;
-  }
 }
 
 export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
@@ -465,13 +456,9 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
       <div className="network-active-strip">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <img
-            src={
-              activeAccount
-                ? getAvatarIconSrc(activeAccount.avatarKey)
-                : APP_ICONS.farmer
-            }
+            src={resolveDesktopAvatarSrc(activeAccount?.avatarKey)}
             alt=""
-            style={{ width: 40, height: 40, objectFit: 'contain' }}
+            style={{ width: 40, height: 40, objectFit: 'contain', borderRadius: 8 }}
           />
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -626,9 +613,10 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
               <div key={acc.id} className="pending-request-row">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                   <img
-                    src={getAvatarIconSrc(acc.avatarKey)}
+                    src={resolveDesktopAvatarSrc(acc.avatarKey)}
                     alt=""
                     className="app-icon-md"
+                    style={{ borderRadius: 6 }}
                   />
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -698,9 +686,10 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div className="hr-avatar">
                       <img
-                        src={getAvatarIconSrc(acc.avatarKey)}
+                        src={resolveDesktopAvatarSrc(acc.avatarKey)}
                         alt=""
                         className="app-icon-md"
+                        style={{ borderRadius: 6 }}
                       />
                     </div>
                     <div>
@@ -935,12 +924,14 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   <label className="form-label">Role</label>
                   <ModernSelect
                     fullWidth
+                    showSelectedHint
                     disabled={Boolean(editingAccount?.isPrimaryAdmin)}
                     value={aRole}
                     options={FARM_ACCOUNT_ROLES.map((r) => ({
                       value: r,
                       label: formatAccountRoleLabel(r),
                       iconSrc: APP_ICONS.networking,
+                      hint: ACCOUNT_ROLE_HINTS[r],
                     }))}
                     onChange={(nextRole) => {
                       setARole(nextRole);
@@ -952,18 +943,13 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   <label className="form-label">Avatar Icon</label>
                   <ModernSelect
                     fullWidth
+                    searchable
                     value={aAvatar}
-                    options={FARM_ACCOUNT_AVATARS.map((av) => ({
-                      value: av,
-                      label:
-                        av === 'farmerFemale'
-                          ? 'Farmer Female'
-                          : av === 'peasant'
-                            ? 'Partner / Owner'
-                            : av === 'staff'
-                              ? 'Team Icon'
-                              : 'Farmer Classic',
-                      iconSrc: getAvatarIconSrc(av),
+                    options={DESKTOP_AVATAR_OPTIONS.map((av) => ({
+                      value: av.value,
+                      label: av.label,
+                      iconSrc: av.iconSrc,
+                      hint: av.isFolderAvator ? 'Farm Avatar Library' : 'Built-in Avatar',
                     }))}
                     onChange={setAAvatar}
                   />
@@ -1024,12 +1010,14 @@ export function FarmNetworkView({ onSignOut }: FarmNetworkViewProps) {
                   <label className="form-label">Account Status</label>
                   <ModernSelect
                     fullWidth
+                    showSelectedHint
                     disabled={Boolean(editingAccount?.isPrimaryAdmin) || approvingMode}
                     value={aStatus}
                     options={FARM_ACCOUNT_STATUSES.map((st) => ({
                       value: st,
                       label: formatAccountStatusLabel(st),
                       iconSrc: APP_ICONS.checkmark,
+                      hint: ACCOUNT_STATUS_HINTS[st],
                     }))}
                     onChange={setAStatus}
                   />
