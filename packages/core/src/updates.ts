@@ -1,14 +1,12 @@
-export const FARMDB_APP_VERSION = '1.5.5';
+export const FARMDB_APP_VERSION = '1.5.6';
 export const FARMDB_GITHUB_REPO = 'MDeus-ai/farmDB';
 export const FARMDB_GITHUB_LATEST_RELEASE_API = `https://api.github.com/repos/${FARMDB_GITHUB_REPO}/releases/latest`;
 export const FARMDB_GITHUB_RELEASES_PAGE = `https://github.com/${FARMDB_GITHUB_REPO}/releases`;
 
 export const CURRENT_RELEASE_HIGHLIGHTS: readonly string[] = [
-  'Instant write-triggered Supabase cloud sync plus graceful Desktop exit & Mobile background flushes ensure records added before closing PC sync reliably to phones.',
-  'Added a validated, species-specific Breed Dictionary (including African breeds such as Ankole-Watusi, Boran, Mubende, Boer, Dorper, Red Maasai, Kuroiler, and Kienyeji) with searchable pickers.',
-  'Added duplicate-entry detection and prevention across Livestock, Milk Production, Medical History, Financial Ledger, Alerts & Notes, Human Resources, Ownerships, and Accounts.',
-  'Dynamically loads all icons placed inside assets/avators into Desktop & Mobile profile pickers, replaced goat/sheep/duck/chicken icons with head portraits, and removed unused icons.',
-  'Added concise hover explanations on Desktop and compact captions on Mobile across Settings and key form dropdowns, widened Desktop Add Livestock for Large/X-Large text, and removed Herd Registry summary stats.',
+  'Redesigned Desktop sidebar & Mobile drawer navigation count badges into uniform rounded-square tabular-monospace chips with crisp zero/active contrast and straight vertical alignment.',
+  'Portaled Desktop ModernSelect dropdowns (always opening downward) and ModernDatePicker (trigger-matched width) to prevent modal clipping, with clean hover tooltips on Desktop.',
+  'Instant write-triggered Supabase sync plus graceful Desktop exit & Mobile background flushes, validated species Breed Dictionary (with African breeds), duplicate guards, and dynamic assets/avators icons.',
 ];
 
 export type UpdateSource = 'tauri_updater' | 'expo_ota' | 'github_release';

@@ -6,6 +6,14 @@
 
 # farmDB Changelog
 
+## [1.5.6] - 2026-11-20
+
+Redesigned sidebar and drawer navigation count badges with aligned tabular monospace chips alongside the Desktop dropdown/calendar polish.
+
+### Fixes & Improvements
+- **Aligned Sidebar & Drawer Count Badges**: Replaced variable-width pill counters with uniform rounded-square tabular-monospace chips (`JetBrains Mono`, fixed minimum width, dedicated zero/active states) so Desktop sidebar and Mobile drawer numbers align cleanly down the right column.
+- **Desktop Dropdown, Calendar & Modal Polish**: Expanded the Desktop **Add Livestock** window, removed visible sub-text below Desktop dropdowns in favor of hover summaries, portaled `ModernSelect` downward without clipping, and widened `ModernDatePicker` to match its trigger width.
+
 ## [1.5.5] - 2026-11-20
 
 Added species-validated livestock breeds (including African breeds), duplicate-entry detection across all farm modules, dynamic `assets/avators` loading, head-portrait species icons, hover/mobile option explanations, larger Desktop Add Livestock modal sizing, Herd Registry cleanup, and exit/write-triggered cloud sync flushing so PC edits reach Mobile even if closed quickly.
