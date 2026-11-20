@@ -299,14 +299,47 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex: 1;
 }
 
 .nav-badge {
-  font-size: 0.75rem;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  color: #eef5f0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 28px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 7px;
+  border: 1px solid rgba(183, 228, 199, 0.24);
+  background: rgba(183, 228, 199, 0.14);
+  color: #e2f5e9;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+
+.nav-badge.is-zero {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(215, 227, 219, 0.56);
+}
+
+.nav-item.active .nav-badge {
+  border-color: rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+.nav-item.active .nav-badge.is-zero {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .sidebar-footer {
@@ -4991,9 +5024,9 @@ code {
    ============================================================ */
 
 .nav-badge-update {
-  background: #2d6a4f;
+  background: #40916c;
   color: #ffffff;
-  border-color: #2d6a4f;
+  border-color: #74c69d;
 }
 
 .update-notification-banner {

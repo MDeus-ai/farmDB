@@ -1196,8 +1196,21 @@ function MobileShell({ sqlController }: { sqlController: ExpoSqlController }) {
                           <View style={styles.drawerSecondaryDot} />
                         ) : null}
                         {badgeCount !== null ? (
-                          <View style={styles.drawerBadge}>
-                            <Text style={[styles.drawerBadgeText, { fontSize: ui.font(11) }]}>
+                          <View
+                            style={[
+                              styles.drawerBadge,
+                              badgeCount === 0 && styles.drawerBadgeZero,
+                              isActive && styles.drawerBadgeActive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.drawerBadgeText,
+                                badgeCount === 0 && styles.drawerBadgeTextZero,
+                                isActive && styles.drawerBadgeTextActive,
+                                { fontSize: ui.font(11) },
+                              ]}
+                            >
                               {badgeCount}
                             </Text>
                           </View>
@@ -1834,15 +1847,37 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(183, 228, 199, 0.45)',
   },
   drawerBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+    minWidth: 28,
+    height: 22,
+    paddingHorizontal: 6,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: 'rgba(183, 228, 199, 0.24)',
+    backgroundColor: 'rgba(183, 228, 199, 0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerBadgeZero: {
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  drawerBadgeActive: {
+    borderColor: 'rgba(255, 255, 255, 0.32)',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   drawerBadgeText: {
     fontSize: 11,
-    fontFamily: FARMDB_FONTS.semibold,
-    color: '#eef5f0',
+    fontFamily: FARMDB_FONTS.monoBold,
+    fontVariant: ['tabular-nums'],
+    color: '#e2f5e9',
+    textAlign: 'center',
+    includeFontPadding: false,
+  },
+  drawerBadgeTextZero: {
+    color: 'rgba(215, 227, 219, 0.56)',
+  },
+  drawerBadgeTextActive: {
+    color: '#ffffff',
   },
   drawerFooter: {
     borderTopWidth: 1,

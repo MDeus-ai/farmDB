@@ -697,7 +697,9 @@ function DesktopShell({
                     <span>{section.label}</span>
                   </span>
                   {badgeCount !== null && (
-                    <span className="nav-badge">{badgeCount}</span>
+                    <span className={`nav-badge ${badgeCount === 0 ? 'is-zero' : ''}`}>
+                      {badgeCount}
+                    </span>
                   )}
                 </button>
               );
