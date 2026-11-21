@@ -1,4 +1,4 @@
-# farmDB (v1.5.7)
+# farmDB (v1.5.8)
 
 Offline-first farm livestock, genetics, milk production, veterinary, HR, ownership custody, financial ledger, and analytics suite for **Desktop (React + Vite + Tauri v2)** and **Mobile (React Native + Expo SDK 58)** — backed locally by **SQLite + Drizzle ORM**, with optional **Supabase** cloud synchronization, image replication, and role-based multi-user Farm Networks.
 
@@ -10,13 +10,13 @@ Offline-first farm livestock, genetics, milk production, veterinary, HR, ownersh
 Signed Windows installers and auto-updater packages are built and published on every `farmDB-v*` release tag:
 - **Latest Release Page:** https://github.com/MDeus-ai/farmDB/releases/latest
 - **All Releases:** https://github.com/MDeus-ai/farmDB/releases
-- **NSIS Setup Installer (`.exe`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.7_x64-setup.exe`
-- **MSI Installer (`.msi`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.7_x64_en-US.msi`
+- **NSIS Setup Installer (`.exe`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.8_x64-setup.exe`
+- **MSI Installer (`.msi`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.8_x64_en-US.msi`
 - **Auto-Updater Manifest (`latest.json`):** https://github.com/MDeus-ai/farmDB/releases/latest/download/latest.json
 
 ### Android APK & Over-the-Air (OTA) Updates (Expo EAS)
-- **Android APK Builds (Expo EAS Dashboard, Project `a580457d-475d-463e-b3fb-7faaf8b8964b`):** https://expo.dev/projects/farmdb-monorepo/builds  
-  *(Open the latest Android `production` or `preview` build on EAS to download the `.apk` or scan its QR install link.)*
+- **Direct Android APK Download (Permanent GitHub Release link — base `v1.5.0`, receives all `1.5.x` OTA updates):** https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB-android.apk
+- **Expo EAS Builds Dashboard (`@zeus_doreens/farmdb-monorepo`):** https://expo.dev/accounts/zeus_doreens/projects/farmdb-monorepo/builds
 - **Automatic OTA Updates (`production` branch):** Once the base `1.5.0` Android APK is installed, new JS/UI releases roll out automatically via Expo Updates (`https://u.expo.dev/a580457d-475d-463e-b3fb-7faaf8b8964b`) or **Settings -> Advanced Settings -> Software Updates**.
 
 ---
@@ -188,8 +188,8 @@ npm run typecheck
 npm run build:tauri
 ```
 Built Windows installers and signed updater artifacts are output under `apps/desktop/src-tauri/target/release/bundle/`:
-- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.7_x64-setup.exe`
-- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.7_x64_en-US.msi`
+- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.8_x64-setup.exe`
+- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.8_x64_en-US.msi`
 
 Desktop auto-updates are configured via `tauri-plugin-updater` (`apps/desktop/src-tauri/tauri.conf.json`) checking `https://github.com/MDeus-ai/farmDB/releases/latest/download/latest.json`, and can also be triggered manually from **Settings -> Advanced Settings -> Software Updates**.
 
@@ -214,7 +214,7 @@ eas update --branch production --message "Release update"
 ### 5. Automated Version Bump & CI/CD Release Pipeline (`scripts/release-bump.mjs` + `.github/workflows/release.yml`)
 Use `npm run version:bump` before committing manually (updates root/workspace package manifests, `Cargo.toml`/`Cargo.lock`, `tauri.conf.json`, `updates.ts`, `README.md`, and `CHANGELOG.md` while keeping `apps/mobile/app.json` at `1.5.0`), or run `npm run release:ship -- --message "<summary>" --notes "<bullet>"` to bump, verify, commit, tag `farmDB-vX.Y.Z`, and push automatically.
 
-Pushing a tag such as `farmDB-v1.5.7` (or `v*`) or triggering `workflow_dispatch` runs unit tests and typechecks, builds & signs Windows Desktop installers (`tauri-apps/tauri-action@v0`) with `latest.json` uploaded to the GitHub Release, and publishes an Expo OTA update (`eas-cli update --branch production`) when secrets are configured:
+Pushing a tag such as `farmDB-v1.5.7` (or `v*`) or triggering `workflow_dispatch` runs unit tests and typechecks, builds & signs Windows Desktop installers (`tauri-apps/tauri-action@v0`) with `latest.json` uploaded to the GitHub Release, publishes an Expo OTA update (`eas-cli update --branch production`), and automatically attaches `farmDB-android.apk` (pulled from the latest finished Expo EAS Android build or carried forward from the previous GitHub Release) to the GitHub Release when secrets are configured:
 - **`TAURI_SIGNING_PRIVATE_KEY`** (GitHub Repository Secret — required for signed Desktop updater releases)
 - **`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`** (optional — only needed if your signing key uses a passphrase)
 - **`EXPO_TOKEN`** (optional GitHub Repository Secret — enables automatic `eas update` OTA pushes from GitHub Actions)

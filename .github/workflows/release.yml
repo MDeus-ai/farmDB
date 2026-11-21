@@ -202,3 +202,102 @@ jobs:
         if: steps.check_token.outputs.configured == 'true'
         working-directory: apps/mobile
         run: npx --yes eas-cli update --branch production --non-interactive --message "Release ${{ github.ref_name }}"
+
+  attach-android-apk:
+    name: Attach Android APK to GitHub Release
+    needs: [release-desktop-windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch latest Android APK (EAS or previous GitHub Release) and upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_OUT="/tmp/farmDB-android.apk"
+          rm -f "$APK_OUT"
+
+          is_valid_apk() {
+            [ -f "$APK_OUT" ] && node -e '
+              const fs = require("fs");
+              const p = process.argv[1];
+              const st = fs.statSync(p);
+              if (st.size < 1000000) process.exit(1);
+              const fd = fs.openSync(p, "r");
+              const b = Buffer.alloc(2);
+              fs.readSync(fd, b, 0, 2, 0);
+              fs.closeSync(fd);
+              if (b[0] !== 0x50 || b[1] !== 0x4b) process.exit(1);
+            ' "$APK_OUT"
+          }
+
+          if [ -n "${EXPO_TOKEN:-}" ]; then
+            RAW_JSON=$(cd apps/mobile && npx --yes eas-cli build:list --platform android --profile production --status finished --limit 5 --json --non-interactive 2>/dev/null || true)
+            if [ -z "$RAW_JSON" ] || ! echo "$RAW_JSON" | grep -q '\['; then
+              RAW_JSON=$(cd apps/mobile && npx --yes eas-cli build:list --platform android --status finished --limit 5 --json --non-interactive 2>/dev/null || true)
+            fi
+            APK_URL=$(EAS_RAW="$RAW_JSON" node -e '
+              const raw = process.env.EAS_RAW || "";
+              const idx = raw.indexOf("[");
+              if (idx === -1) process.exit(0);
+              let list = [];
+              try { list = JSON.parse(raw.slice(idx)); } catch { process.exit(0); }
+              const now = Date.now();
+              const found = list.find((b) => {
+                const u = b?.artifacts?.applicationArchiveUrl || b?.artifacts?.buildUrl || "";
+                if (!/\.apk(\?.*)?$/i.test(u)) return false;
+                if (b?.expirationDate && Date.parse(b.expirationDate) <= now) return false;
+                return true;
+              });
+              if (found) {
+                process.stdout.write(found.artifacts.applicationArchiveUrl || found.artifacts.buildUrl || "");
+              }
+            ' || true)
+
+            if [ -n "$APK_URL" ]; then
+              echo "Downloading Android APK from Expo EAS: $APK_URL"
+              if curl -fSL --retry 3 -o "$APK_OUT" "$APK_URL" && is_valid_apk; then
+                echo "Verified valid Android APK from Expo EAS."
+              else
+                rm -f "$APK_OUT"
+              fi
+            fi
+          fi
+
+          if ! is_valid_apk; then
+            echo "Checking previous GitHub Releases for cached farmDB-android.apk..."
+            RELEASES_JSON=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=25" 2>/dev/null || echo "[]")
+            PREV_TAG=$(REL_JSON="$RELEASES_JSON" CUR_TAG="${GITHUB_REF_NAME}" node -e '
+              let list = [];
+              try { list = JSON.parse(process.env.REL_JSON || "[]"); } catch { process.exit(0); }
+              const cur = process.env.CUR_TAG || "";
+              const match = list.find(
+                (r) => r && r.tag_name && r.tag_name !== cur && Array.isArray(r.assets) && r.assets.some((a) => a && a.name === "farmDB-android.apk")
+              );
+              if (match) process.stdout.write(match.tag_name);
+            ' || true)
+
+            if [ -n "$PREV_TAG" ]; then
+              echo "Downloading farmDB-android.apk from previous release $PREV_TAG..."
+              if gh release download "$PREV_TAG" --pattern "farmDB-android.apk" --output "$APK_OUT" && is_valid_apk; then
+                echo "Verified valid farmDB-android.apk carried forward from $PREV_TAG."
+              else
+                rm -f "$APK_OUT"
+              fi
+            fi
+          fi
+
+          if is_valid_apk; then
+            gh release upload "${GITHUB_REF_NAME}" "$APK_OUT" --clobber
+            echo "Uploaded farmDB-android.apk to release ${GITHUB_REF_NAME}."
+          else
+            echo "::warning::No non-expired EAS Android APK or previous farmDB-android.apk asset found; skipping APK attachment."
+          fi

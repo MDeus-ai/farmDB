@@ -6,6 +6,13 @@
 
 # farmDB Changelog
 
+## [1.5.8] - 2026-11-21
+
+attach Android APK to GitHub Releases
+
+### Fixes & Improvements
+- Automatically attach farmDB-android.apk to GitHub Releases from Expo EAS
+
 ## [1.5.7] - 2026-11-21
 
 Fixed Desktop window close button by granting core:window:allow-destroy and streamlining onCloseRequested sync flush.
