@@ -374,20 +374,17 @@ function DesktopShell({
     let unlisten: (() => void) | undefined;
 
     void getCurrentWindow()
-      .onCloseRequested(async (event) => {
+      .onCloseRequested(async () => {
         if (closingWindowRef.current) return;
         const needsFlush =
           hasUnsyncedChangesRef.current || cloudSyncMut.isPending;
         if (!needsFlush) return;
-        event.preventDefault();
         closingWindowRef.current = true;
         setSyncFeedback('Syncing before close...');
         try {
           await flushPendingSync(6000);
         } catch {
           // Proceed closing safely even if offline or network times out.
-        } finally {
-          void getCurrentWindow().destroy().catch(() => {});
         }
       })
       .then((fn) => {

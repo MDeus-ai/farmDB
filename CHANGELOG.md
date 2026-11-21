@@ -6,6 +6,14 @@
 
 # farmDB Changelog
 
+## [1.5.7] - 2026-11-21
+
+Fixed Desktop window close button by granting core:window:allow-destroy and streamlining onCloseRequested sync flush.
+
+### Fixes & Improvements
+- Fixed Desktop window close button by granting core:window:allow-destroy and streamlining onCloseRequested sync flush.
+- Added automated scripts/release-bump.mjs (npm run version:bump and npm run release:ship) to bump versions and trigger CI releases.
+
 ## [1.5.6] - 2026-11-20
 
 Redesigned sidebar and drawer navigation count badges with aligned tabular monospace chips alongside the Desktop dropdown/calendar polish.

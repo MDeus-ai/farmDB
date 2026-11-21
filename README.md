@@ -1,13 +1,32 @@
-# farmDB (v1.5.6)
+# farmDB (v1.5.7)
 
 Offline-first farm livestock, genetics, milk production, veterinary, HR, ownership custody, financial ledger, and analytics suite for **Desktop (React + Vite + Tauri v2)** and **Mobile (React Native + Expo SDK 58)** — backed locally by **SQLite + Drizzle ORM**, with optional **Supabase** cloud synchronization, image replication, and role-based multi-user Farm Networks.
+
+---
+
+## Downloads
+
+### Windows Desktop (GitHub Releases)
+Signed Windows installers and auto-updater packages are built and published on every `farmDB-v*` release tag:
+- **Latest Release Page:** https://github.com/MDeus-ai/farmDB/releases/latest
+- **All Releases:** https://github.com/MDeus-ai/farmDB/releases
+- **NSIS Setup Installer (`.exe`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.7_x64-setup.exe`
+- **MSI Installer (`.msi`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.7_x64_en-US.msi`
+- **Auto-Updater Manifest (`latest.json`):** https://github.com/MDeus-ai/farmDB/releases/latest/download/latest.json
+
+### Android APK & Over-the-Air (OTA) Updates (Expo EAS)
+- **Android APK Builds (Expo EAS Dashboard, Project `a580457d-475d-463e-b3fb-7faaf8b8964b`):** https://expo.dev/projects/farmdb-monorepo/builds  
+  *(Open the latest Android `production` or `preview` build on EAS to download the `.apk` or scan its QR install link.)*
+- **Automatic OTA Updates (`production` branch):** Once the base `1.5.0` Android APK is installed, new JS/UI releases roll out automatically via Expo Updates (`https://u.expo.dev/a580457d-475d-463e-b3fb-7faaf8b8964b`) or **Settings -> Advanced Settings -> Software Updates**.
 
 ---
 
 ## Key Capabilities
 
 ### Herd & Genetics
-- **Herd Registry (`livestock`)**: Register cows, bulls, goats, sheep, ducks, and other species with normalized unique ear tags, explicit **Sex (`female` / `male`)** tracking, dedicated **Cow vs. Bull** labels and custom icons (`cow.png` / `bull.png` + `female.png` / `gender.png`), automatic age calculation, and strict input validation.
+- **Herd Registry (`livestock`)**: Register cows, bulls, goats, sheep, ducks, and other species with normalized unique ear tags, explicit **Sex (`female` / `male`)** tracking, dedicated **Cow vs. Bull** labels and head-portrait species icons (`cow.png`, `bull.png`, `goat.png`, `sheep.png`, `duck.png`, `chicken.png`), automatic age calculation, and a clean registry layout without redundant summary stat clutter.
+- **Validated Breed Dictionary (`packages/core/src/breeds.ts`)**: Comprehensive, species-specific breed validation covering African breeds (`Ankole-Watusi (Ankole Longhorn)`, `Boran`, `Small East African Zebu`, `Mubende`, `Boer`, `Small East African Goat`, `Dorper`, `Red Maasai`, `Muscovy`, `African Indigenous / Local Duck`, `Kuroiler`, `Kienyeji (Indigenous Village Chicken)`, etc.) alongside international breeds, alias canonicalization, searchable Desktop/Mobile pickers, and legacy update tolerance (`currentBreed`).
+- **Duplicate Entry Detection & Prevention**: Automatic repository-level duplicate blocking across Livestock (matching species, sex, name & date of birth), Milk Production, Medical History, Financial Ledger, Alerts & Farm Notes, HR Workers / Payments / Tasks, Animal Ownerships, and Farm Accounts.
 - **Optimized Photos & Lightbox Viewer**: Uploaded animal images are resized and compressed client-side into lightweight WebP/JPEG data URLs (`~480px`, `~15–35 KB`) so photos persist offline in SQLite and sync cleanly across Supabase Cloud DB and devices. Clicking any photo opens an enlarged lightbox viewer.
 - **Family Tree & Bloodline Lineage**:
   - Dual ancestor views: rich **Pedigree Tree** cards and compact **Simplified Graph** mode.
@@ -24,15 +43,20 @@ Offline-first farm livestock, genetics, milk production, veterinary, HR, ownersh
 - **Farm Statistics & Livestock Charts**: Interactive KPIs and charts including **Sex (`Female` / `Male`)** and **Cow vs. Bull** filters and cohort ratios, Milk Yield Velocity, Herd Status by Species, Top Producers, Age Demographics Donut, Health Conditions, Breed Distribution, and Species Performance Matrix.
 
 ### Accounts, RBAC Privileges & Cloud Sync
-- **Account Separation & Auth Flow**:
-  - Zero auto-created default Admin profile: users explicitly create an **Admin Account** (labeled with their chosen Farm Name + `Admin` tag) or a standard **User Account** with PIN/password verification.
-  - Enforces a clean **Sign Out** session boundary before signing into or creating another account; standalone Sign Up creates local accounts while **Join Network** lives inside the Farm Network screen.
-  - Strict credential isolation: Administrators manage permissions and can approve, decline, suspend, or delete accounts, but cannot log into connected users' accounts without their credentials.
+- **Account Separation & Device-Local Sign-In Isolation**:
+  - Zero auto-created default Admin profile: users explicitly create an **Admin Account** (labeled with their customizable **Admin Display Name** + `Admin` badge) or a standard **User Account** with PIN/password verification.
+  - Enforces device-local Sign-In isolation (`__local_device_account_ids`): joining a Farm Network never exposes or signs into remote Admin accounts from another device.
+  - Self-service **Leave Network** for joined or pending members cleanly reverts a device back to standalone offline mode.
   - **Delete Account** for both Admin and User profiles (inside Farm Network or directly from the Sign-In Portal with confirmation, PIN protection, and automatic Primary Admin promotion), plus **Change Password / PIN**.
+- **Dynamic Profile Avatars (`assets/avators/` & `scripts/sync-avators.mjs`)**: Every icon image placed in `assets/avators/` is synced into Mobile assets and dynamically exposed in both Desktop and Mobile profile avatar pickers.
 - **Farm Network & Repository RBAC (`packages/db/src/rbac.ts`)**:
   - **Admin Network Join Key**: Copy and share Short Codes (`FARM-XXXX` same device) or Full Cloud Keys (`FDB1:...` across devices), or click **Generate New Key** to revoke old codes with remote pre-validation.
   - **Join Network & Real-Time Approval Flow**: Any signed-in account joins via Key inside Farm Network, automatically notifying Admins (OS toast, top amber **Pending Network Join Request** banner, and live Farm Network count badge) while the requester's Pending Approval view polls every 20 seconds for approval.
   - Granular per-module access levels (**Hidden**, **View Only**, **View & Edit**, **Full Access**) assigned via **Assign Privileges & Accept** and enforced at the repository layer (`wrapSessionWithRbac`) across all modules including `family_tree` lineage fields.
+- **Write-Triggered & Close-Flush Cloud Sync**:
+  - Local database edits trigger a `2.5s` debounced Supabase sync automatically (tracking mid-sync writes via `writeVersionRef` so queued changes aren't dropped).
+  - Desktop flushes pending sync on window close (`onCloseRequested` backed by `core:window:allow-destroy`) and pulls on window focus/visibility; Mobile flushes when backgrounded (`AppState`) and pulls on resume.
+  - Top-bar **Refresh** button reloads settings, themes, accounts, cloud data, and records immediately across both apps.
 - **Settings, Advanced Settings & Sync Logs (`Settings` | `Advanced Settings` | `Sync Logs`)**:
   - **Settings**: Font scaling (`Small` -> `Extra Large`), UI element size / spacing density (tuned for Mobile Large & Extra-Large readability), **Compact Icon UI** mode, currency & unit preferences, auto-accounting toggles, alert cadence, delete confirmations, plus Android keyboard-aware form scrolling and tappable phone/email links across HR, Ownerships, and Farm Network.
   - **Advanced Settings**:
@@ -41,8 +65,11 @@ Offline-first farm livestock, genetics, milk production, veterinary, HR, ownersh
     - **Software Updates / App Updates**: Automatic update checks with in-app **Update Available** banners, OS notifications, interactive release-notes modals listing version number and fixes, signed Desktop installs, and Mobile Expo EAS OTA updates.
     - Admin Supabase credentials persist inside the Admin account and synced snapshots so logging into or recovering an Admin account on another device restores data, settings, and optimized animal photos automatically.
   - **Sync Logs (Admin Only)**: Full audit log of connection tests, pushes, pulls, and bidirectional sync outcomes.
-- **Export, Backup & Restore**: Portable RFC-4180 CSV spreadsheet bundles, full JSON snapshots (with optimized images, HR, ownerships, accounts, and settings), and raw single-file `farmdb.db` backup/restore with SQLite header validation and automatic re-migration.
-- **In-App Guide & Hover Hints**: Synchronized 14-chapter walkthrough (`packages/core/src/tutorial.ts`) tailored to Admin vs. User accounts, custom Desktop frameless titlebar, and themed green **Farm Hover Hints** (`FarmHoverHintOverlay`).
+- **Desktop & Mobile UI Refinements**:
+  - Synchronized 14-chapter in-app App Guide (`packages/core/src/tutorial.ts`).
+  - Enlarged Desktop **Add Livestock** modal (`livestock-form-modal`) for Large/Extra-Large text scaling.
+  - Desktop **ModernSelect** and **ModernDatePicker** portal directly to `document.body` so menus always open downward without modal clipping, calendars match the trigger width, Desktop dropdowns use crisp **Farm Hover Hints** (`FarmHoverHintOverlay` + `data-farm-hint`) + quick-preview eyes instead of sub-label text clutter, and Mobile dropdowns keep compact inline option captions.
+  - Aligned rounded-square tabular-monospace navigation count badges (`JetBrains Mono`, `tabular-nums`, distinct zero/active states) across Desktop sidebar and Mobile drawer.
 
 ---
 
@@ -50,18 +77,22 @@ Offline-first farm livestock, genetics, milk production, veterinary, HR, ownersh
 
 ```text
 farmDB/
-├── assets/icons/                 # Central 59-icon PNG library (field.png software icon + UI/species/sex icons)
+├── assets/
+│   ├── icons/                    # Shared UI/species PNG icons (unused icons pruned; non-UI open-box.png preserved)
+│   └── avators/                  # Drop-in user profile avatar PNG library synced dynamically to Desktop & Mobile
 ├── scripts/
+│   ├── sync-avators.mjs          # Syncs assets/avators -> apps/mobile/assets/avators + avators.generated.ts
+│   ├── release-bump.mjs          # Automated version bumper & one-command release helper (version:bump / release:ship)
 │   └── sync-app-icons.ps1        # Generates Tauri (.ico/.icns/Store PNGs) & Expo adaptive icons + mirrors to Mobile
 ├── packages/
-│   ├── core/                     # @farmdb/core: domain types, validation, lineage, analytics, RBAC helpers, export, tutorial
+│   ├── core/                     # @farmdb/core: domain types, breeds, optionHints, validation, lineage, analytics, RBAC, export, tutorial
 │   │   ├── src/
-│   │   └── tests/                # Vitest unit tests (10 files)
-│   └── db/                       # @farmdb/db: Drizzle ORM schema, SQLite migrations, repositories, RBAC wrapper, React hooks
+│   │   └── tests/                # Vitest unit tests (12 files, 46 tests)
+│   └── db/                       # @farmdb/db: Drizzle ORM schema, SQLite migrations, duplicate-guarded repositories, RBAC, sync worker hooks
 │       ├── src/
-│       └── tests/                # Vitest + node:sqlite integration tests
+│       └── tests/                # Vitest + node:sqlite integration tests (14 tests)
 └── apps/
-    ├── desktop/                  # @farmdb/desktop: React + Vite + Tauri v2 app (Rust SQLite storage protection + native dialogs)
+    ├── desktop/                  # @farmdb/desktop: React + Vite + Tauri v2 app (Rust SQLite storage protection + custom titlebar + native dialogs)
     │   ├── src/
     │   └── src-tauri/
     └── mobile/                   # @farmdb/mobile: React Native + Expo SDK 58 + expo-sqlite + Reanimated/Chart Kit
@@ -100,29 +131,36 @@ Run all commands from the monorepo root (`d:\PROJECTS (ROOT)\PROJECTS\SOFTWARE\f
 # 1. Install workspace dependencies
 npm install
 
-# 2. Run all unit & SQLite integration tests (@farmdb/core + @farmdb/db)
+# 2. Sync assets/avators icons into Mobile bundle metadata
+npm run sync:avators
+
+# 3. Run all unit & SQLite integration tests (@farmdb/core + @farmdb/db)
 npm test
 
-# 3. Typecheck all 4 workspaces
+# 4. Typecheck all 4 workspaces
 npm run typecheck
 
-# 4. Run Vite web preview (localStorage fallback at http://localhost:1420)
+# 5. Run Vite web preview (localStorage fallback at http://localhost:1420)
 npm run dev:desktop
 
-# 5. Run Desktop Tauri v2 app with native SQLite + Rust backend
+# 6. Run Desktop Tauri v2 app with native SQLite + Rust backend
 npm run dev:tauri
 
-# 6. Build Desktop frontend production bundle (tsc && vite build)
+# 7. Build Desktop frontend production bundle (tsc && vite build)
 npm run build:desktop
 
-# 7. Verify Rust Tauri crate compilation
+# 8. Verify Rust Tauri crate compilation
 cargo check --manifest-path "apps/desktop/src-tauri/Cargo.toml"
 
-# 8. Start Expo Metro server for Mobile development
+# 9. Start Expo Metro server for Mobile development
 npm run dev:mobile
 
-# 9. Sync native icons from central assets/icons/field.png
+# 10. Sync native app icons from central assets/icons/field.png
 powershell -ExecutionPolicy Bypass -File scripts/sync-app-icons.ps1 -SourceIcon "assets/icons/field.png"
+
+# 11. Bump app version across all release manifests before committing (or --ship to auto-verify, tag & push)
+npm run version:bump -- --notes "Summary of changes"
+npm run release:ship -- --message "short summary" --notes "Summary of changes"
 ```
 
 ---
@@ -150,13 +188,13 @@ npm run typecheck
 npm run build:tauri
 ```
 Built Windows installers and signed updater artifacts are output under `apps/desktop/src-tauri/target/release/bundle/`:
-- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.6_x64-setup.exe`
-- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.6_x64_en-US.msi`
+- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.7_x64-setup.exe`
+- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.7_x64_en-US.msi`
 
 Desktop auto-updates are configured via `tauri-plugin-updater` (`apps/desktop/src-tauri/tauri.conf.json`) checking `https://github.com/MDeus-ai/farmDB/releases/latest/download/latest.json`, and can also be triggered manually from **Settings -> Advanced Settings -> Software Updates**.
 
 ### 4. Mobile Production Build & OTA Updates (Android `.apk`/`.aab`, iOS & `expo-updates`)
-`apps/mobile/app.json` and `apps/mobile/eas.json` are pre-configured for EAS project `a580457d-475d-463e-b3fb-7faaf8b8964b` (`com.zeus_doreens.farmdb` on Android, `com.zeusdoreens.farmdb` on iOS) with `expo-updates` runtime versioning (`appVersion`) and channels (`development`, `preview`, `production`).
+`apps/mobile/app.json` and `apps/mobile/eas.json` are pre-configured for EAS project `a580457d-475d-463e-b3fb-7faaf8b8964b` (`com.zeus_doreens.farmdb` on Android, `com.zeusdoreens.farmdb` on iOS) with `expo-updates` runtime versioning (`appVersion`, keeping `apps/mobile/app.json` `"version": "1.5.0"` for binary compatibility) and channels (`development`, `preview`, `production`).
 ```bash
 # Verify Android JS/Hermes bundle locally
 cd apps/mobile
@@ -173,8 +211,10 @@ eas build --platform ios --profile production
 eas update --branch production --message "Release update"
 ```
 
-### 5. Automated CI/CD Release Pipeline (`.github/workflows/release.yml`)
-Pushing a tag such as `farmDB-v1.5` (or `v*`) or triggering `workflow_dispatch` runs unit tests and typechecks, builds & signs Windows Desktop installers (`tauri-apps/tauri-action@v0`) with `latest.json` uploaded to the GitHub Release, and publishes an Expo OTA update (`eas-cli update --branch production`) when secrets are configured:
+### 5. Automated Version Bump & CI/CD Release Pipeline (`scripts/release-bump.mjs` + `.github/workflows/release.yml`)
+Use `npm run version:bump` before committing manually (updates root/workspace package manifests, `Cargo.toml`/`Cargo.lock`, `tauri.conf.json`, `updates.ts`, `README.md`, and `CHANGELOG.md` while keeping `apps/mobile/app.json` at `1.5.0`), or run `npm run release:ship -- --message "<summary>" --notes "<bullet>"` to bump, verify, commit, tag `farmDB-vX.Y.Z`, and push automatically.
+
+Pushing a tag such as `farmDB-v1.5.7` (or `v*`) or triggering `workflow_dispatch` runs unit tests and typechecks, builds & signs Windows Desktop installers (`tauri-apps/tauri-action@v0`) with `latest.json` uploaded to the GitHub Release, and publishes an Expo OTA update (`eas-cli update --branch production`) when secrets are configured:
 - **`TAURI_SIGNING_PRIVATE_KEY`** (GitHub Repository Secret — required for signed Desktop updater releases)
 - **`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`** (optional — only needed if your signing key uses a passphrase)
 - **`EXPO_TOKEN`** (optional GitHub Repository Secret — enables automatic `eas update` OTA pushes from GitHub Actions)

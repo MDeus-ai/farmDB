@@ -200,7 +200,9 @@ export function DesktopTitlebar({
 
   const handleClose = useCallback(() => {
     if (!isTauri) return;
-    void getCurrentWindow().close().catch(() => {});
+    void getCurrentWindow()
+      .close()
+      .catch(() => getCurrentWindow().destroy().catch(() => {}));
   }, [isTauri]);
 
   const handleDragMouseDown = useCallback(
