@@ -1,4 +1,4 @@
-# farmDB (v1.5.8)
+# farmDB (v1.5.9)
 
 Offline-first farm livestock, genetics, milk production, veterinary, HR, ownership custody, financial ledger, and analytics suite for **Desktop (React + Vite + Tauri v2)** and **Mobile (React Native + Expo SDK 58)** — backed locally by **SQLite + Drizzle ORM**, with optional **Supabase** cloud synchronization, image replication, and role-based multi-user Farm Networks.
 
@@ -10,8 +10,8 @@ Offline-first farm livestock, genetics, milk production, veterinary, HR, ownersh
 Signed Windows installers and auto-updater packages are built and published on every `farmDB-v*` release tag:
 - **Latest Release Page:** https://github.com/MDeus-ai/farmDB/releases/latest
 - **All Releases:** https://github.com/MDeus-ai/farmDB/releases
-- **NSIS Setup Installer (`.exe`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.8_x64-setup.exe`
-- **MSI Installer (`.msi`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.8_x64_en-US.msi`
+- **NSIS Setup Installer (`.exe`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.9_x64-setup.exe`
+- **MSI Installer (`.msi`):** `https://github.com/MDeus-ai/farmDB/releases/latest/download/farmDB_1.5.9_x64_en-US.msi`
 - **Auto-Updater Manifest (`latest.json`):** https://github.com/MDeus-ai/farmDB/releases/latest/download/latest.json
 
 ### Android APK & Over-the-Air (OTA) Updates (Expo EAS)
@@ -188,8 +188,8 @@ npm run typecheck
 npm run build:tauri
 ```
 Built Windows installers and signed updater artifacts are output under `apps/desktop/src-tauri/target/release/bundle/`:
-- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.8_x64-setup.exe`
-- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.8_x64_en-US.msi`
+- NSIS setup executable: `apps/desktop/src-tauri/target/release/bundle/nsis/farmDB_1.5.9_x64-setup.exe`
+- MSI installer: `apps/desktop/src-tauri/target/release/bundle/msi/farmDB_1.5.9_x64_en-US.msi`
 
 Desktop auto-updates are configured via `tauri-plugin-updater` (`apps/desktop/src-tauri/tauri.conf.json`) checking `https://github.com/MDeus-ai/farmDB/releases/latest/download/latest.json`, and can also be triggered manually from **Settings -> Advanced Settings -> Software Updates**.
 

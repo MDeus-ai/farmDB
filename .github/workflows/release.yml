@@ -212,11 +212,25 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
     steps:
+      - name: Check EXPO_TOKEN secret
+        id: check_token
+        shell: bash
+        run: |
+          if [ -n "$EXPO_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+
+      - if: steps.check_token.outputs.configured == 'true'
+        run: npm ci
 
       - name: Fetch latest Android APK (EAS or previous GitHub Release) and upload
         shell: bash
@@ -239,12 +253,8 @@ jobs:
             ' "$APK_OUT"
           }
 
-          if [ -n "${EXPO_TOKEN:-}" ]; then
-            RAW_JSON=$(cd apps/mobile && npx --yes eas-cli build:list --platform android --profile production --status finished --limit 5 --json --non-interactive 2>/dev/null || true)
-            if [ -z "$RAW_JSON" ] || ! echo "$RAW_JSON" | grep -q '\['; then
-              RAW_JSON=$(cd apps/mobile && npx --yes eas-cli build:list --platform android --status finished --limit 5 --json --non-interactive 2>/dev/null || true)
-            fi
-            APK_URL=$(EAS_RAW="$RAW_JSON" node -e '
+          extract_apk_url() {
+            EAS_RAW="$1" node -e '
               const raw = process.env.EAS_RAW || "";
               const idx = raw.indexOf("[");
               if (idx === -1) process.exit(0);
@@ -260,7 +270,25 @@ jobs:
               if (found) {
                 process.stdout.write(found.artifacts.applicationArchiveUrl || found.artifacts.buildUrl || "");
               }
-            ' || true)
+            ' || true
+          }
+
+          if [ -n "${EXPO_TOKEN:-}" ]; then
+            RAW_JSON=$(cd apps/mobile && npx --yes eas-cli build:list --platform android --build-profile production --status finished --limit 5 --json --non-interactive 2>/tmp/eas-err.log || true)
+            if [ -z "$RAW_JSON" ] || ! echo "$RAW_JSON" | grep -q '\['; then
+              echo "EAS production build:list stderr:"
+              cat /tmp/eas-err.log || true
+            fi
+            APK_URL=$(extract_apk_url "$RAW_JSON")
+
+            if [ -z "$APK_URL" ]; then
+              RAW_JSON=$(cd apps/mobile && npx --yes eas-cli build:list --platform android --status finished --limit 5 --json --non-interactive 2>/tmp/eas-err.log || true)
+              if [ -z "$RAW_JSON" ] || ! echo "$RAW_JSON" | grep -q '\['; then
+                echo "EAS fallback build:list stderr:"
+                cat /tmp/eas-err.log || true
+              fi
+              APK_URL=$(extract_apk_url "$RAW_JSON")
+            fi
 
             if [ -n "$APK_URL" ]; then
               echo "Downloading Android APK from Expo EAS: $APK_URL"

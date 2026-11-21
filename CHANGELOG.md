@@ -6,6 +6,13 @@
 
 # farmDB Changelog
 
+## [1.5.9] - 2026-11-21
+
+fix automatic Android APK attachment
+
+### Fixes & Improvements
+- Fix attach-android-apk CI job (npm ci + --build-profile production)
+
 ## [1.5.8] - 2026-11-21
 
 attach Android APK to GitHub Releases

@@ -1,15 +1,15 @@
-export const FARMDB_APP_VERSION = '1.5.8';
+export const FARMDB_APP_VERSION = '1.5.9';
 export const FARMDB_GITHUB_REPO = 'MDeus-ai/farmDB';
 export const FARMDB_GITHUB_LATEST_RELEASE_API = `https://api.github.com/repos/${FARMDB_GITHUB_REPO}/releases/latest`;
 export const FARMDB_GITHUB_RELEASES_PAGE = `https://github.com/${FARMDB_GITHUB_REPO}/releases`;
 
 export const CURRENT_RELEASE_HIGHLIGHTS: readonly string[] = [
+  'Fix attach-android-apk CI job (npm ci + --build-profile production)',
   'Automatically attach farmDB-android.apk to GitHub Releases from Expo EAS',
   'Fixed Desktop window close button by granting core:window:allow-destroy and streamlining onCloseRequested sync flush.',
   'Added automated scripts/release-bump.mjs (npm run version:bump and npm run release:ship) to bump versions and trigger CI releases.',
   'Redesigned Desktop sidebar & Mobile drawer navigation count badges into uniform rounded-square tabular-monospace chips with crisp zero/active contrast and straight vertical alignment.',
   'Portaled Desktop ModernSelect dropdowns (always opening downward) and ModernDatePicker (trigger-matched width) to prevent modal clipping, with clean hover tooltips on Desktop.',
-  'Instant write-triggered Supabase sync plus graceful Desktop exit & Mobile background flushes, validated species Breed Dictionary (with African breeds), duplicate guards, and dynamic assets/avators icons.',
 ];
 
 export type UpdateSource = 'tauri_updater' | 'expo_ota' | 'github_release';
